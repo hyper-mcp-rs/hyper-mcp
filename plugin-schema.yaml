@@ -1,0 +1,191 @@
+# yaml-language-server: $schema=https://xtp.dylibso.com/assets/wasm/schema.json
+# Learn more at https://docs.xtp.dylibso.com/docs/concepts/xtp-schema
+version: v1-draft
+exports:
+  call:
+    description: >
+      Invoke the given tool method with parameters.
+      Returns a CallToolResult containing the tool output (or error).
+    input:
+      $ref: "#/components/schemas/CallToolRequest"
+      contentType: application/json
+    output:
+      $ref: "#/components/schemas/CallToolResult"
+      contentType: application/json
+  describe:
+    description: >
+      Return a list of all tools (their name, input‐schema, description).
+      Used for discovery. Returns a ListToolsResult.
+    output:
+      $ref: "#/components/schemas/ListToolsResult"
+      contentType: application/json
+components:
+  schemas:
+    BlobResourceContents:
+      description: >
+        A base64‐encoded string representing the binary data of the item,
+        along with its MIME type (optional) and URI.
+      properties:
+        blob:
+          type: string
+          description: "Base64‐encoded binary data."
+        mimeType:
+          type: string
+          description: "The MIME type of this resource, if known."
+        uri:
+          type: string
+          description: "The URI of this resource."
+      required:
+        - blob
+        - uri
+    CallToolRequest:
+      description: >
+        Parameters for calling a single tool. “method” is optional;
+        “params” (tool name + arguments) is required.
+      properties:
+        method:
+          type: string
+          description: "Optional override for the method name."
+        params:
+          $ref: "#/components/schemas/Params"
+      required:
+        - params
+    CallToolResult:
+      description: >
+        The result of calling a tool.
+        “content” is an array of Content entries; “isError” is optional (defaults to false).
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/Content"
+          description: "An array of content pieces (text, images, or resources)."
+        isError:
+          type: boolean
+          description: >
+            Whether the tool call ended in an error.
+            If not present, assume false.
+      required:
+        - content
+    Content:
+      description: >
+        A single piece of content returned by a tool.
+        Exactly one of “text”, “data” (base64), or “annotations” may be set,
+        but “type” is always required.
+      properties:
+        annotations:
+          $ref: "#/components/schemas/TextAnnotation"
+          description: >
+            Optional annotated metadata (e.g., priority or audience)
+            for this content.
+        data:
+          type: string
+          description: "Base64‐encoded image data (if ContentType is “image”)."
+        mimeType:
+          type: string
+          description: "The MIME type of the image or resource (if known)."
+        text:
+          type: string
+          description: "Textual content (if ContentType is “text”)."
+        type:
+          $ref: "#/components/schemas/ContentType"
+          description: "The kind of content (text, image, or resource)."
+      required:
+        - type
+    ContentType:
+      type: string
+      description: "One of “text”, “image”, or “resource.”"
+      enum:
+        - text
+        - image
+        - resource
+    ListToolsResult:
+      description: >
+        A list of all tools that this plugin/binding exposes.
+        Each entry includes name, description, and an inputSchema.
+      properties:
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolDescription"
+          description: "Array of ToolDescription objects."
+      required:
+        - tools
+    Params:
+      description: >
+        Encapsulates the tool name (string) and an optional map of arguments.
+      properties:
+        arguments:
+          type: object
+          description: >
+            A JSON object (map) of parameter names → values,
+            passed to the tool.
+            Can be omitted (null).
+        name:
+          type: string
+          description: The name of the tool to invoke.
+      required:
+        - name
+    Role:
+      type: string
+      description: >
+        Indicates who the intended recipient of some content is.
+        Possible values: “assistant” or “user.”
+      enum:
+        - assistant
+        - user
+    TextAnnotation:
+      description: >
+        Metadata about how important this data is, and who it’s intended for.
+      properties:
+        audience:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+          description: >
+            One or more Roles to indicate who this annotation is for
+            (e.g., [“user”, “assistant”]).
+        priority:
+          type: number
+          format: float
+          description: >
+            A priority score (0.0–1.0), where 1.0 means “most important” and 0.0 means “least important.”
+      required:
+        - audience
+        - priority
+    TextResourceContents:
+      description: >
+        A textual resource bundle (e.g., help text, instructions).
+        Contains its MIME type (optional), URI, and actual text.
+      properties:
+        mimeType:
+          type: string
+          description: "The MIME type of this resource (if known)."
+        text:
+          type: string
+          description: "The text of the resource."
+        uri:
+          type: string
+          description: "The URI of the resource."
+      required:
+        - text
+        - uri
+    ToolDescription:
+      description: >
+        Describes a single tool (its name, human‐readable description, and its input schema).
+      properties:
+        description:
+          type: string
+          description: "A description of what this tool does."
+        inputSchema:
+          type: object
+          description: >
+            The JSON Schema that callers should use when invoking this tool.
+            (It will typically match the “input” section of that tool’s function.)
+        name:
+          type: string
+          description: "The name of the tool (must match the function name)."
+      required:
+        - description
+        - inputSchema
+        - name

@@ -154,7 +154,25 @@ We maintain several example plugins to get you started:
 
 ## Creating Plugins
 
-Check out our [example plugins](https://github.com/tuananh/hyper-mcp/tree/main/examples/plugins) to learn how to build your own.
+1. Install the [XTP CLI](https://docs.xtp.dylibso.com/docs/cli):
+    ```sh
+    curl https://static.dylibso.com/cli/install.sh -s | bash
+    ```
+
+2. Create a new plugin project:
+    ```sh
+    xtp plugin init --schema-file plugin-schema.yaml
+    ```
+    Follow the prompts to set up your plugin. This will create the necessary files and structure.
+
+    For example, if you chose Rust as the language, it will create a `Cargo.toml`, `src/lib.rs` and a `src/pdk.rs` file.
+
+3. Implement your plugin logic in the language appropriate files(s) created (e.g. - `Cargo.toml` and `src/lib.rs` for Rust)
+    For example, if you chose Rust as the language you will need to update the `Cargo.toml` and `src/lib.rs` files.
+
+    Be sure to modify the `.gitignore` that is created for you to allow committing your `Cargo.lock` file.
+
+Check out our [example plugins](https://github.com/tuananh/hyper-mcp/tree/main/examples/plugins) for insight.
 
 To publish a plugin:
 
