@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use url::Url;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -11,7 +12,8 @@ pub struct Config {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PluginConfig {
     pub name: String,
-    pub path: String,
+    #[serde(rename = "url", alias = "path")]
+    pub url: Url,
     pub runtime_config: Option<RuntimeConfig>,
 }
 

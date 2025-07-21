@@ -57,26 +57,26 @@ Built with security-first mindset:
   "plugins": [
     {
       "name": "time",
-      "path": "oci://ghcr.io/tuananh/time-plugin:latest"
+      "url": "oci://ghcr.io/tuananh/time-plugin:latest"
     },
     {
       "name": "qr-code",
-      "path": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
+      "url": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
     },
     {
       "name": "hash",
-      "path": "oci://ghcr.io/tuananh/hash-plugin:latest"
+      "url": "oci://ghcr.io/tuananh/hash-plugin:latest"
     },
     {
       "name": "myip",
-      "path": "oci://ghcr.io/tuananh/myip-plugin:latest",
+      "url": "oci://ghcr.io/tuananh/myip-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"]
       }
     },
     {
       "name": "fetch",
-      "path": "oci://ghcr.io/tuananh/fetch-plugin:latest",
+      "url": "oci://ghcr.io/tuananh/fetch-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["*"],
         "memory_limit": "100 MB",
@@ -86,6 +86,12 @@ Built with security-first mindset:
   ]
 }
 ```
+
+Supported URL schemes:
+- `oci://` - for OCI-compliant registries (like Docker Hub, GitHub Container Registry, etc.)
+- `file://` - for local files
+- `http://` or `https://` - for remote files
+- `s3://` - for Amazon S3 objects (requires that you have your AWS credentials set up in the environment)
 
 2. Start the server:
 

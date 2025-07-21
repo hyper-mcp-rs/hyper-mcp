@@ -31,11 +31,19 @@ log = "0.4.27"
 sigstore = { version = "0.12.1", features = ["cosign", "verify", "bundle"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-rmcp = { version = "0.3.0", features = ["server", "transport-io", "transport-sse-server", "transport-streamable-http-server"] }
+rmcp = { version = "0.3.0", features = [
+    "server",
+    "transport-io",
+    "transport-sse-server",
+    "transport-streamable-http-server",
+] }
 serde_yaml = "0.9.34"
 toml = "0.9.0"
 bytesize = "2.0.1"
 axum = "0.8.4"
+url = { version = "2", features = ["serde"] }
+aws-config = { version = "1.8.2", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1.98.0"
 
 [[bin]]
 name = "hyper-mcp"
