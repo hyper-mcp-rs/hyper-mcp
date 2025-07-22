@@ -104,7 +104,7 @@ impl PluginService {
                         .to_vec()
                 }
                 unsupported => {
-                    log::error!("Unsupported plugin URL scheme: {}", unsupported);
+                    log::error!("Unsupported plugin URL scheme: {unsupported}");
                     return Err(anyhow::anyhow!(
                         "Unsupported plugin URL scheme: {}",
                         unsupported
