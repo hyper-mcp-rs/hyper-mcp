@@ -92,16 +92,22 @@ impl PluginService {
                     let key = plugin_cfg.url.path().trim_start_matches('/');
                     let config_loader = aws_config::from_env();
                     let s3_client = S3Client::new(&config_loader.load().await);
-                    s3_client
-                        .get_object()
-                        .bucket(bucket)
-                        .key(key)
-                        .send()
-                        .await?
-                        .body
-                        .collect()
-                        .await?
-                        .to_vec()
+                    match s3_client.get_object().bucket(bucket).key(key).send().await {
+                        Ok(response) => match response.body.collect().await {
+                            Ok(body) => body.to_vec(),
+                            Err(e) => {
+                                log::error!("Failed to collect S3 object body: {e}");
+                                return Err(anyhow::anyhow!(
+                                    "Failed to collect S3 object body: {}",
+                                    e
+                                ));
+                            }
+                        },
+                        Err(e) => {
+                            log::error!("Failed to get object from S3: {e}");
+                            return Err(anyhow::anyhow!("Failed to get object from S3: {}", e));
+                        }
+                    }
                 }
                 unsupported => {
                     log::error!("Unsupported plugin URL scheme: {unsupported}");
