@@ -42,10 +42,7 @@ impl PluginService {
     async fn load_plugins(&self) -> Result<()> {
         for plugin_cfg in &self.config.plugins {
             let wasm_content = match plugin_cfg.url.scheme() {
-                "file" => {
-                    // For file scheme, we read the file directly
-                    tokio::fs::read(plugin_cfg.url.path()).await?
-                }
+                "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
                 "http" | "https" => reqwest::get(plugin_cfg.url.as_str())
                     .await?
                     .bytes()
