@@ -239,6 +239,7 @@ async fn verify_image_signature(cli: &Cli, image_reference: &str) -> Result<bool
 
 pub async fn pull_and_extract_oci_image(
     cli: &Cli,
+    client: &Client,
     image_reference: &str,
     target_file_path: &str,
     local_output_path: &str,
@@ -251,9 +252,6 @@ pub async fn pull_and_extract_oci_image(
     }
 
     log::info!("Pulling {image_reference} ...");
-
-    let client_config = oci_client::client::ClientConfig::default();
-    let client = Client::new(client_config);
 
     let reference = Reference::try_from(image_reference)?;
     let auth = build_auth(&reference);
@@ -327,29 +325,4 @@ pub async fn pull_and_extract_oci_image(
     }
 
     Err("Target file not found in any layer".into())
-}
-
-pub struct OciDownloader {
-    cli: Cli,
-}
-
-impl OciDownloader {
-    pub fn new(cli: &Cli) -> Self {
-        Self { cli: cli.clone() }
-    }
-
-    pub async fn pull_and_extract(
-        &self,
-        image_reference: &str,
-        target_file_path: &str,
-        local_output_path: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        pull_and_extract_oci_image(
-            &self.cli,
-            image_reference,
-            target_file_path,
-            local_output_path,
-        )
-        .await
-    }
 }

@@ -1,6 +1,6 @@
 use crate::Cli;
-use crate::config::Config;
-use crate::oci::OciDownloader;
+use crate::config::{Config, load_config};
+use crate::oci::pull_and_extract_oci_image;
 use anyhow::Result;
 use bytesize::ByteSize;
 use extism::{Manifest, Plugin, Wasm};
@@ -9,37 +9,48 @@ use rmcp::{ErrorData as McpError, ServerHandler, model::*};
 use std::str::FromStr;
 
 use aws_sdk_s3::Client as S3Client;
+use oci_client::Client as OciClient;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 
 #[derive(Clone)]
 pub struct PluginService {
     config: Config,
     plugins: Arc<RwLock<HashMap<String, Arc<Mutex<Plugin>>>>>,
     tool_plugin_map: Arc<RwLock<HashMap<String, String>>>,
-    oci_downloader: Arc<OciDownloader>,
 }
 
 impl PluginService {
-    pub async fn new(config: Config, cli: &Cli) -> Result<Self> {
-        // Create OCI downloader with CLI object
-        let oci_downloader = Arc::new(OciDownloader::new(cli));
+    pub async fn new(cli: &Cli) -> Result<Self> {
+        // Get default config path in the user's config directory
+        let default_config_path = dirs::config_dir()
+            .map(|mut path| {
+                path.push("hyper-mcp");
+                path.push("config.json");
+                path
+            })
+            .unwrap();
+
+        let config_path = cli.config_file.as_ref().unwrap_or(&default_config_path);
+        tracing::info!("Using config file at {}", config_path.display());
 
         let service = Self {
-            config,
+            config: load_config(config_path).await?,
             plugins: Arc::new(RwLock::new(HashMap::new())),
             tool_plugin_map: Arc::new(RwLock::new(HashMap::new())),
-            oci_downloader,
         };
 
-        service.load_plugins().await?;
+        service.load_plugins(cli).await?;
         Ok(service)
     }
 
-    async fn load_plugins(&self) -> Result<()> {
+    async fn load_plugins(&self, cli: &Cli) -> Result<()> {
+        let oci_client: OnceCell<OciClient> = OnceCell::new();
+        let s3_client: OnceCell<S3Client> = OnceCell::new();
+
         for plugin_cfg in &self.config.plugins {
             let wasm_content = match plugin_cfg.url.scheme() {
                 "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
@@ -67,10 +78,18 @@ impl PluginService {
                         cache_dir.join(format!("{}-{}.wasm", plugin_cfg.name, short_hash));
                     let local_output_path = local_output_path.to_str().unwrap();
 
-                    if let Err(e) = self
-                        .oci_downloader
-                        .pull_and_extract(image_reference, target_file_path, local_output_path)
-                        .await
+                    if let Err(e) = pull_and_extract_oci_image(
+                        cli,
+                        oci_client
+                            .get_or_init(|| async {
+                                OciClient::new(oci_client::client::ClientConfig::default())
+                            })
+                            .await,
+                        image_reference,
+                        target_file_path,
+                        local_output_path,
+                    )
+                    .await
                     {
                         log::error!("Error pulling oci plugin: {e}");
                         return Err(anyhow::anyhow!("Failed to pull OCI plugin: {}", e));
@@ -87,9 +106,15 @@ impl PluginService {
                         anyhow::anyhow!("S3 URL must have a valid bucket name in the host")
                     })?;
                     let key = plugin_cfg.url.path().trim_start_matches('/');
-                    let config_loader = aws_config::from_env();
-                    let s3_client = S3Client::new(&config_loader.load().await);
-                    match s3_client.get_object().bucket(bucket).key(key).send().await {
+                    match s3_client
+                        .get_or_init(|| async { S3Client::new(&aws_config::load_from_env().await) })
+                        .await
+                        .get_object()
+                        .bucket(bucket)
+                        .key(key)
+                        .send()
+                        .await
+                    {
                         Ok(response) => match response.body.collect().await {
                             Ok(body) => body.to_vec(),
                             Err(e) => {

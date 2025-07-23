@@ -110,27 +110,12 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting hyper-mcp server");
 
-    // Get default config path in the user's config directory
-    let default_config_path = dirs::config_dir()
-        .map(|mut path| {
-            path.push("hyper-mcp");
-            path.push("config.json");
-            path
-        })
-        .unwrap();
-
-    // Extract config_file before using cli elsewhere to avoid borrow issues
-    let config_file = cli.config_file.clone();
-    let config_path = config_file.unwrap_or(default_config_path);
-    tracing::info!("Using config file at {}", config_path.display());
-
-    let config = config::load_config(&config_path).await?;
-
-    // Create plugin service with the config and CLI options
-    let plugin_service = plugins::PluginService::new(config, &cli).await?;
+    // Create plugin service with the CLI options
+    let plugin_service = plugins::PluginService::new(&cli).await?;
 
     match cli.transport.as_str() {
         "stdio" => {
+            tracing::info!("Starting hyper-mcp with stdio transport");
             let service = plugin_service.serve(stdio()).await.inspect_err(|e| {
                 tracing::error!("Serving error: {:?}", e);
             })?;
