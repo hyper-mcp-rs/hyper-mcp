@@ -39,6 +39,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
 
+      - name: Run tests
+        run: cargo test --workspace --all-features
+
       - name: Build hyper-mcp
         run: cargo build
 
