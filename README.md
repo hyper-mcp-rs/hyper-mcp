@@ -54,36 +54,30 @@ Built with security-first mindset:
 
 ```json
 {
-  "plugins": [
-    {
-      "name": "time",
+  "plugins": {}
+    "time": {
       "url": "oci://ghcr.io/tuananh/time-plugin:latest"
     },
-    {
-      "name": "qr-code",
+    "qr-code": {
       "url": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
     },
-    {
-      "name": "hash",
+    "hash": {
       "url": "oci://ghcr.io/tuananh/hash-plugin:latest"
     },
-    {
-      "name": "myip",
+    "myip": {
       "url": "oci://ghcr.io/tuananh/myip-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"]
       }
     },
-    {
-      "name": "fetch",
+    "fetch": {
       "url": "oci://ghcr.io/tuananh/fetch-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["*"],
         "memory_limit": "100 MB",
-        "tool_name_prefix": "foo_"
       }
     }
-  ]
+  }
 }
 ```
 

@@ -13,15 +13,14 @@ The configuration is structured as follows:
     - **allowed_paths** (`array[string]`, optional): List of allowed file system paths.
     - **env_vars** (`object`, optional): Key-value pairs of environment variables for the plugin.
     - **memory_limit** (`string`, optional): Memory limit for the plugin (e.g., `"512Mi"`).
-    - **tool_name_prefix** (`string`, optional): Optional prefix for tool names. Can be use to prevent tool name collision.
 
 ## Example (YAML)
 
 ```yaml
 plugins:
-  - name: time
+  - time:
     path: oci://ghcr.io/tuananh/time-plugin:latest
-  - name: myip
+  - myip:
     path: oci://ghcr.io/tuananh/myip-plugin:latest
     runtime_config:
       allowed_hosts:
@@ -37,23 +36,20 @@ plugins:
 
 ```json
 {
-  "plugins": [
-    {
-      "name": "time",
+  "plugins": {
+    "time": {
       "path": "oci://ghcr.io/tuananh/time-plugin:latest"
     },
-    {
-      "name": "myip",
+    "myip": {
       "path": "oci://ghcr.io/tuananh/myip-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"],
         "skip_tools": ["debug"],
         "env_vars": {"FOO": "bar"},
         "memory_limit": "512Mi",
-        "tool_name_prefix": "foo_"
       }
     }
-  ]
+  }
 }
 ```
 

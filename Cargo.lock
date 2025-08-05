@@ -2528,6 +2528,8 @@ dependencies = [
  "hex",
  "log",
  "oci-client",
+ "once_cell",
+ "regex",
  "reqwest",
  "rmcp",
  "serde",

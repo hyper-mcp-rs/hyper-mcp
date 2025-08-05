@@ -1,26 +1,70 @@
-use crate::Cli;
-use crate::config::{Config, load_config};
-use crate::oci::pull_and_extract_oci_image;
+use crate::{
+    Cli,
+    config::{Config, PluginName, PluginNameParseError, load_config},
+    oci::pull_and_extract_oci_image,
+};
 use anyhow::Result;
+use aws_sdk_s3::Client as S3Client;
 use bytesize::ByteSize;
 use extism::{Manifest, Plugin, Wasm};
-use rmcp::service::{NotificationContext, RequestContext, RoleServer};
-use rmcp::{ErrorData as McpError, ServerHandler, model::*};
-use std::str::FromStr;
-
-use aws_sdk_s3::Client as S3Client;
 use oci_client::Client as OciClient;
+use rmcp::{
+    ErrorData as McpError, ServerHandler,
+    model::*,
+    service::{NotificationContext, RequestContext, RoleServer},
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    fmt,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::{OnceCell, RwLock};
+
+#[derive(Debug, Clone)]
+pub struct ToolNameParseError;
+
+impl fmt::Display for ToolNameParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Failed to parse tool name")
+    }
+}
+
+impl std::error::Error for ToolNameParseError {}
+
+impl From<PluginNameParseError> for ToolNameParseError {
+    fn from(_: PluginNameParseError) -> Self {
+        ToolNameParseError
+    }
+}
+
+fn create_namespaced_tool_name(
+    plugin_name: &PluginName,
+    tool_name: &str,
+) -> Result<String, ToolNameParseError> {
+    if tool_name.contains("::") {
+        // If the tool name already contains '::', return it as is to avoid ambiguity
+        return Err(ToolNameParseError);
+    }
+    Ok(format!("{plugin_name}::{tool_name}"))
+}
+
+fn parse_namespaced_tool_name(
+    tool_name: std::borrow::Cow<'static, str>,
+) -> Result<(PluginName, String), ToolNameParseError> {
+    let parts: Vec<&str> = tool_name.split("::").collect();
+    if parts.len() != 2 {
+        return Err(ToolNameParseError);
+    }
+    Ok((PluginName::from_str(parts[0])?, parts[1].to_string()))
+}
 
 #[derive(Clone)]
 pub struct PluginService {
     config: Config,
-    plugins: Arc<RwLock<HashMap<String, Arc<Mutex<Plugin>>>>>,
-    tool_plugin_map: Arc<RwLock<HashMap<String, String>>>,
+    plugins: Arc<RwLock<HashMap<PluginName, Arc<Mutex<Plugin>>>>>,
 }
 
 impl PluginService {
@@ -40,7 +84,6 @@ impl PluginService {
         let service = Self {
             config: load_config(config_path).await?,
             plugins: Arc::new(RwLock::new(HashMap::new())),
-            tool_plugin_map: Arc::new(RwLock::new(HashMap::new())),
         };
 
         service.load_plugins(cli).await?;
@@ -51,7 +94,7 @@ impl PluginService {
         let oci_client: OnceCell<OciClient> = OnceCell::new();
         let s3_client: OnceCell<S3Client> = OnceCell::new();
 
-        for plugin_cfg in &self.config.plugins {
+        for (plugin_name, plugin_cfg) in &self.config.plugins {
             let wasm_content = match plugin_cfg.url.scheme() {
                 "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
                 "http" | "https" => reqwest::get(plugin_cfg.url.as_str())
@@ -75,7 +118,7 @@ impl PluginService {
                     std::fs::create_dir_all(&cache_dir)?;
 
                     let local_output_path =
-                        cache_dir.join(format!("{}-{}.wasm", plugin_cfg.name, short_hash));
+                        cache_dir.join(format!("{plugin_name}-{short_hash}.wasm"));
                     let local_output_path = local_output_path.to_str().unwrap();
 
                     if let Err(e) = pull_and_extract_oci_image(
@@ -94,11 +137,7 @@ impl PluginService {
                         log::error!("Error pulling oci plugin: {e}");
                         return Err(anyhow::anyhow!("Failed to pull OCI plugin: {}", e));
                     }
-                    log::info!(
-                        "cache plugin `{}` to : {}",
-                        plugin_cfg.name,
-                        local_output_path
-                    );
+                    log::info!("cache plugin `{plugin_name}` to : {local_output_path}");
                     tokio::fs::read(local_output_path).await?
                 }
                 "s3" => {
@@ -178,50 +217,7 @@ impl PluginService {
                 }
             }
             let plugin = Arc::new(Mutex::new(Plugin::new(&manifest, [], true).unwrap()));
-            let plugin_clone = Arc::clone(&plugin);
 
-            // Try to get tool information from the plugin and populate the cache
-            let describe_result = tokio::task::spawn_blocking(move || {
-                let mut plugin = plugin_clone.lock().unwrap();
-                plugin.call::<&str, String>("describe", "")
-            })
-            .await;
-
-            if let Ok(Ok(result)) = describe_result {
-                if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
-                    let mut cache = self.tool_plugin_map.write().await;
-                    let skip_tools = plugin_cfg
-                        .runtime_config
-                        .as_ref()
-                        .and_then(|rc| rc.skip_tools.clone())
-                        .unwrap_or_default();
-                    for tool in parsed.tools {
-                        if skip_tools.iter().any(|s| s == tool.name.as_ref() as &str) {
-                            log::info!("Skipping tool {} as requested in skip_tools", tool.name);
-                            continue;
-                        }
-                        log::info!("Saving tool {}/{} to cache", plugin_cfg.name, tool.name);
-                        // Check if the tool name already exists in another plugin
-                        if let Some(existing_plugin) = cache.get(&tool.name.to_string()) {
-                            if existing_plugin != &plugin_cfg.name {
-                                log::error!(
-                                    "Tool name collision detected: {} is provided by both {} and {} plugins",
-                                    tool.name,
-                                    existing_plugin,
-                                    plugin_cfg.name
-                                );
-                                panic!(
-                                    "Tool name collision detected: {} is provided by both {} and {} plugins",
-                                    tool.name, existing_plugin, plugin_cfg.name
-                                );
-                            }
-                        }
-                        cache.insert(tool.name.to_string(), plugin_cfg.name.clone());
-                    }
-                }
-            }
-
-            let plugin_name = plugin_cfg.name.clone();
             self.plugins
                 .write()
                 .await
@@ -251,101 +247,68 @@ impl ServerHandler for PluginService {
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let plugins = self.plugins.read().await;
-        let tool_cache = self.tool_plugin_map.read().await;
-
-        let tool_name = request.name.clone();
-        let tool_name_str = tool_name.to_string();
-
-        // Find the plugin name and strip the prefix if needed
-        let mut original_name = tool_name_str.clone();
-        let mut plugin_name_for_tool = None;
-
-        // First try to find the tool directly in the cache
-        if let Some(plugin_name) = tool_cache.get(&tool_name_str) {
-            plugin_name_for_tool = Some(plugin_name.clone());
-
-            // Check if this tool has a prefix that needs to be stripped
-            for plugin_cfg in &self.config.plugins {
-                if let Some(rt_config) = &plugin_cfg.runtime_config {
-                    if let Some(tool_name_prefix) = &rt_config.tool_name_prefix {
-                        if tool_name_str.starts_with(tool_name_prefix) {
-                            // Strip the prefix to get the original tool name
-                            original_name = tool_name_str[tool_name_prefix.len()..].to_string();
-                            log::info!(
-                                "Found tool with prefix, stripping for internal call: {tool_name_str} -> {original_name}"
-                            );
-                            break;
-                        }
-                    }
-                }
+        let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name) {
+            Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
+            Err(e) => {
+                return Err(McpError::invalid_request(
+                    format!("Failed to parse tool name: {e}"),
+                    None,
+                ));
             }
-        } else {
-            // If not found directly, check if it has a prefix that needs to be stripped
-            for plugin_cfg in &self.config.plugins {
-                if let Some(rt_config) = &plugin_cfg.runtime_config {
-                    if let Some(tool_name_prefix) = &rt_config.tool_name_prefix {
-                        if tool_name_str.starts_with(tool_name_prefix) {
-                            // Strip the prefix to get the original tool name
-                            original_name = tool_name_str[tool_name_prefix.len()..].to_string();
-                            log::info!(
-                                "Stripping prefix from tool: {tool_name_str} -> {original_name}"
-                            );
-
-                            // Check if the original tool name is in the cache
-                            if let Some(plugin_name) = tool_cache.get(&original_name) {
-                                plugin_name_for_tool = Some(plugin_name.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
+        };
+        let plugin_config = match self.config.plugins.get(&plugin_name) {
+            Some(config) => config,
+            None => {
+                return Err(McpError::method_not_found::<CallToolRequestMethod>());
+            }
+        };
+        if let Some(skip_tools) = &plugin_config
+            .runtime_config
+            .as_ref()
+            .and_then(|rc| rc.skip_tools.clone())
+        {
+            if skip_tools.iter().any(|s| s == &tool_name) {
+                log::info!("Tool {tool_name} in skip_tools");
+                return Err(McpError::method_not_found::<CallToolRequestMethod>());
             }
         }
 
-        // Create a modified request with the original tool name
-        let mut modified_request = request.clone();
-        // Convert the String to Cow<'static, str> using into()
-        modified_request.name = std::borrow::Cow::Owned(original_name);
-
         let call_payload = json!({
-            "params": modified_request,
+            "params": CallToolRequestParam {
+                name: std::borrow::Cow::Owned(tool_name),
+                arguments: request.arguments,
+            },
         });
         let json_string =
             serde_json::to_string(&call_payload).expect("Failed to serialize request");
 
-        // Check if the tool exists in the cache
-        if let Some(plugin_name) = plugin_name_for_tool {
-            if let Some(plugin_arc) = plugins.get(&plugin_name) {
-                let plugin_clone = Arc::clone(plugin_arc);
-                let plugin_name_clone = plugin_name.clone();
+        let plugins = self.plugins.read().await;
 
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut plugin = plugin_clone.lock().unwrap();
-                    plugin.call::<&str, String>("call", &json_string)
-                })
-                .await;
+        if let Some(plugin_arc) = plugins.get(&plugin_name) {
+            let plugin_clone = Arc::clone(plugin_arc);
 
-                return match result {
-                    Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
-                        Ok(parsed) => Ok(parsed),
-                        Err(e) => Err(McpError::internal_error(
-                            format!("Failed to deserialize data: {e}"),
-                            None,
-                        )),
-                    },
-                    Ok(Err(e)) => Err(McpError::internal_error(
-                        format!("Failed to execute plugin {plugin_name_clone}: {e}"),
-                        None,
-                    )),
+            return match tokio::task::spawn_blocking(move || {
+                let mut plugin = plugin_clone.lock().unwrap();
+                plugin.call::<&str, String>("call", &json_string)
+            })
+            .await
+            {
+                Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
+                    Ok(parsed) => Ok(parsed),
                     Err(e) => Err(McpError::internal_error(
-                        format!(
-                            "Failed to spawn blocking task for plugin {plugin_name_clone}: {e}"
-                        ),
+                        format!("Failed to deserialize data: {e}"),
                         None,
                     )),
-                };
-            }
+                },
+                Ok(Err(e)) => Err(McpError::internal_error(
+                    format!("Failed to execute plugin {plugin_name}: {e}"),
+                    None,
+                )),
+                Err(e) => Err(McpError::internal_error(
+                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                    None,
+                )),
+            };
         }
 
         Err(McpError::method_not_found::<CallToolRequestMethod>())
@@ -357,88 +320,71 @@ impl ServerHandler for PluginService {
         _context: RequestContext<RoleServer>,
     ) -> std::result::Result<ListToolsResult, McpError> {
         tracing::info!("got tools/list request {:?}", request);
-        let plugins = self.plugins.write().await;
-        let mut tool_cache = self.tool_plugin_map.write().await;
+        let plugins = self.plugins.read().await;
 
         let mut payload = ListToolsResult::default();
 
-        // Clear the existing cache when listing tools
-        tool_cache.clear();
+        for (plugin_name, plugin) in plugins.iter() {
+            let plugin_name = plugin_name.clone();
+            let plugin = Arc::clone(plugin);
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+                McpError::internal_error(
+                    format!("Plugin configuration not found for {plugin_name}"),
+                    None,
+                )
+            })?;
+            let skip_tools = plugin_cfg
+                .runtime_config
+                .as_ref()
+                .and_then(|rc| rc.skip_tools.clone())
+                .unwrap_or_default();
 
-        for plugin_cfg in &self.config.plugins {
-            if let Some(plugin_arc) = plugins.get(&plugin_cfg.name) {
-                let plugin_clone = Arc::clone(plugin_arc);
-                let plugin_name = plugin_cfg.name.clone();
-
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut plugin = plugin_clone.lock().unwrap();
-                    plugin.call::<&str, String>("describe", "")
-                })
-                .await;
-
-                match result {
-                    Ok(Ok(result)) => {
-                        if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
-                            let skip_tools = plugin_cfg
-                                .runtime_config
-                                .as_ref()
-                                .and_then(|rc| rc.skip_tools.clone())
-                                .unwrap_or_default();
-                            for mut tool in parsed.tools {
-                                if skip_tools.iter().any(|s| s == tool.name.as_ref() as &str) {
-                                    log::info!(
-                                        "Skipping tool {} as requested in skip_tools",
-                                        tool.name
+            match tokio::task::spawn_blocking(move || {
+                let mut plugin = plugin.lock().unwrap();
+                plugin.call::<&str, String>("describe", "")
+            })
+            .await
+            {
+                Ok(Ok(result)) => {
+                    if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
+                        for mut tool in parsed.tools {
+                            let tool_name = tool.name.as_ref() as &str;
+                            if skip_tools.iter().any(|s| s == tool_name) {
+                                log::info!(
+                                    "Skipping tool {} as requested in skip_tools",
+                                    tool.name
+                                );
+                                continue;
+                            }
+                            tool.name = std::borrow::Cow::Owned(match create_namespaced_tool_name(
+                                &plugin_name,
+                                tool_name,
+                            ) {
+                                Ok(namespaced) => namespaced,
+                                Err(_) => {
+                                    log::error!(
+                                        "Tool name {} in plugin {} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
+                                        tool_name,
+                                        plugin_name
                                     );
                                     continue;
                                 }
-                                // If tool_name_prefix is set, append it to the tool name
-                                let original_name = tool.name.to_string();
-                                if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
-                                    if let Some(tool_name_prefix) = &runtime_cfg.tool_name_prefix {
-                                        let prefixed_name =
-                                            format!("{tool_name_prefix}{original_name}");
-                                        log::info!(
-                                            "Adding prefix to tool: {original_name} -> {prefixed_name}"
-                                        );
-
-                                        // Store both the original and prefixed tool names in the cache
-                                        // This ensures we can find the tool by either name
-                                        tool_cache
-                                            .insert(original_name.clone(), plugin_cfg.name.clone());
-
-                                        // Update the tool name with the prefix
-                                        tool.name = std::borrow::Cow::Owned(prefixed_name);
-                                    }
-                                }
-
-                                // Store the tool name (which might be prefixed now) -> plugin mapping
-                                tool_cache.insert(tool.name.to_string(), plugin_cfg.name.clone());
-                                payload.tools.push(tool);
-                            }
+                            });
+                            payload.tools.push(tool);
                         }
                     }
-                    Ok(Err(e)) => {
-                        log::error!("tool {plugin_name} describe() error: {e}");
-                    }
-                    Err(e) => {
-                        log::error!("tool {plugin_name} spawn_blocking error: {e}");
-                    }
+                }
+                Ok(Err(e)) => {
+                    log::error!("{plugin_name} describe() error: {e}");
+                }
+                Err(e) => {
+                    log::error!("{plugin_name} spawn_blocking error: {e}");
                 }
             }
         }
 
         Ok(payload)
     }
-
-    // fn list_tools(
-    //     &self,
-    //     _request: Option<PaginatedRequestParam>,
-    //     _context: RequestContext<RoleServer>,
-    // ) -> impl Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
-    //     tracing::info!("got tools/list request {:?}", _request);
-    //     std::future::ready(Ok(ListToolsResult::default()))
-    // }
 
     fn initialize(
         &self,
@@ -488,5 +434,38 @@ impl ServerHandler for PluginService {
     ) -> impl Future<Output = std::result::Result<CompleteResult, McpError>> + Send + '_ {
         tracing::info!("got complete request {:?}", request);
         std::future::ready(Err(McpError::method_not_found::<CompleteRequestMethod>()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_tool_name() {
+        let plugin_name = PluginName::from_str("example_plugin").unwrap();
+        let tool_name = "example_tool";
+        let expected = "example_plugin::example_tool";
+        assert_eq!(
+            create_namespaced_tool_name(&plugin_name, tool_name).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_name() {
+        let tool_name = "example_plugin::example_tool".to_string();
+        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
+        assert!(result.is_ok());
+        let (plugin_name, tool) = result.unwrap();
+        assert_eq!(plugin_name.as_str(), "example_plugin");
+        assert_eq!(tool, "example_tool");
+    }
+
+    #[test]
+    fn test_create_tool_name_invalid() {
+        let plugin_name = PluginName::from_str("example_plugin").unwrap();
+        let tool_name = "invalid::tool";
+        assert!(create_namespaced_tool_name(&plugin_name, tool_name).is_err());
     }
 }
