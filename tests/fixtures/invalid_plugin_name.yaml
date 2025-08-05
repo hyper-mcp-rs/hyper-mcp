@@ -1,0 +1,12 @@
+plugins:
+  plugin@name:
+    url: "file:///path/to/plugin"
+    runtime_config:
+      skip_tools:
+        - "tool1"
+        - "tool2"
+      allowed_hosts:
+        - "example.com"
+
+  valid-plugin:
+    url: "https://example.com/plugin"

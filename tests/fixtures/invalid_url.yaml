@@ -1,0 +1,16 @@
+plugins:
+  valid-plugin:
+    url: "file:///path/to/plugin"
+    runtime_config:
+      skip_tools:
+        - "tool1"
+        - "tool2"
+
+  invalid-url-plugin:
+    url: "not a valid url"
+    runtime_config:
+      allowed_hosts:
+        - "example.com"
+
+  another-valid-plugin:
+    url: "https://example.com/plugin"
