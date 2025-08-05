@@ -363,9 +363,7 @@ impl ServerHandler for PluginService {
                                 Ok(namespaced) => namespaced,
                                 Err(_) => {
                                     log::error!(
-                                        "Tool name {} in plugin {} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
-                                        tool_name,
-                                        plugin_name
+                                        "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
                                     );
                                     continue;
                                 }
