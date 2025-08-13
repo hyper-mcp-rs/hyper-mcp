@@ -1,13 +1,12 @@
 use crate::{
     Cli,
     config::{Config, PluginName, PluginNameParseError, load_config},
+    https_auth::Authenticator,
     oci::pull_and_extract_oci_image,
 };
 use anyhow::Result;
-use aws_sdk_s3::Client as S3Client;
 use bytesize::ByteSize;
 use extism::{Manifest, Plugin, Wasm};
-use oci_client::Client as OciClient;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
@@ -91,13 +90,28 @@ impl PluginService {
     }
 
     async fn load_plugins(&self, cli: &Cli) -> Result<()> {
-        let oci_client: OnceCell<OciClient> = OnceCell::new();
-        let s3_client: OnceCell<S3Client> = OnceCell::new();
+        let reqwest_client: OnceCell<reqwest::Client> = OnceCell::new();
+        let oci_client: OnceCell<oci_client::Client> = OnceCell::new();
+        let s3_client: OnceCell<aws_sdk_s3::Client> = OnceCell::new();
 
         for (plugin_name, plugin_cfg) in &self.config.plugins {
             let wasm_content = match plugin_cfg.url.scheme() {
                 "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
-                "http" | "https" => reqwest::get(plugin_cfg.url.as_str())
+                "http" => reqwest_client
+                    .get_or_init(|| async { reqwest::Client::new() })
+                    .await
+                    .get(plugin_cfg.url.as_str())
+                    .send()
+                    .await?
+                    .bytes()
+                    .await?
+                    .to_vec(),
+                "https" => reqwest_client
+                    .get_or_init(|| async { reqwest::Client::new() })
+                    .await
+                    .get(plugin_cfg.url.as_str())
+                    .add_auth(&self.config.auths, &plugin_cfg.url)
+                    .send()
                     .await?
                     .bytes()
                     .await?
@@ -125,7 +139,7 @@ impl PluginService {
                         cli,
                         oci_client
                             .get_or_init(|| async {
-                                OciClient::new(oci_client::client::ClientConfig::default())
+                                oci_client::Client::new(oci_client::client::ClientConfig::default())
                             })
                             .await,
                         image_reference,
@@ -146,7 +160,9 @@ impl PluginService {
                     })?;
                     let key = plugin_cfg.url.path().trim_start_matches('/');
                     match s3_client
-                        .get_or_init(|| async { S3Client::new(&aws_config::load_from_env().await) })
+                        .get_or_init(|| async {
+                            aws_sdk_s3::Client::new(&aws_config::load_from_env().await)
+                        })
                         .await
                         .get_object()
                         .bucket(bucket)

@@ -82,12 +82,53 @@ impl fmt::Display for PluginName {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum AuthConfig {
+    Basic { username: String, password: String },
+    Token { token: String },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum InternalAuthConfig {
+    Basic { username: String, password: String },
+    Keyring { service: String, user: String },
+    Token { token: String },
+}
+
+impl<'de> Deserialize<'de> for AuthConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let internal = InternalAuthConfig::deserialize(deserializer)?;
+        match internal {
+            InternalAuthConfig::Basic { username, password } => {
+                Ok(AuthConfig::Basic { username, password })
+            }
+            InternalAuthConfig::Token { token } => Ok(AuthConfig::Token { token }),
+            InternalAuthConfig::Keyring { service, user } => {
+                use keyring::Entry;
+                use serde::de;
+
+                let entry =
+                    Entry::new(service.as_str(), user.as_str()).map_err(de::Error::custom)?;
+                let secret = entry.get_secret().map_err(de::Error::custom)?;
+                Ok(serde_json::from_slice::<AuthConfig>(secret.as_slice())
+                    .map_err(de::Error::custom)?)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
+    pub auths: Option<HashMap<Url, AuthConfig>>,
     pub plugins: HashMap<PluginName, PluginConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct PluginConfig {
     #[serde(rename = "url", alias = "path")]
     pub url: Url,

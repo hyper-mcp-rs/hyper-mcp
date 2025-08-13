@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use tracing_subscriber::{self, EnvFilter};
 
 mod config;
+mod https_auth;
 mod oci;
 mod plugins;
 

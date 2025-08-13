@@ -24,6 +24,11 @@ docker_credential = "1.3.2"
 extism = "1.11.1"
 flate2 = "1.1.2"
 hex = "0.4.3"
+keyring = { version = "3.6.3", features = [
+    "apple-native",
+    "linux-native",
+    "windows-native",
+] }
 log = "0.4.27"
 oci-client = "0.15.0"
 once_cell = "1.21.3"
