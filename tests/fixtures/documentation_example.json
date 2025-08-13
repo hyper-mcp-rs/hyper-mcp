@@ -1,0 +1,38 @@
+{
+  "auths": {
+    "https://private.registry.io": {
+      "type": "basic",
+      "username": "registry-user",
+      "password": "registry-pass"
+    },
+    "https://api.github.com": {
+      "type": "token",
+      "token": "ghp_1234567890abcdef"
+    },
+    "https://enterprise.api.com": {
+      "type": "basic",
+      "username": "enterprise-user",
+      "password": "enterprise-pass"
+    }
+  },
+  "plugins": {
+    "time": {
+      "url": "oci://ghcr.io/tuananh/time-plugin:latest"
+    },
+    "myip": {
+      "url": "oci://ghcr.io/tuananh/myip-plugin:latest",
+      "runtime_config": {
+        "allowed_hosts": ["1.1.1.1"],
+        "skip_tools": ["debug"],
+        "env_vars": { "FOO": "bar" },
+        "memory_limit": "512Mi"
+      }
+    },
+    "private-plugin": {
+      "url": "https://private.registry.io/my-plugin",
+      "runtime_config": {
+        "allowed_hosts": ["private.registry.io"]
+      }
+    }
+  }
+}

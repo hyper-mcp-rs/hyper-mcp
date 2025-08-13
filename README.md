@@ -81,6 +81,8 @@ Built with security-first mindset:
 }
 ```
 
+> 📖 **For detailed configuration options including authentication setup, runtime configuration, and advanced features, see [RUNTIME_CONFIG.md](./RUNTIME_CONFIG.md)**
+
 Supported URL schemes:
 - `oci://` - for OCI-compliant registries (like Docker Hub, GitHub Container Registry, etc.)
 - `file://` - for local files
@@ -151,6 +153,15 @@ We maintain several example plugins to get you started:
 - [release-monitor-id](https://github.com/ntheanh201/hyper-mcp-release-monitor-id-tool): This plugin retrieves project ID from release-monitoring.org, which helps track versions of released software.
 - [yahoo-finance](https://github.com/phamngocquy/hyper-mcp-yfinance): This plugin connects to the Yahoo Finance API to provide stock prices (OHLCV) based on a company name or ticker symbol.
 - [rand16](https://github.com/dabevlohn/rand16): This plugen generates random 16 bytes buffer and provides it in base64uri format - very usable for symmetric cryptography online.
+
+## Documentation
+
+- **[Runtime Configuration Guide](./RUNTIME_CONFIG.md)** - Comprehensive guide to configuration options including:
+  - Authentication setup (Basic, Token, and Keyring)
+  - Plugin runtime configuration
+  - Security considerations and best practices
+  - Platform-specific keyring setup for macOS, Linux, and Windows
+  - Troubleshooting authentication issues
 
 ## Creating Plugins
 

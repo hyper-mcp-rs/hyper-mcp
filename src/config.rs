@@ -904,6 +904,223 @@ plugins:
     }
 
     #[test]
+    fn test_documentation_example_yaml() {
+        let rt = Runtime::new().unwrap();
+        let path = Path::new("tests/fixtures/documentation_example.yaml");
+
+        let config_result = rt.block_on(load_config(&path));
+        assert!(
+            config_result.is_ok(),
+            "Documentation YAML example should be valid"
+        );
+
+        let config = config_result.unwrap();
+
+        // Verify auths are present and correct
+        assert!(config.auths.is_some());
+        let auths = config.auths.unwrap();
+        assert_eq!(
+            auths.len(),
+            3,
+            "Expected 3 auth configurations from documentation example"
+        );
+
+        // Verify basic auth
+        let registry_url = Url::parse("https://private.registry.io").unwrap();
+        match &auths[&registry_url] {
+            AuthConfig::Basic { username, password } => {
+                assert_eq!(username, "registry-user");
+                assert_eq!(password, "registry-pass");
+            }
+            _ => panic!("Expected Basic auth for private.registry.io"),
+        }
+
+        // Verify token auth
+        let github_url = Url::parse("https://api.github.com").unwrap();
+        match &auths[&github_url] {
+            AuthConfig::Token { token } => {
+                assert_eq!(token, "ghp_1234567890abcdef");
+            }
+            _ => panic!("Expected Token auth for api.github.com"),
+        }
+
+        // Verify plugins
+        assert_eq!(
+            config.plugins.len(),
+            3,
+            "Expected 3 plugins from documentation example"
+        );
+        assert!(config.plugins.contains_key(&PluginName("time".to_string())));
+        assert!(config.plugins.contains_key(&PluginName("myip".to_string())));
+        assert!(
+            config
+                .plugins
+                .contains_key(&PluginName("private-plugin".to_string()))
+        );
+
+        // Verify private plugin config
+        let private_plugin = &config.plugins[&PluginName("private-plugin".to_string())];
+        assert_eq!(
+            private_plugin.url.to_string(),
+            "https://private.registry.io/my-plugin"
+        );
+        assert!(private_plugin.runtime_config.is_some());
+    }
+
+    #[test]
+    fn test_documentation_example_json() {
+        let rt = Runtime::new().unwrap();
+        let path = Path::new("tests/fixtures/documentation_example.json");
+
+        let config_result = rt.block_on(load_config(&path));
+        assert!(
+            config_result.is_ok(),
+            "Documentation JSON example should be valid"
+        );
+
+        let config = config_result.unwrap();
+
+        // Verify auths are present and correct
+        assert!(config.auths.is_some());
+        let auths = config.auths.unwrap();
+        assert_eq!(
+            auths.len(),
+            3,
+            "Expected 3 auth configurations from documentation example"
+        );
+
+        // Verify all auth URLs are present
+        let expected_auth_urls = vec![
+            "https://private.registry.io",
+            "https://api.github.com",
+            "https://enterprise.api.com",
+        ];
+
+        for url_str in expected_auth_urls {
+            let url = Url::parse(url_str).unwrap();
+            assert!(auths.contains_key(&url), "Missing auth for {}", url_str);
+        }
+
+        // Verify plugins match the documentation
+        assert_eq!(config.plugins.len(), 3);
+
+        let myip_plugin = &config.plugins[&PluginName("myip".to_string())];
+        let runtime_config = myip_plugin.runtime_config.as_ref().unwrap();
+        assert_eq!(runtime_config.env_vars.as_ref().unwrap()["FOO"], "bar");
+        assert_eq!(runtime_config.memory_limit.as_ref().unwrap(), "512Mi");
+    }
+
+    #[test]
+    fn test_url_prefix_matching_from_documentation() {
+        // Test the URL matching behavior described in documentation
+        let yaml = r#"
+auths:
+  "https://example.com":
+    type: basic
+    username: "broad-user"
+    password: "broad-pass"
+  "https://example.com/api":
+    type: token
+    token: "api-token"
+  "https://example.com/api/v1":
+    type: basic
+    username: "v1-user"
+    password: "v1-pass"
+plugins:
+  test-plugin:
+    url: "file:///test"
+"#;
+
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.auths.is_some());
+
+        let auths = config.auths.unwrap();
+        assert_eq!(auths.len(), 3);
+
+        // Verify all three auth configs are present
+        let base_url = Url::parse("https://example.com").unwrap();
+        let api_url = Url::parse("https://example.com/api").unwrap();
+        let v1_url = Url::parse("https://example.com/api/v1").unwrap();
+
+        assert!(auths.contains_key(&base_url));
+        assert!(auths.contains_key(&api_url));
+        assert!(auths.contains_key(&v1_url));
+
+        // Verify the specific auth types match documentation
+        match &auths[&base_url] {
+            AuthConfig::Basic { username, .. } => {
+                assert_eq!(username, "broad-user");
+            }
+            _ => panic!("Expected Basic auth for base URL"),
+        }
+
+        match &auths[&api_url] {
+            AuthConfig::Token { token } => {
+                assert_eq!(token, "api-token");
+            }
+            _ => panic!("Expected Token auth for API URL"),
+        }
+
+        match &auths[&v1_url] {
+            AuthConfig::Basic { username, .. } => {
+                assert_eq!(username, "v1-user");
+            }
+            _ => panic!("Expected Basic auth for v1 URL"),
+        }
+    }
+
+    #[test]
+    fn test_keyring_json_format_validation() {
+        // Test that the JSON formats shown in keyring documentation examples are valid
+
+        // Test basic auth JSON format from documentation
+        let basic_json = r#"{"type":"basic","username":"actual-user","password":"actual-pass"}"#;
+        let basic_auth: AuthConfig = serde_json::from_str(basic_json).unwrap();
+
+        match basic_auth {
+            AuthConfig::Basic { username, password } => {
+                assert_eq!(username, "actual-user");
+                assert_eq!(password, "actual-pass");
+            }
+            _ => panic!("Expected Basic auth config from keyring JSON"),
+        }
+
+        // Test token auth JSON format from documentation
+        let token_json = r#"{"type":"token","token":"actual-bearer-token"}"#;
+        let token_auth: AuthConfig = serde_json::from_str(token_json).unwrap();
+
+        match token_auth {
+            AuthConfig::Token { token } => {
+                assert_eq!(token, "actual-bearer-token");
+            }
+            _ => panic!("Expected Token auth config from keyring JSON"),
+        }
+
+        // Test JWT-like token from documentation
+        let jwt_json = r#"{"type":"token","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"}"#;
+        let jwt_auth: AuthConfig = serde_json::from_str(jwt_json).unwrap();
+
+        match jwt_auth {
+            AuthConfig::Token { token } => {
+                assert_eq!(token, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
+            }
+            _ => panic!("Expected Token auth config from keyring JWT JSON"),
+        }
+
+        // Test corporate example from documentation
+        let corp_json = r#"{"type":"basic","username":"corp_user","password":"corp_secret"}"#;
+        let corp_auth: AuthConfig = serde_json::from_str(corp_json).unwrap();
+
+        match corp_auth {
+            AuthConfig::Basic { username, password } => {
+                assert_eq!(username, "corp_user");
+                assert_eq!(password, "corp_secret");
+            }
+            _ => panic!("Expected Basic auth config from corporate JSON"),
+        }
+    }
+
+    #[test]
     fn test_keyring_auth_config_missing_service() {
         let json = r#"{"type":"keyring","user":"test-user"}"#;
         let result: Result<InternalAuthConfig, _> = serde_json::from_str(json);
