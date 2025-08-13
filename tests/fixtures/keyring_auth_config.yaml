@@ -1,0 +1,31 @@
+auths:
+  "https://private.registry.io":
+    type: keyring
+    service: "private-registry"
+    user: "registry-user"
+  "https://internal.api.com":
+    type: keyring
+    service: "internal-api"
+    user: "api-user"
+  "https://secure.vault.com":
+    type: keyring
+    service: "vault-service"
+    user: "vault-admin"
+  "https://enterprise.github.com":
+    type: keyring
+    service: "github-enterprise"
+    user: "enterprise-user"
+plugins:
+  secure-plugin:
+    url: "https://private.registry.io/plugin"
+    runtime_config:
+      allowed_hosts:
+        - "private.registry.io"
+  internal-plugin:
+    url: "https://internal.api.com/plugin"
+    runtime_config:
+      allowed_hosts:
+        - "internal.api.com"
+        - "secure.vault.com"
+      env_vars:
+        KEYRING_SERVICE: "internal-api"

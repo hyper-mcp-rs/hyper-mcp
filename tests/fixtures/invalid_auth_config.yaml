@@ -1,0 +1,23 @@
+auths:
+  "https://api.example.com":
+    type: invalid_type
+    username: testuser
+    password: testpass
+  "https://secure.api.com":
+    type: basic
+    # Missing password field
+    username: testuser
+  "https://oauth.service.com":
+    type: token
+    # Missing token field
+  "https://malformed.com":
+    # Missing type field
+    username: testuser
+    password: testpass
+  "https://keyring-incomplete.com":
+    type: keyring
+    service: test-service
+    # Missing user field
+plugins:
+  test-plugin:
+    url: "file:///path/to/plugin"

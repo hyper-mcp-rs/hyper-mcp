@@ -1,0 +1,41 @@
+{
+  "auths": {
+    "https://api.example.com": {
+      "type": "basic",
+      "username": "testuser",
+      "password": "testpass"
+    },
+    "https://secure.api.com": {
+      "type": "token",
+      "token": "bearer-token-123"
+    },
+    "https://private.registry.io": {
+      "type": "basic",
+      "username": "admin",
+      "password": "secretpass"
+    },
+    "https://oauth.service.com": {
+      "type": "token",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    }
+  },
+  "plugins": {
+    "test-plugin": {
+      "url": "file:///path/to/plugin",
+      "runtime_config": {
+        "allowed_hosts": [
+          "api.example.com",
+          "secure.api.com"
+        ]
+      }
+    },
+    "auth-test-plugin": {
+      "url": "https://secure.api.com/plugin",
+      "runtime_config": {
+        "allowed_hosts": [
+          "secure.api.com"
+        ]
+      }
+    }
+  }
+}
