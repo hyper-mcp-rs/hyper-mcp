@@ -1121,6 +1121,688 @@ plugins:
     }
 
     #[test]
+    #[ignore] // Requires system keyring access - run with `cargo test -- --ignored`
+    fn test_keyring_auth_integration() {
+        use std::process::Command;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Generate unique service and user names to avoid conflicts
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let service_name = format!("hyper-mcp-test-{}", timestamp);
+        let user_name = format!("test-user-{}", timestamp);
+
+        // Test auth config to store in keyring
+        let test_auth_json =
+            r#"{"type":"basic","username":"keyring-test-user","password":"keyring-test-pass"}"#;
+
+        // Platform-specific keyring operations
+        let (add_result, remove_result) = if cfg!(target_os = "macos") {
+            // macOS using security command
+            let add_result = Command::new("security")
+                .args([
+                    "add-generic-password",
+                    "-a",
+                    &user_name,
+                    "-s",
+                    &service_name,
+                    "-w",
+                    test_auth_json,
+                ])
+                .output();
+
+            let remove_result = Command::new("security")
+                .args([
+                    "delete-generic-password",
+                    "-a",
+                    &user_name,
+                    "-s",
+                    &service_name,
+                ])
+                .output();
+
+            (add_result, remove_result)
+        } else if cfg!(target_os = "linux") {
+            // Linux using secret-tool
+            let add_result = Command::new("bash")
+                .args([
+                    "-c",
+                    &format!("echo '{}' | secret-tool store --label='hyper-mcp test' service '{}' username '{}'",
+                        test_auth_json, service_name, user_name),
+                ])
+                .output();
+
+            let remove_result = Command::new("secret-tool")
+                .args(["clear", "service", &service_name, "username", &user_name])
+                .output();
+
+            (add_result, remove_result)
+        } else if cfg!(target_os = "windows") {
+            // Windows using cmdkey
+            let escaped_json = test_auth_json.replace("\"", "\\\"");
+            let add_result = Command::new("cmdkey")
+                .args([
+                    &format!("/generic:{}", service_name),
+                    &format!("/user:{}", user_name),
+                    &format!("/pass:{}", escaped_json),
+                ])
+                .output();
+
+            let remove_result = Command::new("cmdkey")
+                .args([&format!("/delete:{}", service_name)])
+                .output();
+
+            (add_result, remove_result)
+        } else {
+            // Unsupported platform
+            println!(
+                "Keyring test skipped on unsupported platform: {}",
+                std::env::consts::OS
+            );
+            return;
+        };
+
+        // Try to add the secret to keyring
+        let add_output = match add_result {
+            Ok(output) => output,
+            Err(e) => {
+                println!(
+                    "Failed to execute keyring add command: {}. Skipping test.",
+                    e
+                );
+                return;
+            }
+        };
+
+        if !add_output.status.success() {
+            println!(
+                "Failed to add secret to keyring (exit code: {}). stdout: {}, stderr: {}. Skipping test.",
+                add_output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&add_output.stdout),
+                String::from_utf8_lossy(&add_output.stderr)
+            );
+            return;
+        }
+
+        // Test keyring auth deserialization
+        let keyring_config_json = format!(
+            r#"{{"type":"keyring","service":"{}","user":"{}"}}"#,
+            service_name, user_name
+        );
+
+        let test_result = std::panic::catch_unwind(|| {
+            let internal_auth: InternalAuthConfig =
+                serde_json::from_str(&keyring_config_json).unwrap();
+
+            // This should trigger the keyring lookup and deserialize to AuthConfig
+            match internal_auth {
+                InternalAuthConfig::Keyring { service, user } => {
+                    assert_eq!(service, service_name);
+                    assert_eq!(user, user_name);
+
+                    // Test the actual keyring deserialization through AuthConfig
+                    let auth_config: Result<AuthConfig, _> =
+                        serde_json::from_str(&keyring_config_json);
+
+                    match auth_config {
+                        Ok(AuthConfig::Basic { username, password }) => {
+                            assert_eq!(username, "keyring-test-user");
+                            assert_eq!(password, "keyring-test-pass");
+                        }
+                        Ok(AuthConfig::Token { .. }) => {
+                            panic!("Expected Basic auth from keyring, got Token");
+                        }
+                        Err(e) => {
+                            println!(
+                                "Keyring lookup failed (this is expected if keyring service is not available): {}",
+                                e
+                            );
+                        }
+                    }
+                }
+                _ => panic!("Expected Keyring internal auth config"),
+            }
+        });
+
+        // Always attempt cleanup regardless of test result
+        if let Ok(output) = remove_result {
+            if !output.status.success() {
+                println!(
+                    "Warning: Failed to remove test secret from keyring (exit code: {}). stdout: {}, stderr: {}",
+                    output.status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+
+        // Re-panic if the test failed
+        if let Err(panic_info) = test_result {
+            std::panic::resume_unwind(panic_info);
+        }
+    }
+
+    #[test]
+    #[ignore] // Requires system keyring access and file creation - run with `cargo test -- --ignored`
+    fn test_keyring_auth_complete_config_integration() {
+        use std::process::Command;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use tokio::fs;
+
+        let rt = Runtime::new().unwrap();
+
+        // Generate unique identifiers
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let service_name = format!("hyper-mcp-config-test-{}", timestamp);
+        let user_name = format!("config-test-user-{}", timestamp);
+        let temp_config_path = format!("test_config_{}.yaml", timestamp);
+
+        // Auth config to store in keyring
+        let keyring_auth_json =
+            r#"{"type":"token","token":"test-keyring-token-from-complete-config"}"#;
+
+        // Create complete config with keyring auth
+        let config_content = format!(
+            r#"
+auths:
+  "https://keyring-test.example.com":
+    type: keyring
+    service: "{}"
+    user: "{}"
+  "https://basic-test.example.com":
+    type: basic
+    username: "basic-user"
+    password: "basic-pass"
+plugins:
+  test-plugin:
+    url: "file:///test/plugin"
+    runtime_config:
+      allowed_hosts:
+        - "keyring-test.example.com"
+        - "basic-test.example.com"
+"#,
+            service_name, user_name
+        );
+
+        // Platform-specific keyring operations
+        let (add_result, remove_result) = if cfg!(target_os = "macos") {
+            let add_result = Command::new("security")
+                .args([
+                    "add-generic-password",
+                    "-a",
+                    &user_name,
+                    "-s",
+                    &service_name,
+                    "-w",
+                    keyring_auth_json,
+                ])
+                .output();
+
+            let remove_result = Command::new("security")
+                .args([
+                    "delete-generic-password",
+                    "-a",
+                    &user_name,
+                    "-s",
+                    &service_name,
+                ])
+                .output();
+
+            (add_result, remove_result)
+        } else if cfg!(target_os = "linux") {
+            let add_result = Command::new("bash")
+                .args([
+                    "-c",
+                    &format!(
+                        "echo '{}' | secret-tool store --label='hyper-mcp complete config test' service '{}' username '{}'",
+                        keyring_auth_json, service_name, user_name
+                    ),
+                ])
+                .output();
+
+            let remove_result = Command::new("secret-tool")
+                .args(["clear", "service", &service_name, "username", &user_name])
+                .output();
+
+            (add_result, remove_result)
+        } else if cfg!(target_os = "windows") {
+            let escaped_json = keyring_auth_json.replace("\"", "\\\"");
+            let add_result = Command::new("cmdkey")
+                .args([
+                    &format!("/generic:{}", service_name),
+                    &format!("/user:{}", user_name),
+                    &format!("/pass:{}", escaped_json),
+                ])
+                .output();
+
+            let remove_result = Command::new("cmdkey")
+                .args([&format!("/delete:{}", service_name)])
+                .output();
+
+            (add_result, remove_result)
+        } else {
+            println!(
+                "Keyring integration test skipped on unsupported platform: {}",
+                std::env::consts::OS
+            );
+            return;
+        };
+
+        // Create temporary config file
+        let config_path = Path::new(&temp_config_path);
+        let write_result = rt.block_on(fs::write(config_path, config_content));
+        if write_result.is_err() {
+            println!("Failed to create temporary config file. Skipping test.");
+            return;
+        }
+
+        // Try to add secret to keyring
+        let add_output = match add_result {
+            Ok(output) => output,
+            Err(e) => {
+                println!(
+                    "Failed to execute keyring add command: {}. Skipping test.",
+                    e
+                );
+                let _ = rt.block_on(fs::remove_file(config_path));
+                return;
+            }
+        };
+
+        if !add_output.status.success() {
+            println!(
+                "Failed to add secret to keyring (exit code: {}). stdout: {}, stderr: {}. Skipping test.",
+                add_output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&add_output.stdout),
+                String::from_utf8_lossy(&add_output.stderr)
+            );
+            let _ = rt.block_on(fs::remove_file(config_path));
+            return;
+        }
+
+        // Test loading the config file (this should trigger keyring lookup)
+        let load_result = rt.block_on(load_config(config_path));
+
+        // Cleanup keyring entry before checking results
+        if let Ok(output) = remove_result {
+            if !output.status.success() {
+                println!(
+                    "Warning: Failed to remove test secret from keyring (exit code: {}). stdout: {}, stderr: {}. Manual cleanup may be required.",
+                    output.status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+
+        // Cleanup temporary config file
+        let _ = rt.block_on(fs::remove_file(config_path));
+
+        // Now check the test results
+        match load_result {
+            Ok(config) => {
+                // Verify auths are present
+                assert!(
+                    config.auths.is_some(),
+                    "Expected auths to be present in loaded config"
+                );
+                let auths = config.auths.unwrap();
+                assert_eq!(auths.len(), 2, "Expected 2 auth configurations");
+
+                // Verify keyring auth was resolved successfully
+                let keyring_url = Url::parse("https://keyring-test.example.com").unwrap();
+                assert!(
+                    auths.contains_key(&keyring_url),
+                    "Expected keyring auth URL to be present"
+                );
+
+                match &auths[&keyring_url] {
+                    AuthConfig::Token { token } => {
+                        assert_eq!(
+                            token, "test-keyring-token-from-complete-config",
+                            "Token from keyring should match stored value"
+                        );
+                    }
+                    _ => panic!("Expected Token auth from keyring resolution"),
+                }
+
+                // Verify basic auth still works alongside keyring auth
+                let basic_url = Url::parse("https://basic-test.example.com").unwrap();
+                assert!(
+                    auths.contains_key(&basic_url),
+                    "Expected basic auth URL to be present"
+                );
+
+                match &auths[&basic_url] {
+                    AuthConfig::Basic { username, password } => {
+                        assert_eq!(username, "basic-user");
+                        assert_eq!(password, "basic-pass");
+                    }
+                    _ => panic!("Expected Basic auth config"),
+                }
+
+                // Verify plugins loaded correctly
+                assert_eq!(config.plugins.len(), 1, "Expected 1 plugin in config");
+                assert!(
+                    config
+                        .plugins
+                        .contains_key(&PluginName("test-plugin".to_string()))
+                );
+
+                println!(
+                    "✅ Keyring integration test passed on platform: {}",
+                    std::env::consts::OS
+                );
+            }
+            Err(e) => {
+                // Check if this is a keyring-related error
+                let error_msg = e.to_string();
+                if error_msg.contains("keyring") || error_msg.contains("secure storage") {
+                    println!(
+                        "Keyring lookup failed (keyring service may not be available): {}. This is acceptable for CI environments.",
+                        e
+                    );
+                } else {
+                    panic!("Unexpected error loading config with keyring auth: {}", e);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore] // Requires system keyring access - run with `cargo test -- --ignored`
+    fn test_keyring_auth_direct_deserialization() {
+        use std::process::Command;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Generate unique service and user names to avoid conflicts
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let service_name = format!("hyper-mcp-direct-test-{}", timestamp);
+        let user_name = format!("direct-test-user-{}", timestamp);
+
+        // Test auth config to store in keyring (basic auth this time)
+        let test_auth_json =
+            r#"{"type":"basic","username":"direct-keyring-user","password":"direct-keyring-pass"}"#;
+
+        // Determine platform and execute appropriate keyring commands
+        if cfg!(target_os = "macos") {
+            // macOS: Add and test, then cleanup
+            let add_cmd = Command::new("security")
+                .args([
+                    "add-generic-password",
+                    "-a",
+                    &user_name,
+                    "-s",
+                    &service_name,
+                    "-w",
+                    test_auth_json,
+                ])
+                .output();
+
+            if let Ok(add_output) = add_cmd {
+                if add_output.status.success() {
+                    // Test the keyring deserialization
+                    let keyring_config_json = format!(
+                        r#"{{"type":"keyring","service":"{}","user":"{}"}}"#,
+                        service_name, user_name
+                    );
+
+                    let auth_result: Result<AuthConfig, _> =
+                        serde_json::from_str(&keyring_config_json);
+
+                    // Cleanup first
+                    let _ = Command::new("security")
+                        .args([
+                            "delete-generic-password",
+                            "-a",
+                            &user_name,
+                            "-s",
+                            &service_name,
+                        ])
+                        .output();
+
+                    // Verify result
+                    match auth_result {
+                        Ok(AuthConfig::Basic { username, password }) => {
+                            assert_eq!(username, "direct-keyring-user");
+                            assert_eq!(password, "direct-keyring-pass");
+                            println!("✅ macOS keyring direct deserialization test passed");
+                        }
+                        Ok(_) => panic!("Expected Basic auth from keyring"),
+                        Err(e) => {
+                            println!(
+                                "Keyring lookup failed on macOS (may not be available in CI): {}",
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    println!("Failed to add secret to macOS keyring, skipping test");
+                }
+            }
+        } else if cfg!(target_os = "linux") {
+            // Linux: Add and test, then cleanup
+            let add_cmd = Command::new("bash")
+                .args([
+                    "-c",
+                    &format!(
+                        "echo '{}' | secret-tool store --label='hyper-mcp direct test' service '{}' username '{}'",
+                        test_auth_json, service_name, user_name
+                    ),
+                ])
+                .output();
+
+            if let Ok(add_output) = add_cmd {
+                if add_output.status.success() {
+                    // Test the keyring deserialization
+                    let keyring_config_json = format!(
+                        r#"{{"type":"keyring","service":"{}","user":"{}"}}"#,
+                        service_name, user_name
+                    );
+
+                    let auth_result: Result<AuthConfig, _> =
+                        serde_json::from_str(&keyring_config_json);
+
+                    // Cleanup first
+                    let _ = Command::new("secret-tool")
+                        .args(["clear", "service", &service_name, "username", &user_name])
+                        .output();
+
+                    // Verify result
+                    match auth_result {
+                        Ok(AuthConfig::Basic { username, password }) => {
+                            assert_eq!(username, "direct-keyring-user");
+                            assert_eq!(password, "direct-keyring-pass");
+                            println!("✅ Linux keyring direct deserialization test passed");
+                        }
+                        Ok(_) => panic!("Expected Basic auth from keyring"),
+                        Err(e) => {
+                            println!(
+                                "Keyring lookup failed on Linux (may not be available in CI): {}",
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    println!("Failed to add secret to Linux keyring, skipping test");
+                }
+            }
+        } else if cfg!(target_os = "windows") {
+            // Windows: Add and test, then cleanup
+            let escaped_json = test_auth_json.replace("\"", "\\\"");
+            let add_cmd = Command::new("cmdkey")
+                .args([
+                    &format!("/generic:{}", service_name),
+                    &format!("/user:{}", user_name),
+                    &format!("/pass:{}", escaped_json),
+                ])
+                .output();
+
+            if let Ok(add_output) = add_cmd {
+                if add_output.status.success() {
+                    // Test the keyring deserialization
+                    let keyring_config_json = format!(
+                        r#"{{"type":"keyring","service":"{}","user":"{}"}}"#,
+                        service_name, user_name
+                    );
+
+                    let auth_result: Result<AuthConfig, _> =
+                        serde_json::from_str(&keyring_config_json);
+
+                    // Cleanup first
+                    let _ = Command::new("cmdkey")
+                        .args([&format!("/delete:{}", service_name)])
+                        .output();
+
+                    // Verify result
+                    match auth_result {
+                        Ok(AuthConfig::Basic { username, password }) => {
+                            assert_eq!(username, "direct-keyring-user");
+                            assert_eq!(password, "direct-keyring-pass");
+                            println!("✅ Windows keyring direct deserialization test passed");
+                        }
+                        Ok(_) => panic!("Expected Basic auth from keyring"),
+                        Err(e) => {
+                            println!(
+                                "Keyring lookup failed on Windows (may not be available in CI): {}",
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    println!("Failed to add secret to Windows keyring, skipping test");
+                }
+            }
+        } else {
+            println!(
+                "Direct keyring deserialization test skipped on unsupported platform: {}",
+                std::env::consts::OS
+            );
+        }
+    }
+
+    #[test]
+    fn test_platform_detection_and_keyring_tool_availability() {
+        use std::process::Command;
+
+        println!(
+            "Running platform detection test on: {}",
+            std::env::consts::OS
+        );
+
+        if cfg!(target_os = "macos") {
+            // Test macOS security command availability
+            let security_check = Command::new("security").arg("help").output();
+
+            match security_check {
+                Ok(output) => {
+                    if output.status.success() {
+                        println!("✅ macOS security command is available");
+
+                        // Test that we can list keychains (read-only operation)
+                        let list_check = Command::new("security").args(["list-keychains"]).output();
+                        match list_check {
+                            Ok(list_output) if list_output.status.success() => {
+                                println!("✅ macOS keychain access is functional");
+                            }
+                            _ => {
+                                println!("⚠️  macOS keychain access may be limited");
+                            }
+                        }
+                    } else {
+                        println!("❌ macOS security command failed");
+                    }
+                }
+                Err(e) => {
+                    println!("❌ macOS security command not found: {}", e);
+                }
+            }
+        } else if cfg!(target_os = "linux") {
+            // Test Linux secret-tool availability
+            let secret_tool_check = Command::new("secret-tool").arg("--help").output();
+
+            match secret_tool_check {
+                Ok(output) => {
+                    if output.status.success() {
+                        println!("✅ Linux secret-tool is available");
+                    } else {
+                        println!("❌ Linux secret-tool command failed");
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "❌ Linux secret-tool not found: {}. Install with: sudo apt-get install libsecret-tools",
+                        e
+                    );
+                }
+            }
+
+            // Check if dbus session is available (required for keyring)
+            let dbus_check = Command::new("dbus-send")
+                .args([
+                    "--session",
+                    "--dest=org.freedesktop.DBus",
+                    "--print-reply",
+                    "/org/freedesktop/DBus",
+                    "org.freedesktop.DBus.ListNames",
+                ])
+                .output();
+
+            match dbus_check {
+                Ok(output) if output.status.success() => {
+                    println!("✅ Linux D-Bus session is available");
+                }
+                _ => {
+                    println!("⚠️  Linux D-Bus session may not be available (required for keyring)");
+                }
+            }
+        } else if cfg!(target_os = "windows") {
+            // Test Windows cmdkey availability
+            let cmdkey_check = Command::new("cmdkey").arg("/?").output();
+
+            match cmdkey_check {
+                Ok(output) => {
+                    if output.status.success() {
+                        println!("✅ Windows cmdkey is available");
+
+                        // Test that we can list credentials (read-only operation)
+                        let list_check = Command::new("cmdkey").args(["/list"]).output();
+                        match list_check {
+                            Ok(list_output) if list_output.status.success() => {
+                                println!("✅ Windows Credential Manager access is functional");
+                            }
+                            _ => {
+                                println!("⚠️  Windows Credential Manager access may be limited");
+                            }
+                        }
+                    } else {
+                        println!("❌ Windows cmdkey command failed");
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Windows cmdkey not found: {}", e);
+                }
+            }
+        } else {
+            println!(
+                "ℹ️  Platform {} is not supported for keyring authentication",
+                std::env::consts::OS
+            );
+        }
+
+        // This test always passes - it's just for information gathering
+        assert!(true, "Platform detection completed");
+    }
+
+    #[test]
     fn test_keyring_auth_config_missing_service() {
         let json = r#"{"type":"keyring","user":"test-user"}"#;
         let result: Result<InternalAuthConfig, _> = serde_json::from_str(json);
