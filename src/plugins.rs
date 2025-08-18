@@ -926,12 +926,95 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        // Skip actual execution since we can't create mock contexts
-        // Just verify the service was created successfully
+
+        // Verify the service was created successfully
         assert!(
             service.plugins.read().await.len() > 0,
             "Should have loaded plugin"
         );
+
+        // Test the list_tools function
+        let result = service.list_tools().await;
+        assert!(result.is_ok(), "list_tools should succeed");
+
+        let list_tools_result = result.unwrap();
+        assert!(
+            !list_tools_result.tools.is_empty(),
+            "Should have tools from the loaded plugin"
+        );
+
+        // Verify we get the expected tools from time.wasm plugin
+        let expected_tools = vec!["time-plugin::time"];
+
+        let actual_tool_names: Vec<String> = list_tools_result
+            .tools
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+
+        for expected_tool in &expected_tools {
+            assert!(
+                actual_tool_names.contains(&expected_tool.to_string()),
+                "Expected tool '{}' not found in actual tools: {:?}",
+                expected_tool,
+                actual_tool_names
+            );
+        }
+
+        assert_eq!(
+            list_tools_result.tools.len(),
+            expected_tools.len(),
+            "Expected {} tools but got {}: {:?}",
+            expected_tools.len(),
+            list_tools_result.tools.len(),
+            actual_tool_names
+        );
+
+        // Verify the time tool has the expected operations in its schema
+        let time_tool = list_tools_result
+            .tools
+            .iter()
+            .find(|tool| tool.name == "time-plugin::time")
+            .expect("time-plugin::time tool should exist");
+
+        // Check that the tool description mentions the expected operations
+        let description = time_tool
+            .description
+            .as_ref()
+            .expect("Tool should have description");
+        let expected_operations = vec!["get_time_utc", "parse_time", "time_offset"];
+        for operation in &expected_operations {
+            assert!(
+                description.contains(operation),
+                "Tool description should mention operation '{}': {}",
+                operation,
+                description
+            );
+        }
+
+        // Check that the input schema includes the expected operations in the enum
+        let schema_value = &time_tool.input_schema;
+        if let Some(properties) = schema_value.get("properties") {
+            if let Some(name_property) = properties.get("name") {
+                if let Some(enum_values) = name_property.get("enum") {
+                    if let Some(enum_array) = enum_values.as_array() {
+                        let schema_operations: Vec<String> = enum_array
+                            .iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect();
+
+                        for operation in &expected_operations {
+                            assert!(
+                                schema_operations.contains(&operation.to_string()),
+                                "Input schema should include operation '{}' in enum: {:?}",
+                                operation,
+                                schema_operations
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[tokio::test]
@@ -949,8 +1032,7 @@ plugins:
     url: "file://{}"
     runtime_config:
       skip_tools:
-        - "current_time"
-        - "format_time"
+        - "time"
 "#,
             wasm_path.display()
         );
@@ -960,11 +1042,70 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        // Skip actual execution since we can't create mock contexts
-        // Just verify the service was created with skip_tools configuration
+
+        // Verify the service was created successfully
         assert!(
             service.plugins.read().await.len() > 0,
             "Should have loaded plugin"
+        );
+
+        // Test the list_tools function with skip_tools configuration
+        let result = service.list_tools().await;
+        assert!(result.is_ok(), "list_tools should succeed");
+
+        let list_tools_result = result.unwrap();
+
+        // Since we're skipping the "time" tool, the tools list should be empty
+        assert!(
+            list_tools_result.tools.is_empty(),
+            "Should have no tools since 'time' tool is skipped. Found tools: {:?}",
+            list_tools_result
+                .tools
+                .iter()
+                .map(|t| t.name.as_ref() as &str)
+                .collect::<Vec<&str>>()
+        );
+
+        // Verify specifically that the time-plugin::time tool is not present
+        let tool_names: Vec<String> = list_tools_result
+            .tools
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+
+        assert!(
+            !tool_names.contains(&"time-plugin::time".to_string()),
+            "time-plugin::time should be skipped but was found in tools: {:?}",
+            tool_names
+        );
+
+        // Verify that the plugin itself was loaded (skip_tools should not prevent plugin loading)
+        let plugins = service.plugins.read().await;
+        let plugin_name: PluginName = "time-plugin".parse().unwrap();
+        assert!(
+            plugins.contains_key(&plugin_name),
+            "Plugin 'time-plugin' should still be loaded even with skip_tools configuration"
+        );
+
+        // Verify the plugin configuration includes skip_tools
+        let plugin_config = service.config.plugins.get(&plugin_name).unwrap();
+        let skip_tools = plugin_config
+            .runtime_config
+            .as_ref()
+            .and_then(|rc| rc.skip_tools.as_ref())
+            .unwrap();
+
+        assert!(
+            skip_tools.contains(&"time".to_string()),
+            "Configuration should include 'time' in skip_tools list: {:?}",
+            skip_tools
+        );
+
+        assert_eq!(
+            skip_tools.len(),
+            1,
+            "Should have exactly one tool in skip_tools list: {:?}",
+            skip_tools
         );
     }
 
