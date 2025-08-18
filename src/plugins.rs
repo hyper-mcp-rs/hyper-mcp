@@ -774,10 +774,6 @@ mod tests {
 
     // Helper function to create a dummy request context for compilation
     // These tests will be skipped at runtime since we can't easily mock contexts
-    fn skip_context_test() -> bool {
-        true // Always skip context-dependent tests in unit tests
-    }
-
     // PluginService creation tests
 
     #[tokio::test]
@@ -1115,15 +1111,37 @@ plugins:
             plugins: HashMap::new(),
             auths: Some(HashMap::new()),
         };
-        let _service = PluginService {
+        let service = PluginService {
             config,
             plugins: Arc::new(RwLock::new(HashMap::new())),
         };
 
-        // Skip context-dependent test
-        if skip_context_test() {
-            return;
+        // Test calling tool with invalid format (missing plugin name separator)
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("invalid_tool_name"),
+            arguments: None,
+        };
+
+        let result = service.call_tool(request).await;
+        assert!(result.is_err(), "Should fail with invalid tool name format");
+
+        if let Err(error) = result {
+            // Should be an invalid_request error
+            assert!(
+                error.to_string().contains("Failed to parse tool name"),
+                "Error should mention parsing failure: {}",
+                error
+            );
         }
+
+        // Test with empty tool name
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed(""),
+            arguments: None,
+        };
+
+        let result = service.call_tool(request).await;
+        assert!(result.is_err(), "Should fail with empty tool name");
     }
 
     #[tokio::test]
@@ -1132,14 +1150,28 @@ plugins:
             plugins: HashMap::new(),
             auths: Some(HashMap::new()),
         };
-        let _service = PluginService {
+        let service = PluginService {
             config,
             plugins: Arc::new(RwLock::new(HashMap::new())),
         };
 
-        // Skip context-dependent test
-        if skip_context_test() {
-            return;
+        // Test calling tool on nonexistent plugin
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("nonexistent-plugin::some_tool"),
+            arguments: None,
+        };
+
+        let result = service.call_tool(request).await;
+        assert!(result.is_err(), "Should fail with nonexistent plugin");
+
+        if let Err(error) = result {
+            // Should be a method_not_found error since plugin doesn't exist
+            let error_str = error.to_string();
+            assert!(
+                error_str.contains("-32601") || error_str.contains("tools/call"),
+                "Error should indicate method not found: {}",
+                error
+            );
         }
     }
 
@@ -1165,12 +1197,82 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        // Skip actual tool calling since we can't create mock contexts
-        // Just verify the service was created successfully
+
+        // Verify the service was created successfully
         assert!(
             service.plugins.read().await.len() > 0,
             "Should have loaded plugin"
         );
+
+        // Test calling the time tool with get_time_utc operation
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("time-plugin::time"),
+            arguments: Some({
+                let mut map = serde_json::Map::new();
+                map.insert(
+                    "name".to_string(),
+                    serde_json::Value::String("get_time_utc".to_string()),
+                );
+                map
+            }),
+        };
+
+        let result = service.call_tool(request).await;
+        assert!(
+            result.is_ok(),
+            "Should successfully call time tool: {:?}",
+            result
+        );
+
+        let call_result = result.unwrap();
+        assert!(
+            call_result
+                .content
+                .as_ref()
+                .map_or(false, |c| !c.is_empty()),
+            "Should return content from time tool"
+        );
+
+        // Verify we got some content back from the time tool
+        if let Some(content) = &call_result.content {
+            assert!(
+                !content.is_empty(),
+                "Time tool should return non-empty content"
+            );
+        }
+
+        // Test calling with parse_time operation
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("time-plugin::time"),
+            arguments: Some({
+                let mut map = serde_json::Map::new();
+                map.insert(
+                    "name".to_string(),
+                    serde_json::Value::String("parse_time".to_string()),
+                );
+                map.insert(
+                    "time_rfc2822".to_string(),
+                    serde_json::Value::String("Wed, 18 Feb 2015 23:16:09 GMT".to_string()),
+                );
+                map
+            }),
+        };
+
+        let result = service.call_tool(request).await;
+        assert!(
+            result.is_ok(),
+            "Should successfully call parse_time operation: {:?}",
+            result
+        );
+
+        let call_result = result.unwrap();
+        // Verify the parse_time operation returns content
+        if let Some(content) = &call_result.content {
+            assert!(
+                !content.is_empty(),
+                "Parse time operation should return non-empty content"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1188,7 +1290,7 @@ plugins:
     url: "file://{}"
     runtime_config:
       skip_tools:
-        - "current_time"
+        - "time"
 "#,
             wasm_path.display()
         );
@@ -1197,10 +1299,38 @@ plugins:
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
 
-        let _service = PluginService::new(&cli).await.unwrap();
-        // Skip context-dependent test
-        if skip_context_test() {
-            return;
+        let service = PluginService::new(&cli).await.unwrap();
+
+        // Verify the service was created successfully
+        assert!(
+            service.plugins.read().await.len() > 0,
+            "Should have loaded plugin"
+        );
+
+        // Test calling the skipped time tool
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("time-plugin::time"),
+            arguments: Some({
+                let mut map = serde_json::Map::new();
+                map.insert(
+                    "name".to_string(),
+                    serde_json::Value::String("get_time_utc".to_string()),
+                );
+                map
+            }),
+        };
+
+        let result = service.call_tool(request).await;
+        assert!(result.is_err(), "Should fail when calling skipped tool");
+
+        if let Err(error) = result {
+            // Should be a method_not_found error since tool is skipped
+            let error_str = error.to_string();
+            assert!(
+                error_str.contains("-32601") || error_str.contains("tools/call"),
+                "Error should indicate method not found for skipped tool: {}",
+                error
+            );
         }
     }
 
