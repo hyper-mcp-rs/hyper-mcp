@@ -89,6 +89,139 @@ impl PluginService {
         Ok(service)
     }
 
+    async fn call_tool(&self, request: CallToolRequestParam) -> Result<CallToolResult, McpError> {
+        let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name) {
+            Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
+            Err(e) => {
+                return Err(McpError::invalid_request(
+                    format!("Failed to parse tool name: {e}"),
+                    None,
+                ));
+            }
+        };
+        let plugin_config = match self.config.plugins.get(&plugin_name) {
+            Some(config) => config,
+            None => {
+                return Err(McpError::method_not_found::<CallToolRequestMethod>());
+            }
+        };
+        if let Some(skip_tools) = &plugin_config
+            .runtime_config
+            .as_ref()
+            .and_then(|rc| rc.skip_tools.clone())
+        {
+            if skip_tools.iter().any(|s| s == &tool_name) {
+                log::info!("Tool {tool_name} in skip_tools");
+                return Err(McpError::method_not_found::<CallToolRequestMethod>());
+            }
+        }
+
+        let call_payload = json!({
+            "params": CallToolRequestParam {
+                name: std::borrow::Cow::Owned(tool_name),
+                arguments: request.arguments,
+            },
+        });
+        let json_string =
+            serde_json::to_string(&call_payload).expect("Failed to serialize request");
+
+        let plugins = self.plugins.read().await;
+
+        if let Some(plugin_arc) = plugins.get(&plugin_name) {
+            let plugin_clone = Arc::clone(plugin_arc);
+
+            return match tokio::task::spawn_blocking(move || {
+                let mut plugin = plugin_clone.lock().unwrap();
+                plugin.call::<&str, String>("call", &json_string)
+            })
+            .await
+            {
+                Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
+                    Ok(parsed) => Ok(parsed),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Failed to deserialize data: {e}"),
+                        None,
+                    )),
+                },
+                Ok(Err(e)) => Err(McpError::internal_error(
+                    format!("Failed to execute plugin {plugin_name}: {e}"),
+                    None,
+                )),
+                Err(e) => Err(McpError::internal_error(
+                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                    None,
+                )),
+            };
+        }
+
+        Err(McpError::method_not_found::<CallToolRequestMethod>())
+    }
+
+    async fn list_tools(&self) -> std::result::Result<ListToolsResult, McpError> {
+        let plugins = self.plugins.read().await;
+
+        let mut payload = ListToolsResult::default();
+
+        for (plugin_name, plugin) in plugins.iter() {
+            let plugin_name = plugin_name.clone();
+            let plugin = Arc::clone(plugin);
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+                McpError::internal_error(
+                    format!("Plugin configuration not found for {plugin_name}"),
+                    None,
+                )
+            })?;
+            let skip_tools = plugin_cfg
+                .runtime_config
+                .as_ref()
+                .and_then(|rc| rc.skip_tools.clone())
+                .unwrap_or_default();
+
+            match tokio::task::spawn_blocking(move || {
+                let mut plugin = plugin.lock().unwrap();
+                plugin.call::<&str, String>("describe", "")
+            })
+            .await
+            {
+                Ok(Ok(result)) => {
+                    if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
+                        for mut tool in parsed.tools {
+                            let tool_name = tool.name.as_ref() as &str;
+                            if skip_tools.iter().any(|s| s == tool_name) {
+                                log::info!(
+                                    "Skipping tool {} as requested in skip_tools",
+                                    tool.name
+                                );
+                                continue;
+                            }
+                            tool.name = std::borrow::Cow::Owned(match create_namespaced_tool_name(
+                                &plugin_name,
+                                tool_name,
+                            ) {
+                                Ok(namespaced) => namespaced,
+                                Err(_) => {
+                                    log::error!(
+                                        "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
+                                    );
+                                    continue;
+                                }
+                            });
+                            payload.tools.push(tool);
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    log::error!("{plugin_name} describe() error: {e}");
+                }
+                Err(e) => {
+                    log::error!("{plugin_name} spawn_blocking error: {e}");
+                }
+            }
+        }
+
+        Ok(payload)
+    }
+
     async fn load_plugins(&self, cli: &Cli) -> Result<()> {
         let reqwest_client: OnceCell<reqwest::Client> = OnceCell::new();
         let oci_client: OnceCell<oci_client::Client> = OnceCell::new();
@@ -263,71 +396,8 @@ impl ServerHandler for PluginService {
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name) {
-            Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
-            Err(e) => {
-                return Err(McpError::invalid_request(
-                    format!("Failed to parse tool name: {e}"),
-                    None,
-                ));
-            }
-        };
-        let plugin_config = match self.config.plugins.get(&plugin_name) {
-            Some(config) => config,
-            None => {
-                return Err(McpError::method_not_found::<CallToolRequestMethod>());
-            }
-        };
-        if let Some(skip_tools) = &plugin_config
-            .runtime_config
-            .as_ref()
-            .and_then(|rc| rc.skip_tools.clone())
-        {
-            if skip_tools.iter().any(|s| s == &tool_name) {
-                log::info!("Tool {tool_name} in skip_tools");
-                return Err(McpError::method_not_found::<CallToolRequestMethod>());
-            }
-        }
-
-        let call_payload = json!({
-            "params": CallToolRequestParam {
-                name: std::borrow::Cow::Owned(tool_name),
-                arguments: request.arguments,
-            },
-        });
-        let json_string =
-            serde_json::to_string(&call_payload).expect("Failed to serialize request");
-
-        let plugins = self.plugins.read().await;
-
-        if let Some(plugin_arc) = plugins.get(&plugin_name) {
-            let plugin_clone = Arc::clone(plugin_arc);
-
-            return match tokio::task::spawn_blocking(move || {
-                let mut plugin = plugin_clone.lock().unwrap();
-                plugin.call::<&str, String>("call", &json_string)
-            })
-            .await
-            {
-                Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
-                    Ok(parsed) => Ok(parsed),
-                    Err(e) => Err(McpError::internal_error(
-                        format!("Failed to deserialize data: {e}"),
-                        None,
-                    )),
-                },
-                Ok(Err(e)) => Err(McpError::internal_error(
-                    format!("Failed to execute plugin {plugin_name}: {e}"),
-                    None,
-                )),
-                Err(e) => Err(McpError::internal_error(
-                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
-                    None,
-                )),
-            };
-        }
-
-        Err(McpError::method_not_found::<CallToolRequestMethod>())
+        tracing::info!("got tools/call request {:?}", request);
+        self.call_tool(request).await
     }
 
     async fn list_tools(
@@ -336,68 +406,7 @@ impl ServerHandler for PluginService {
         _context: RequestContext<RoleServer>,
     ) -> std::result::Result<ListToolsResult, McpError> {
         tracing::info!("got tools/list request {:?}", request);
-        let plugins = self.plugins.read().await;
-
-        let mut payload = ListToolsResult::default();
-
-        for (plugin_name, plugin) in plugins.iter() {
-            let plugin_name = plugin_name.clone();
-            let plugin = Arc::clone(plugin);
-            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
-                McpError::internal_error(
-                    format!("Plugin configuration not found for {plugin_name}"),
-                    None,
-                )
-            })?;
-            let skip_tools = plugin_cfg
-                .runtime_config
-                .as_ref()
-                .and_then(|rc| rc.skip_tools.clone())
-                .unwrap_or_default();
-
-            match tokio::task::spawn_blocking(move || {
-                let mut plugin = plugin.lock().unwrap();
-                plugin.call::<&str, String>("describe", "")
-            })
-            .await
-            {
-                Ok(Ok(result)) => {
-                    if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
-                        for mut tool in parsed.tools {
-                            let tool_name = tool.name.as_ref() as &str;
-                            if skip_tools.iter().any(|s| s == tool_name) {
-                                log::info!(
-                                    "Skipping tool {} as requested in skip_tools",
-                                    tool.name
-                                );
-                                continue;
-                            }
-                            tool.name = std::borrow::Cow::Owned(match create_namespaced_tool_name(
-                                &plugin_name,
-                                tool_name,
-                            ) {
-                                Ok(namespaced) => namespaced,
-                                Err(_) => {
-                                    log::error!(
-                                        "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
-                                    );
-                                    continue;
-                                }
-                            });
-                            payload.tools.push(tool);
-                        }
-                    }
-                }
-                Ok(Err(e)) => {
-                    log::error!("{plugin_name} describe() error: {e}");
-                }
-                Err(e) => {
-                    log::error!("{plugin_name} spawn_blocking error: {e}");
-                }
-            }
-        }
-
-        Ok(payload)
+        self.list_tools().await
     }
 
     fn initialize(
