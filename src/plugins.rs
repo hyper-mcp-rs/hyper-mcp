@@ -1225,21 +1225,11 @@ plugins:
         );
 
         let call_result = result.unwrap();
-        assert!(
-            call_result
-                .content
-                .as_ref()
-                .map_or(false, |c| !c.is_empty()),
-            "Should return content from time tool"
-        );
 
-        // Verify we got some content back from the time tool
-        if let Some(content) = &call_result.content {
-            assert!(
-                !content.is_empty(),
-                "Time tool should return non-empty content"
-            );
-        }
+        assert!(
+            !call_result.content.is_empty(),
+            "call_result.content should not be empty"
+        );
 
         // Test calling with parse_time operation
         let request = CallToolRequestParam {
@@ -1267,12 +1257,11 @@ plugins:
 
         let call_result = result.unwrap();
         // Verify the parse_time operation returns content
-        if let Some(content) = &call_result.content {
-            assert!(
-                !content.is_empty(),
-                "Parse time operation should return non-empty content"
-            );
-        }
+
+        assert!(
+            !call_result.content.is_empty(),
+            "Parse time operation should return non-empty content"
+        );
     }
 
     #[tokio::test]
