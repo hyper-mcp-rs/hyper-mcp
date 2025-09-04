@@ -5,8 +5,7 @@
 The configuration is structured as follows:
 
 - **auths** (`object`, optional): Authentication configurations for HTTPS requests, keyed by URL.
-- **plugins**: An array of plugin configuration objects.
-  - **name** (`string`): Name of the plugin.
+- **plugins**: A map of plugin names to  plugin configuration objects.
   - **path** (`string`): OCI path or HTTP URL or local path for the plugin.
   - **runtime_config** (`object`, optional): Plugin-specific runtime configuration. The available fields are:
     - **skip_tools** (`array[string]`, optional): List of tool names to skip loading at runtime.
@@ -14,6 +13,48 @@ The configuration is structured as follows:
     - **allowed_paths** (`array[string]`, optional): List of allowed file system paths.
     - **env_vars** (`object`, optional): Key-value pairs of environment variables for the plugin.
     - **memory_limit** (`string`, optional): Memory limit for the plugin (e.g., `"512Mi"`).
+
+## Plugin Names
+
+Plugin names must follow strict naming conventions to ensure consistency and avoid conflicts:
+
+### Allowed Characters
+- **Letters**: A-Z, a-z (case-sensitive)
+- **Numbers**: 0-9
+- **Underscores**: _ (as separators only)
+
+### Naming Rules
+- Must start with a letter or number (not underscore)
+- Must end with a letter or number (not underscore)
+- Cannot contain consecutive underscores
+- Cannot contain hyphens or other special characters
+- Cannot contain spaces or whitespace
+
+### Valid Examples
+```
+✅ plugin
+✅ myPlugin
+✅ plugin_name
+✅ plugin123
+✅ my_awesome_plugin_v2
+✅ Plugin_Name_123
+```
+
+### Invalid Examples
+```
+❌ plugin-name        (hyphens not allowed)
+❌ plugin_            (cannot end with underscore)
+❌ _plugin            (cannot start with underscore)
+❌ plugin__name       (consecutive underscores)
+❌ plugin name        (spaces not allowed)
+❌ plugin@name        (special characters not allowed)
+```
+
+### Best Practices
+- Use descriptive, meaningful names
+- Follow consistent naming conventions within your organization
+- Consider using prefixes for related plugins (e.g., `company_auth`, `company_logging`)
+- Use underscores to separate logical components (e.g., `api_client`, `data_processor`)
 
 ## Authentication Configuration
 
@@ -135,7 +176,7 @@ Authentication is applied based on URL prefix matching:
 **Example:**
 ```yaml
 auths:
-  "https://example.com": 
+  "https://example.com":
     type: basic
     username: "broad-user"
     password: "broad-pass"
@@ -144,12 +185,12 @@ auths:
     token: "api-token"
   "https://example.com/api/v1":
     type: basic
-    username: "v1-user" 
+    username: "v1-user"
     password: "v1-pass"
 ```
 
 - Request to `https://example.com/api/v1/users` → uses v1 basic auth (longest match)
-- Request to `https://example.com/api/data` → uses api token auth  
+- Request to `https://example.com/api/data` → uses api token auth
 - Request to `https://example.com/public` → uses broad basic auth
 
 ### Keyring Authentication Example
@@ -223,7 +264,7 @@ Store different credentials for each environment:
 # Staging credentials
 security add-generic-password -a "staging-user" -s "example-staging" -w '{"type":"token","token":"staging-jwt-token"}'
 
-# Production credentials  
+# Production credentials
 security add-generic-password -a "prod-user" -s "example-prod" -w '{"type":"token","token":"prod-jwt-token"}'
 ```
 
@@ -242,7 +283,7 @@ Each team member stores their own credentials:
 # Developer A
 security add-generic-password -a "developer" -s "team-registry" -w '{"type":"basic","username":"alice","password":"alice_key"}'
 
-# Developer B  
+# Developer B
 security add-generic-password -a "developer" -s "team-registry" -w '{"type":"basic","username":"bob","password":"bob_key"}'
 ```
 
@@ -285,7 +326,7 @@ plugins:
       env_vars:
         FOO: "bar"
       memory_limit: "512Mi"
-  private-plugin:
+  private_plugin:
     url: "https://private.registry.io/my-plugin"
     runtime_config:
       allowed_hosts:
@@ -325,7 +366,7 @@ plugins:
         "memory_limit": "512Mi"
       }
     },
-    "private-plugin": {
+    "private_plugin": {
       "url": "https://private.registry.io/my-plugin",
       "runtime_config": {
         "allowed_hosts": ["private.registry.io"]
@@ -365,10 +406,10 @@ This error occurs when the keyring entry doesn't exist or can't be accessed.
    ```bash
    # macOS
    security find-generic-password -a "your-user" -s "your-service"
-   
+
    # Linux
    secret-tool lookup service "your-service" username "your-user"
-   
+
    # Windows
    cmdkey /list:"your-service"
    ```
@@ -407,10 +448,10 @@ This error occurs when the stored password isn't valid JSON or doesn't match the
    ```bash
    # Create a test entry
    security add-generic-password -a "test-user" -s "test-service" -w '{"type":"token","token":"test"}'
-   
+
    # Retrieve it
    security find-generic-password -a "test-user" -s "test-service" -w
-   
+
    # Clean up
    security delete-generic-password -a "test-user" -s "test-service"
    ```
@@ -424,7 +465,7 @@ This error occurs when the stored password isn't valid JSON or doesn't match the
    ```bash
    # Ensure config file is readable
    ls -la config.yaml
-   
+
    # Set appropriate permissions
    chmod 600 config.yaml
    ```

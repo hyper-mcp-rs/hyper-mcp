@@ -14,7 +14,7 @@ To use this, you will need to update your config like this. Note the `allowed_ho
       "path": "/home/anh/Code/hyper-mcp/wasm/time.wasm"
     },
     {
-      "name": "qr-code",
+      "name": "qr_code",
       "path": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
     },
     {

@@ -1,4 +1,4 @@
-# crypto-price
+# crypto_price
 
 ## Usage
 
@@ -6,7 +6,7 @@
 {
   "plugins": [
     {
-      "name": "crypto-price",
+      "name": "crypto_price",
       "path": "oci://ghcr.io/tuananh/crypto-price-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["api.coingecko.com"]

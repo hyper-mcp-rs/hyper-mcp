@@ -1,4 +1,4 @@
-# meme-generator
+# meme_generator
 
 A plugin for generating memes using predefined templates with text overlays.
 
@@ -13,7 +13,7 @@ Call with:
 {
   "plugins": [
     {
-      "name": "meme-generator",
+      "name": "meme_generator",
       "path": "oci://ghcr.io/tuananh/meme-generator-plugin:latest"
     }
   ]

@@ -19,7 +19,7 @@ Create a sample config file like this, assume at `/home/ubuntu/config.json`
     "time": {
       "url": "oci://ghcr.io/tuananh/time-plugin:latest"
     },
-    "qr-code": {
+    "qr_code": {
       "url": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
     }
   }
@@ -118,7 +118,7 @@ The config file will be automatically created and managed by Terraform. Here's a
     "time": {
       "url": "oci://ghcr.io/tuananh/time-plugin:latest"
     },
-    "qr-code": {
+    "qr_code": {
       "url": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
     }
   }
@@ -140,7 +140,7 @@ For production deployments with authentication, update the config to use Secret 
     "time": {
       "url": "oci://ghcr.io/tuananh/time-plugin:latest"
     },
-    "private-plugin": {
+    "private_plugin": {
       "url": "https://private.registry.example.com/secure-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["private.registry.example.com"]
