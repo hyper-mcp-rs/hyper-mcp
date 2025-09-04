@@ -19,5 +19,5 @@ auths:
     service: test-service
     # Missing user field
 plugins:
-  test-plugin:
+  test_plugin:
     url: "file:///path/to/plugin"

@@ -20,21 +20,16 @@
     }
   },
   "plugins": {
-    "test-plugin": {
+    "test_plugin": {
       "url": "file:///path/to/plugin",
       "runtime_config": {
-        "allowed_hosts": [
-          "api.example.com",
-          "secure.api.com"
-        ]
+        "allowed_hosts": ["api.example.com", "secure.api.com"]
       }
     },
-    "auth-test-plugin": {
+    "auth_test_plugin": {
       "url": "https://secure.api.com/plugin",
       "runtime_config": {
-        "allowed_hosts": [
-          "secure.api.com"
-        ]
+        "allowed_hosts": ["secure.api.com"]
       }
     }
   }

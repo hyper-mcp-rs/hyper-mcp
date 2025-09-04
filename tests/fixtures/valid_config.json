@@ -1,20 +1,11 @@
 {
   "plugins": {
-    "test-plugin": {
+    "test_plugin": {
       "url": "file:///path/to/plugin",
       "runtime_config": {
-        "skip_tools": [
-          "tool1",
-          "tool2"
-        ],
-        "allowed_hosts": [
-          "example.com",
-          "localhost"
-        ],
-        "allowed_paths": [
-          "/tmp",
-          "/var/log"
-        ],
+        "skip_tools": ["tool1", "tool2"],
+        "allowed_hosts": ["example.com", "localhost"],
+        "allowed_paths": ["/tmp", "/var/log"],
         "env_vars": {
           "DEBUG": "true",
           "LOG_LEVEL": "info"
@@ -22,15 +13,13 @@
         "memory_limit": "1GB"
       }
     },
-    "another-plugin": {
+    "another_plugin": {
       "url": "https://example.com/plugin",
       "runtime_config": {
-        "allowed_hosts": [
-          "api.example.com"
-        ]
+        "allowed_hosts": ["api.example.com"]
       }
     },
-    "minimal-plugin": {
+    "minimal_plugin": {
       "url": "http://localhost:3000/plugin"
     }
   }

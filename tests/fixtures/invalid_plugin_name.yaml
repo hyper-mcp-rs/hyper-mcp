@@ -8,5 +8,5 @@ plugins:
       allowed_hosts:
         - "example.com"
 
-  valid-plugin:
+  valid_plugin:
     url: "https://example.com/plugin"

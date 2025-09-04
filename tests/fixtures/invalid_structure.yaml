@@ -1,5 +1,5 @@
 # This is an invalid structure - missing the 'plugins' top-level map
-test-plugin:
+test_plugin:
   url: "file:///path/to/plugin"
   runtime_config:
     skip_tools:
@@ -9,10 +9,10 @@ test-plugin:
 # This puts plugins at the wrong level
 configuration:
   plugins:
-    another-plugin:
+    another_plugin:
       url: "https://example.com/plugin"
 
 # This has the correct top-level key but incorrect structure
 plugins:
-  - name: minimal-plugin
+  - name: minimal_plugin
     url: "http://localhost:3000/plugin"

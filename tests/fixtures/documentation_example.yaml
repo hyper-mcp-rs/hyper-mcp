@@ -24,8 +24,8 @@ plugins:
       env_vars:
         FOO: "bar"
       memory_limit: "512Mi"
-  private-plugin:
-    url: "https://private.registry.io/my-plugin"
+  private_plugin:
+    url: "https://private.registry.io/my_plugin"
     runtime_config:
       allowed_hosts:
         - "private.registry.io"

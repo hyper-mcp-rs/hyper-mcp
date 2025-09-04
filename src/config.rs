@@ -20,7 +20,7 @@ impl fmt::Display for PluginNameParseError {
 impl std::error::Error for PluginNameParseError {}
 
 static PLUGIN_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$").expect("Failed to compile plugin name regex")
+    Regex::new(r"^[A-Za-z0-9]+(?:[_][A-Za-z0-9]+)*$").expect("Failed to compile plugin name regex")
 });
 
 impl PluginName {
@@ -175,14 +175,7 @@ mod tests {
 
     #[test]
     fn test_plugin_name_valid() {
-        let valid_names = vec![
-            "plugin1",
-            "plugin-name",
-            "plugin_name",
-            "PluginName",
-            "plugin123",
-            "plugin-name_123",
-        ];
+        let valid_names = vec!["plugin1", "plugin_name", "PluginName", "plugin123"];
 
         for name in valid_names {
             assert!(
@@ -194,37 +187,265 @@ mod tests {
     }
 
     #[test]
-    fn test_plugin_name_invalid() {
-        let invalid_names = vec![
-            "plugin name",  // spaces not allowed
-            "plugin@name",  // special characters not allowed
-            "-pluginname",  // cannot start with hyphen
-            "pluginname-",  // cannot end with hyphen
-            "_pluginname",  // cannot start with underscore
-            "pluginname_",  // cannot end with underscore
-            "plugin--name", // consecutive hyphens not allowed
-            "plugin__name", // consecutive underscores not allowed
-            "",             // empty string
+    fn test_plugin_name_invalid_comprehensive() {
+        // Test various hyphen scenarios - hyphens are no longer allowed
+        let hyphen_cases = vec![
+            ("plugin-name", "single hyphen"),
+            ("plugin-name-test", "multiple hyphens"),
+            ("-plugin", "leading hyphen"),
+            ("plugin-", "trailing hyphen"),
+            ("--plugin", "leading double hyphen"),
+            ("plugin--", "trailing double hyphen"),
+            ("plugin--name", "consecutive hyphens"),
+            ("plugin-_name", "hyphen before underscore"),
+            ("plugin_-name", "hyphen after underscore"),
+            ("my-plugin-123", "hyphens with numbers"),
+            ("Plugin-Name", "hyphens with capitals"),
         ];
-        for name in invalid_names {
+
+        for (name, description) in hyphen_cases {
             assert!(
                 PluginName::try_from(name).is_err(),
-                "Parsed invalid name: {}",
-                name
+                "Should reject plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test underscore edge cases
+        let underscore_cases = vec![
+            ("_plugin", "leading underscore"),
+            ("plugin_", "trailing underscore"),
+            ("__plugin", "leading double underscore"),
+            ("plugin__", "trailing double underscore"),
+            ("plugin__name", "consecutive underscores"),
+            ("_plugin_", "leading and trailing underscores"),
+        ];
+
+        for (name, description) in underscore_cases {
+            assert!(
+                PluginName::try_from(name).is_err(),
+                "Should reject plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test special characters
+        let special_char_cases = vec![
+            ("plugin@name", "at symbol"),
+            ("plugin#name", "hash symbol"),
+            ("plugin$name", "dollar sign"),
+            ("plugin%name", "percent sign"),
+            ("plugin&name", "ampersand"),
+            ("plugin*name", "asterisk"),
+            ("plugin(name)", "parentheses"),
+            ("plugin+name", "plus sign"),
+            ("plugin=name", "equals sign"),
+            ("plugin[name]", "square brackets"),
+            ("plugin{name}", "curly braces"),
+            ("plugin|name", "pipe symbol"),
+            ("plugin\\name", "backslash"),
+            ("plugin:name", "colon"),
+            ("plugin;name", "semicolon"),
+            ("plugin\"name", "double quote"),
+            ("plugin'name", "single quote"),
+            ("plugin<name>", "angle brackets"),
+            ("plugin,name", "comma"),
+            ("plugin.name", "period"),
+            ("plugin/name", "forward slash"),
+            ("plugin?name", "question mark"),
+        ];
+
+        for (name, description) in special_char_cases {
+            assert!(
+                PluginName::try_from(name).is_err(),
+                "Should reject plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test whitespace cases
+        let whitespace_cases = vec![
+            ("plugin name", "space in middle"),
+            (" plugin", "leading space"),
+            ("plugin ", "trailing space"),
+            ("  plugin", "leading double space"),
+            ("plugin  ", "trailing double space"),
+            ("plugin  name", "double space in middle"),
+            ("plugin\tname", "tab character"),
+            ("plugin\nname", "newline character"),
+            ("plugin\rname", "carriage return"),
+        ];
+
+        for (name, description) in whitespace_cases {
+            assert!(
+                PluginName::try_from(name).is_err(),
+                "Should reject plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test empty and minimal cases
+        let empty_cases = vec![
+            ("", "empty string"),
+            ("_", "single underscore"),
+            ("-", "single hyphen"),
+            ("__", "double underscore"),
+            ("--", "double hyphen"),
+            ("_-", "underscore-hyphen"),
+            ("-_", "hyphen-underscore"),
+        ];
+
+        for (name, description) in empty_cases {
+            assert!(
+                PluginName::try_from(name).is_err(),
+                "Should reject plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test unicode and non-ASCII cases
+        let unicode_cases = vec![
+            ("plugín", "accented character"),
+            ("plügïn", "umlaut characters"),
+            ("плагин", "cyrillic characters"),
+            ("プラグイン", "japanese characters"),
+            ("插件", "chinese characters"),
+            ("plugin名前", "mixed ASCII and japanese"),
+            ("café-plugin", "accented character with hyphen"),
+        ];
+
+        for (name, description) in unicode_cases {
+            assert!(
+                PluginName::try_from(name).is_err(),
+                "Should reject plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+    }
+
+    #[test]
+    fn test_plugin_name_valid_comprehensive() {
+        // Test basic alphanumeric names
+        let basic_cases = vec![
+            ("plugin", "simple lowercase"),
+            ("Plugin", "simple capitalized"),
+            ("PLUGIN", "simple uppercase"),
+            ("MyPlugin", "camelCase"),
+            ("plugin123", "with numbers"),
+            ("123plugin", "starting with numbers"),
+            ("p", "single character"),
+            ("P", "single uppercase character"),
+            ("1", "single number"),
+        ];
+
+        for (name, description) in basic_cases {
+            assert!(
+                PluginName::try_from(name).is_ok(),
+                "Should accept valid plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test names with underscores as separators
+        let underscore_cases = vec![
+            ("plugin_name", "simple underscore"),
+            ("my_plugin", "underscore separator"),
+            ("plugin_name_test", "multiple underscores"),
+            ("Plugin_Name", "underscore with capitals"),
+            ("plugin_123", "underscore with numbers"),
+            ("my_plugin_v2", "complex with version"),
+            ("a_b", "minimal underscore case"),
+            ("test_plugin_name_123", "long with mixed content"),
+        ];
+
+        for (name, description) in underscore_cases {
+            assert!(
+                PluginName::try_from(name).is_ok(),
+                "Should accept valid plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test mixed alphanumeric cases
+        let mixed_cases = vec![
+            ("plugin1", "letters and single digit"),
+            ("plugin123", "letters and multiple digits"),
+            ("Plugin1Name", "mixed case with digits"),
+            ("myPlugin2", "camelCase with digit"),
+            ("testPlugin123", "longer mixed case"),
+            ("ABC123", "all caps with numbers"),
+            ("plugin1_test2", "mixed with underscore"),
+            ("My_Plugin_V123", "complex mixed case"),
+        ];
+
+        for (name, description) in mixed_cases {
+            assert!(
+                PluginName::try_from(name).is_ok(),
+                "Should accept valid plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test longer valid names
+        let longer_cases = vec![
+            (
+                "very_long_plugin_name_that_should_be_valid",
+                "very long name",
+            ),
+            (
+                "plugin_with_many_underscores_and_numbers_123",
+                "long mixed content",
+            ),
+            ("MyVeryLongPluginNameThatShouldWork", "long camelCase"),
+            ("VERY_LONG_UPPERCASE_PLUGIN_NAME", "long uppercase"),
+        ];
+
+        for (name, description) in longer_cases {
+            assert!(
+                PluginName::try_from(name).is_ok(),
+                "Should accept valid plugin name '{}' ({})",
+                name,
+                description
+            );
+        }
+
+        // Test edge cases that should be valid
+        let edge_cases = vec![
+            ("a1", "minimal valid case"),
+            ("1a", "number then letter"),
+            ("a_1", "letter underscore number"),
+            ("1_a", "number underscore letter"),
+        ];
+
+        for (name, description) in edge_cases {
+            assert!(
+                PluginName::try_from(name).is_ok(),
+                "Should accept valid plugin name '{}' ({})",
+                name,
+                description
             );
         }
     }
 
     #[test]
     fn test_plugin_name_display() {
-        let name_str = "plugin-name_123";
+        let name_str = "plugin_name_123";
         let plugin_name = PluginName::try_from(name_str).unwrap();
         assert_eq!(plugin_name.to_string(), name_str);
     }
 
     #[test]
     fn test_plugin_name_serialize_deserialize() {
-        let name_str = "plugin-name_123";
+        let name_str = "plugin_name_123";
         let plugin_name = PluginName::try_from(name_str).unwrap();
 
         // Serialize
@@ -254,21 +475,21 @@ mod tests {
         assert!(
             config
                 .plugins
-                .contains_key(&PluginName("test-plugin".to_string()))
+                .contains_key(&PluginName("test_plugin".to_string()))
         );
         assert!(
             config
                 .plugins
-                .contains_key(&PluginName("another-plugin".to_string()))
+                .contains_key(&PluginName("another_plugin".to_string()))
         );
         assert!(
             config
                 .plugins
-                .contains_key(&PluginName("minimal-plugin".to_string()))
+                .contains_key(&PluginName("minimal_plugin".to_string()))
         );
 
         // Verify plugin configs
-        let test_plugin = &config.plugins[&PluginName("test-plugin".to_string())];
+        let test_plugin = &config.plugins[&PluginName("test_plugin".to_string())];
         assert_eq!(test_plugin.url.to_string(), "file:///path/to/plugin");
 
         let runtime_config = test_plugin.runtime_config.as_ref().unwrap();
@@ -279,7 +500,7 @@ mod tests {
         assert_eq!(runtime_config.memory_limit.as_ref().unwrap(), "1GB");
 
         // Verify minimal plugin has no runtime config
-        let minimal_plugin = &config.plugins[&PluginName("minimal-plugin".to_string())];
+        let minimal_plugin = &config.plugins[&PluginName("minimal_plugin".to_string())];
         assert!(minimal_plugin.runtime_config.is_none());
     }
 
@@ -302,21 +523,21 @@ mod tests {
         assert!(
             config
                 .plugins
-                .contains_key(&PluginName("test-plugin".to_string()))
+                .contains_key(&PluginName("test_plugin".to_string()))
         );
         assert!(
             config
                 .plugins
-                .contains_key(&PluginName("another-plugin".to_string()))
+                .contains_key(&PluginName("another_plugin".to_string()))
         );
         assert!(
             config
                 .plugins
-                .contains_key(&PluginName("minimal-plugin".to_string()))
+                .contains_key(&PluginName("minimal_plugin".to_string()))
         );
 
         // Verify env vars
-        let test_plugin = &config.plugins[&PluginName("test-plugin".to_string())];
+        let test_plugin = &config.plugins[&PluginName("test_plugin".to_string())];
         let runtime_config = test_plugin.runtime_config.as_ref().unwrap();
         assert_eq!(runtime_config.env_vars.as_ref().unwrap()["DEBUG"], "true");
         assert_eq!(
@@ -540,7 +761,7 @@ token: test-token-123
     }
   },
   "plugins": {
-    "test-plugin": {
+    "test_plugin": {
       "url": "file:///path/to/plugin"
     }
   }
@@ -587,7 +808,7 @@ auths:
     type: token
     token: bearer-token-123
 plugins:
-  test-plugin:
+  test_plugin:
     url: "file:///path/to/plugin"
 "#;
 
@@ -609,7 +830,7 @@ plugins:
         let json = r#"
 {
   "plugins": {
-    "test-plugin": {
+    "test_plugin": {
       "url": "file:///path/to/plugin"
     }
   }
@@ -861,7 +1082,7 @@ plugins:
         let json_without_auths = r#"
 {
   "plugins": {
-    "test-plugin": {
+    "test_plugin": {
       "url": "file:///path/to/plugin"
     }
   }
@@ -876,7 +1097,7 @@ plugins:
 {
   "auths": {},
   "plugins": {
-    "test-plugin": {
+    "test_plugin": {
       "url": "file:///path/to/plugin"
     }
   }
@@ -955,14 +1176,14 @@ plugins:
         assert!(
             config
                 .plugins
-                .contains_key(&PluginName("private-plugin".to_string()))
+                .contains_key(&PluginName("private_plugin".to_string()))
         );
 
         // Verify private plugin config
-        let private_plugin = &config.plugins[&PluginName("private-plugin".to_string())];
+        let private_plugin = &config.plugins[&PluginName("private_plugin".to_string())];
         assert_eq!(
             private_plugin.url.to_string(),
-            "https://private.registry.io/my-plugin"
+            "https://private.registry.io/my_plugin"
         );
         assert!(private_plugin.runtime_config.is_some());
     }
@@ -1027,7 +1248,7 @@ auths:
     username: "v1-user"
     password: "v1-pass"
 plugins:
-  test-plugin:
+  test_plugin:
     url: "file:///test"
 "#;
 
@@ -1319,7 +1540,7 @@ auths:
     username: "basic-user"
     password: "basic-pass"
 plugins:
-  test-plugin:
+  test_plugin:
     url: "file:///test/plugin"
     runtime_config:
       allowed_hosts:
@@ -1491,7 +1712,7 @@ plugins:
                 assert!(
                     config
                         .plugins
-                        .contains_key(&PluginName("test-plugin".to_string()))
+                        .contains_key(&PluginName("test_plugin".to_string()))
                 );
 
                 println!(
@@ -1846,7 +2067,7 @@ plugins:
     }
   },
   "plugins": {
-    "test-plugin": {
+    "test_plugin": {
       "url": "file:///path/to/plugin"
     }
   }
@@ -1891,7 +2112,7 @@ auths:
     type: token
     token: token-123
 plugins:
-  test-plugin:
+  test_plugin:
     url: "file:///path/to/plugin"
 "#;
 
