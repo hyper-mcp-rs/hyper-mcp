@@ -43,21 +43,16 @@ fn create_namespaced_tool_name(
     plugin_name: &PluginName,
     tool_name: &str,
 ) -> Result<String, ToolNameParseError> {
-    if tool_name.contains("::") {
-        // If the tool name already contains '::', return it as is to avoid ambiguity
-        return Err(ToolNameParseError);
-    }
-    Ok(format!("{plugin_name}::{tool_name}"))
+    Ok(format!("{plugin_name}-{tool_name}"))
 }
 
 fn parse_namespaced_tool_name(
     tool_name: std::borrow::Cow<'static, str>,
 ) -> Result<(PluginName, String), ToolNameParseError> {
-    let parts: Vec<&str> = tool_name.split("::").collect();
-    if parts.len() != 2 {
-        return Err(ToolNameParseError);
+    if let Some((plugin_name, tool_name)) = tool_name.split_once("-") {
+        return Ok((PluginName::from_str(plugin_name)?, tool_name.to_string()));
     }
-    Ok((PluginName::from_str(parts[0])?, parts[1].to_string()))
+    Err(ToolNameParseError)
 }
 
 #[derive(Clone)]
@@ -474,7 +469,7 @@ mod tests {
     fn test_create_tool_name() {
         let plugin_name = PluginName::from_str("example_plugin").unwrap();
         let tool_name = "example_tool";
-        let expected = "example_plugin::example_tool";
+        let expected = "example_plugin-example_tool";
         assert_eq!(
             create_namespaced_tool_name(&plugin_name, tool_name).unwrap(),
             expected
@@ -483,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_parse_tool_name() {
-        let tool_name = "example_plugin::example_tool".to_string();
+        let tool_name = "example_plugin-example_tool".to_string();
         let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
         assert!(result.is_ok());
         let (plugin_name, tool) = result.unwrap();
@@ -494,16 +489,17 @@ mod tests {
     #[test]
     fn test_create_tool_name_invalid() {
         let plugin_name = PluginName::from_str("example_plugin").unwrap();
-        let tool_name = "invalid::tool";
-        assert!(create_namespaced_tool_name(&plugin_name, tool_name).is_err());
+        let tool_name = "invalid-tool";
+        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        assert_eq!(result, "example_plugin-invalid-tool");
     }
 
     #[test]
     fn test_create_namespaced_tool_name_with_special_chars() {
         let plugin_name = PluginName::from_str("test_plugin_123").unwrap();
-        let tool_name = "tool-name_with_underscores";
+        let tool_name = "tool_name_with_underscores";
         let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
-        assert_eq!(result, "test_plugin_123::tool-name_with_underscores");
+        assert_eq!(result, "test_plugin_123-tool_name_with_underscores");
     }
 
     #[test]
@@ -511,23 +507,23 @@ mod tests {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "";
         let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
-        assert_eq!(result, "test_plugin::");
+        assert_eq!(result, "test_plugin-");
     }
 
     #[test]
-    fn test_create_namespaced_tool_name_multiple_double_colons() {
+    fn test_create_namespaced_tool_name_multiple_hyphens() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
-        let tool_name = "invalid::tool::name";
-        let result = create_namespaced_tool_name(&plugin_name, tool_name);
-        assert!(result.is_err());
+        let tool_name = "invalid-tool-name";
+        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        assert_eq!(result, "test_plugin-invalid-tool-name");
     }
 
     #[test]
     fn test_parse_namespaced_tool_name_with_special_chars() {
-        let tool_name = "plugin_name_123::tool-name_456".to_string();
+        let tool_name = "plugin_name_123-tool_name_456".to_string();
         let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name)).unwrap();
         assert_eq!(result.0.as_str(), "plugin_name_123");
-        assert_eq!(result.1, "tool-name_456");
+        assert_eq!(result.1, "tool_name_456");
     }
 
     #[test]
@@ -540,14 +536,15 @@ mod tests {
 
     #[test]
     fn test_parse_namespaced_tool_name_multiple_separators() {
-        let tool_name = "plugin::tool::extra".to_string();
-        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
-        assert!(result.is_err());
+        let tool_name = "plugin-tool-extra".to_string();
+        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name)).unwrap();
+        assert_eq!(result.0.as_str(), "plugin");
+        assert_eq!(result.1, "tool-extra");
     }
 
     #[test]
     fn test_parse_namespaced_tool_name_empty_parts() {
-        let tool_name = "::tool".to_string();
+        let tool_name = "-tool".to_string();
         let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
         // This should still work but with empty plugin name
         if result.is_ok() {
@@ -558,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_parse_namespaced_tool_name_only_separator() {
-        let tool_name = "::".to_string();
+        let tool_name = "-".to_string();
         let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
         // Should result in empty plugin and tool names
         if let Ok((plugin, tool)) = result {
@@ -590,27 +587,23 @@ mod tests {
     #[test]
     fn test_round_trip_tool_name_operations() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
-        let original_tool = "my-tool";
+        let original_tool = "my_tool";
 
         let namespaced = create_namespaced_tool_name(&plugin_name, original_tool).unwrap();
         let (parsed_plugin, parsed_tool) =
             parse_namespaced_tool_name(std::borrow::Cow::Owned(namespaced)).unwrap();
 
         assert_eq!(parsed_plugin.as_str(), "test_plugin");
-        assert_eq!(parsed_tool, "my-tool");
+        assert_eq!(parsed_tool, "my_tool");
     }
 
     #[test]
     fn test_tool_name_with_unicode() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
-        let tool_name = "тест-工具"; // Cyrillic and Chinese characters
+        let tool_name = "тест_工具"; // Cyrillic and Chinese characters
 
-        let result = create_namespaced_tool_name(&plugin_name, tool_name);
-        assert!(result.is_ok());
-
-        let namespaced = result.unwrap();
-        assert!(namespaced.contains("::"));
-        assert!(namespaced.contains("тест-工具"));
+        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        assert_eq!(result, "test_plugin-тест_工具");
     }
 
     #[test]
@@ -642,27 +635,26 @@ mod tests {
     #[test]
     fn test_tool_name_with_numbers_and_special_chars() {
         let plugin_name = PluginName::from_str("plugin_123").unwrap();
-        let tool_name = "tool_456-test";
+        let tool_name = "tool_456_test";
 
         let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
-        assert_eq!(result, "plugin_123::tool_456-test");
+        assert_eq!(result, "plugin_123-tool_456_test");
 
         let (parsed_plugin, parsed_tool) =
             parse_namespaced_tool_name(std::borrow::Cow::Owned(result)).unwrap();
         assert_eq!(parsed_plugin.as_str(), "plugin_123");
-        assert_eq!(parsed_tool, "tool_456-test");
+        assert_eq!(parsed_tool, "tool_456_test");
     }
 
     #[test]
     fn test_borrowed_vs_owned_cow_strings() {
         // Test with borrowed string
-        let borrowed_result =
-            parse_namespaced_tool_name(std::borrow::Cow::Borrowed("plugin::tool"));
+        let borrowed_result = parse_namespaced_tool_name(std::borrow::Cow::Borrowed("plugin-tool"));
         assert!(borrowed_result.is_ok());
 
         // Test with owned string
         let owned_result =
-            parse_namespaced_tool_name(std::borrow::Cow::Owned("plugin::tool".to_string()));
+            parse_namespaced_tool_name(std::borrow::Cow::Owned("plugin-tool".to_string()));
         assert!(owned_result.is_ok());
 
         let (plugin1, tool1) = borrowed_result.unwrap();
@@ -678,11 +670,11 @@ mod tests {
 
         let edge_cases = vec![
             ("a", true, "single character tool"),
-            ("tool-123", true, "tool with numbers"),
+            ("tool_123", true, "tool with numbers"),
             ("TOOL_NAME", true, "uppercase tool name"),
-            ("tool::invalid", false, "tool with double colon"),
-            ("::tool", false, "tool starting with double colon"),
-            ("tool::", false, "tool ending with double colon"),
+            ("tool-invalid", true, "tool with hyphen"),
+            ("-tool", true, "tool starting with hyphen"),
+            ("tool-", true, "tool ending with hyphen"),
         ];
 
         for (tool_name, should_succeed, description) in edge_cases {
@@ -710,13 +702,13 @@ mod tests {
     #[test]
     fn test_namespaced_tool_format_invariants() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
-        let tool_name = "test-tool";
+        let tool_name = "test_tool";
 
         let namespaced = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
 
-        // Should contain exactly one "::"
-        let double_colon_count = namespaced.matches("::").count();
-        assert_eq!(double_colon_count, 1, "Should contain exactly one '::'");
+        // Should contain at least one "-" (the separator)
+        let hyphen_count = namespaced.matches("-").count();
+        assert!(hyphen_count >= 1, "Should contain at least one '-'");
 
         // Should start with plugin name
         assert!(
@@ -726,12 +718,18 @@ mod tests {
 
         // Should end with tool name
         assert!(
-            namespaced.ends_with("test-tool"),
+            namespaced.ends_with("test_tool"),
             "Should end with tool name"
         );
 
-        // Should be in the format "plugin::tool"
-        assert_eq!(namespaced, "test_plugin::test-tool");
+        // Should be in the format "plugin-tool"
+        assert_eq!(namespaced, "test_plugin-test_tool");
+
+        // Test parsing works correctly with the first hyphen as separator
+        let (parsed_plugin, parsed_tool) =
+            parse_namespaced_tool_name(std::borrow::Cow::Owned(namespaced.clone())).unwrap();
+        assert_eq!(parsed_plugin.as_str(), "test_plugin");
+        assert_eq!(parsed_tool, "test_tool");
     }
 
     // Helper functions for PluginService tests
@@ -940,7 +938,7 @@ plugins:
         );
 
         // Verify we get the expected tools from time.wasm plugin
-        let expected_tools = vec!["time_plugin::time"];
+        let expected_tools = vec!["time_plugin-time"];
 
         let actual_tool_names: Vec<String> = list_tools_result
             .tools
@@ -970,8 +968,8 @@ plugins:
         let time_tool = list_tools_result
             .tools
             .iter()
-            .find(|tool| tool.name == "time_plugin::time")
-            .expect("time_plugin::time tool should exist");
+            .find(|tool| tool.name == "time_plugin-time")
+            .expect("time_plugin-time tool should exist");
 
         // Check that the tool description mentions the expected operations
         let description = time_tool
@@ -1070,8 +1068,8 @@ plugins:
             .collect();
 
         assert!(
-            !tool_names.contains(&"time_plugin::time".to_string()),
-            "time_plugin::time should be skipped but was found in tools: {:?}",
+            !tool_names.contains(&"time_plugin-time".to_string()),
+            "time_plugin-time should be skipped but was found in tools: {:?}",
             tool_names
         );
 
@@ -1157,7 +1155,7 @@ plugins:
 
         // Test calling tool on nonexistent plugin
         let request = CallToolRequestParam {
-            name: std::borrow::Cow::Borrowed("nonexistent_plugin::some_tool"),
+            name: std::borrow::Cow::Borrowed("nonexistent_plugin-some_tool"),
             arguments: None,
         };
 
@@ -1206,7 +1204,7 @@ plugins:
 
         // Test calling the time tool with get_time_utc operation
         let request = CallToolRequestParam {
-            name: std::borrow::Cow::Borrowed("time_plugin::time"),
+            name: std::borrow::Cow::Borrowed("time_plugin-time"),
             arguments: Some({
                 let mut map = serde_json::Map::new();
                 map.insert(
@@ -1233,7 +1231,7 @@ plugins:
 
         // Test calling with parse_time operation
         let request = CallToolRequestParam {
-            name: std::borrow::Cow::Borrowed("time_plugin::time"),
+            name: std::borrow::Cow::Borrowed("time_plugin-time"),
             arguments: Some({
                 let mut map = serde_json::Map::new();
                 map.insert(
@@ -1298,7 +1296,7 @@ plugins:
 
         // Test calling the skipped time tool
         let request = CallToolRequestParam {
-            name: std::borrow::Cow::Borrowed("time_plugin::time"),
+            name: std::borrow::Cow::Borrowed("time_plugin-time"),
             arguments: Some({
                 let mut map = serde_json::Map::new();
                 map.insert(
