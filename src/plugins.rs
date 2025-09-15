@@ -300,15 +300,15 @@ impl ServerHandler for PluginService {
         let plugins = self.plugins.read().await;
 
         if let Some(plugin_arc) = plugins.get(&plugin_name) {
-            let plugin_clone = Arc::clone(plugin_arc);
+            let plugin = Arc::clone(plugin_arc);
 
             let cancel_handle = {
-                let guard = plugin_clone.lock().unwrap();
+                let guard = plugin.lock().unwrap();
                 guard.cancel_handle()
             };
 
             let mut join = tokio::task::spawn_blocking(move || {
-                let mut plugin = plugin_clone.lock().unwrap();
+                let mut plugin = plugin.lock().unwrap();
                 plugin.call::<&str, String>("call", &json_string)
             });
 
@@ -344,7 +344,7 @@ impl ServerHandler for PluginService {
                         ));
                     }
 
-                    return match tokio::time::timeout(std::time::Duration::from_millis(150), join).await {
+                    return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
                         Ok(Ok(Ok(_))) => Err(McpError::internal_error(
                             format!("Plugin {plugin_name} was cancelled"),
                             None,
@@ -372,7 +372,7 @@ impl ServerHandler for PluginService {
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParam>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> std::result::Result<ListToolsResult, McpError> {
         tracing::info!("got tools/list request {:?}", request);
         let plugins = self.plugins.read().await;
@@ -382,6 +382,12 @@ impl ServerHandler for PluginService {
         for (plugin_name, plugin) in plugins.iter() {
             let plugin_name = plugin_name.clone();
             let plugin = Arc::clone(plugin);
+
+            let cancel_handle = {
+                let guard = plugin.lock().unwrap();
+                guard.cancel_handle()
+            };
+
             let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
@@ -394,44 +400,87 @@ impl ServerHandler for PluginService {
                 .and_then(|rc| rc.skip_tools.clone())
                 .unwrap_or_default();
 
-            match tokio::task::spawn_blocking(move || {
+            let mut join = tokio::task::spawn_blocking(move || {
                 let mut plugin = plugin.lock().unwrap();
                 plugin.call::<&str, String>("describe", "")
-            })
-            .await
-            {
-                Ok(Ok(result)) => {
-                    if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
-                        for mut tool in parsed.tools {
-                            let tool_name = tool.name.as_ref() as &str;
-                            if skip_tools.iter().any(|s| s == tool_name) {
-                                log::info!(
-                                    "Skipping tool {} as requested in skip_tools",
-                                    tool.name
-                                );
-                                continue;
-                            }
-                            tool.name = std::borrow::Cow::Owned(match create_namespaced_tool_name(
-                                &plugin_name,
-                                tool_name,
-                            ) {
-                                Ok(namespaced) => namespaced,
-                                Err(_) => {
-                                    log::error!(
-                                        "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
-                                    );
-                                    continue;
+            });
+
+            tokio::select! {
+                // Finished normally
+                res = &mut join => {
+                    match res {
+                        Ok(Ok(result)) => {
+                            if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
+                                for mut tool in parsed.tools {
+                                    let tool_name = tool.name.as_ref() as &str;
+                                    if skip_tools.iter().any(|s| s == tool_name) {
+                                        log::info!(
+                                            "Skipping tool {} as requested in skip_tools",
+                                            tool.name
+                                        );
+                                        continue;
+                                    }
+                                    tool.name = std::borrow::Cow::Owned(match create_namespaced_tool_name(
+                                        &plugin_name,
+                                        tool_name,
+                                    ) {
+                                        Ok(namespaced) => namespaced,
+                                        Err(_) => {
+                                            log::error!(
+                                                "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
+                                            );
+                                            continue;
+                                        }
+                                    });
+                                    payload.tools.push(tool);
                                 }
-                            });
-                            payload.tools.push(tool);
+                            }
                         }
+                        Ok(Err(e)) => {
+                            log::error!("{plugin_name} describe() error: {e}");
+                            return Err(McpError::internal_error(
+                                format!("Failed to describe plugin {plugin_name}: {e}"),
+                                None,
+                            ));
+                        }
+                        Err(e) => {
+                            log::error!("{plugin_name} spawn_blocking error: {e}");
+                            return Err(McpError::internal_error(
+                                format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                                None,
+                            ));
+                        }
+                    };
+                }
+
+                //Cancellation requested
+                _ = context.ct.cancelled() => {
+                    if let Err(e) = cancel_handle.cancel() {
+                        log::error!("Failed to cancel plugin {plugin_name}: {e}");
+                        return Err(McpError::internal_error(
+                            format!("Failed to cancel plugin {plugin_name}: {e}"),
+                            None,
+                        ));
                     }
-                }
-                Ok(Err(e)) => {
-                    log::error!("{plugin_name} describe() error: {e}");
-                }
-                Err(e) => {
-                    log::error!("{plugin_name} spawn_blocking error: {e}");
+
+                    return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
+                        Ok(Ok(Ok(_))) => Err(McpError::internal_error(
+                            format!("Plugin {plugin_name} was cancelled"),
+                            None,
+                        )),
+                        Ok(Ok(Err(e))) => Err(McpError::internal_error(
+                            format!("Failed to describe plugin {plugin_name}: {e}"),
+                            None,
+                        )),
+                        Ok(Err(e)) => Err(McpError::internal_error(
+                            format!("Join error for plugin {plugin_name}: {e}"),
+                            None,
+                        )),
+                        Err(_) => Err(McpError::internal_error(
+                            format!("Timeout waiting for plugin {plugin_name} to cancel"),
+                            None,
+                        )),
+                    };
                 }
             }
         }
@@ -1556,5 +1605,62 @@ plugins:
             "Expected cancellation error message, got: {}",
             error_message
         );
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_plugin_service_list_tools_with_cancellation() {
+        let wasm_path = get_test_wasm_path();
+        if !test_wasm_exists() {
+            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  time_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let running = create_test_service(service);
+
+        // Create a cancellation token
+        let cancellation_token = CancellationToken::new();
+
+        // Create request context with the cancellation token
+        let ctx = RequestContext {
+            ct: cancellation_token.clone(),
+            extensions: Extensions::default(),
+            id: RequestId::Number(1),
+            meta: Meta::default(),
+            peer: running.peer().clone(),
+        };
+
+        // Cancel the token before executing list_tools to force cancellation path
+        cancellation_token.cancel();
+
+        // Execute list_tools with the already-cancelled token
+        let result = running.service().list_tools(None, ctx).await;
+
+        assert!(result.is_err(), "Expected cancellation error");
+        let error = result.unwrap_err();
+        let error_message = error.to_string();
+        assert!(
+            error_message.contains("cancelled") || error_message.contains("canceled"),
+            "Expected cancellation error message, got: {}",
+            error_message
+        );
+        assert_ok!(running.cancel().await);
     }
 }
