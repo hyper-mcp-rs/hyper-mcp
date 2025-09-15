@@ -259,7 +259,7 @@ impl ServerHandler for PluginService {
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!("got tools/call request {:?}", request);
         let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name) {
@@ -302,28 +302,68 @@ impl ServerHandler for PluginService {
         if let Some(plugin_arc) = plugins.get(&plugin_name) {
             let plugin_clone = Arc::clone(plugin_arc);
 
-            return match tokio::task::spawn_blocking(move || {
+            let cancel_handle = {
+                let guard = plugin_clone.lock().unwrap();
+                guard.cancel_handle()
+            };
+
+            let mut join = tokio::task::spawn_blocking(move || {
                 let mut plugin = plugin_clone.lock().unwrap();
                 plugin.call::<&str, String>("call", &json_string)
-            })
-            .await
-            {
-                Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
-                    Ok(parsed) => Ok(parsed),
-                    Err(e) => Err(McpError::internal_error(
-                        format!("Failed to deserialize data: {e}"),
-                        None,
-                    )),
-                },
-                Ok(Err(e)) => Err(McpError::internal_error(
-                    format!("Failed to execute plugin {plugin_name}: {e}"),
-                    None,
-                )),
-                Err(e) => Err(McpError::internal_error(
-                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
-                    None,
-                )),
-            };
+            });
+
+            tokio::select! {
+                // Finished normally
+                res = &mut join => {
+                    return match res {
+                        Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
+                            Ok(parsed) => Ok(parsed),
+                            Err(e) => Err(McpError::internal_error(
+                                format!("Failed to deserialize data: {e}"),
+                                None,
+                            )),
+                        },
+                        Ok(Err(e)) => Err(McpError::internal_error(
+                            format!("Failed to execute plugin {plugin_name}: {e}"),
+                            None,
+                        )),
+                        Err(e) => Err(McpError::internal_error(
+                            format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                            None,
+                        )),
+                    };
+                }
+
+                //Cancellation requested
+                _ = context.ct.cancelled() => {
+                    if let Err(e) = cancel_handle.cancel() {
+                        log::error!("Failed to cancel plugin {plugin_name}: {e}");
+                        return Err(McpError::internal_error(
+                            format!("Failed to cancel plugin {plugin_name}: {e}"),
+                            None,
+                        ));
+                    }
+
+                    return match tokio::time::timeout(std::time::Duration::from_millis(150), join).await {
+                        Ok(Ok(Ok(_))) => Err(McpError::internal_error(
+                            format!("Plugin {plugin_name} was cancelled"),
+                            None,
+                        )),
+                        Ok(Ok(Err(e))) => Err(McpError::internal_error(
+                            format!("Failed to execute plugin {plugin_name}: {e}"),
+                            None,
+                        )),
+                        Ok(Err(e)) => Err(McpError::internal_error(
+                            format!("Join error for plugin {plugin_name}: {e}"),
+                            None,
+                        )),
+                        Err(_) => Err(McpError::internal_error(
+                            format!("Timeout waiting for plugin {plugin_name} to cancel"),
+                            None,
+                        )),
+                    };
+                }
+            }
         }
 
         Err(McpError::method_not_found::<CallToolRequestMethod>())
@@ -1449,5 +1489,72 @@ plugins:
         assert_eq!(plugins.len(), 2, "Should have loaded two plugins");
         assert!(plugins.contains_key(&PluginName::from_str("time_plugin_1").unwrap()));
         assert!(plugins.contains_key(&PluginName::from_str("time_plugin_2").unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_plugin_service_call_tool_with_cancellation() {
+        let wasm_path = get_test_wasm_path();
+        if !test_wasm_exists() {
+            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  time_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.to_string_lossy()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let running = create_test_service(service);
+
+        // Create a cancellation token
+        let cancellation_token = CancellationToken::new();
+
+        // Create request context with the cancellation token
+        let ctx = RequestContext {
+            ct: cancellation_token.clone(),
+            extensions: Extensions::default(),
+            id: RequestId::Number(1),
+            meta: Meta::default(),
+            peer: running.peer().clone(),
+        };
+
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("time_plugin-time"),
+            arguments: Some({
+                let mut map = serde_json::Map::new();
+                map.insert(
+                    "name".to_string(),
+                    serde_json::Value::String("get_time_utc".to_string()),
+                );
+                map
+            }),
+        };
+
+        // Cancel the token before executing call_tool to force cancellation path
+        cancellation_token.cancel();
+
+        // Execute call_tool with the already-cancelled token
+        let result = running.service().call_tool(request, ctx).await;
+
+        assert!(result.is_err(), "Expected cancellation error");
+        let error = result.unwrap_err();
+        let error_message = error.to_string();
+        assert!(
+            error_message.contains("cancelled") || error_message.contains("canceled"),
+            "Expected cancellation error message, got: {}",
+            error_message
+        );
     }
 }
