@@ -84,71 +84,6 @@ impl PluginService {
         Ok(service)
     }
 
-    async fn list_tools(&self) -> std::result::Result<ListToolsResult, McpError> {
-        let plugins = self.plugins.read().await;
-
-        let mut payload = ListToolsResult::default();
-
-        for (plugin_name, plugin) in plugins.iter() {
-            let plugin_name = plugin_name.clone();
-            let plugin = Arc::clone(plugin);
-            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
-                McpError::internal_error(
-                    format!("Plugin configuration not found for {plugin_name}"),
-                    None,
-                )
-            })?;
-            let skip_tools = plugin_cfg
-                .runtime_config
-                .as_ref()
-                .and_then(|rc| rc.skip_tools.clone())
-                .unwrap_or_default();
-
-            match tokio::task::spawn_blocking(move || {
-                let mut plugin = plugin.lock().unwrap();
-                plugin.call::<&str, String>("describe", "")
-            })
-            .await
-            {
-                Ok(Ok(result)) => {
-                    if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
-                        for mut tool in parsed.tools {
-                            let tool_name = tool.name.as_ref() as &str;
-                            if skip_tools.iter().any(|s| s == tool_name) {
-                                log::info!(
-                                    "Skipping tool {} as requested in skip_tools",
-                                    tool.name
-                                );
-                                continue;
-                            }
-                            tool.name = std::borrow::Cow::Owned(match create_namespaced_tool_name(
-                                &plugin_name,
-                                tool_name,
-                            ) {
-                                Ok(namespaced) => namespaced,
-                                Err(_) => {
-                                    log::error!(
-                                        "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
-                                    );
-                                    continue;
-                                }
-                            });
-                            payload.tools.push(tool);
-                        }
-                    }
-                }
-                Ok(Err(e)) => {
-                    log::error!("{plugin_name} describe() error: {e}");
-                }
-                Err(e) => {
-                    log::error!("{plugin_name} spawn_blocking error: {e}");
-                }
-            }
-        }
-
-        Ok(payload)
-    }
-
     async fn load_plugins(&self, cli: &Cli) -> Result<()> {
         let reqwest_client: OnceCell<reqwest::Client> = OnceCell::new();
         let oci_client: OnceCell<oci_client::Client> = OnceCell::new();
@@ -400,7 +335,68 @@ impl ServerHandler for PluginService {
         _context: RequestContext<RoleServer>,
     ) -> std::result::Result<ListToolsResult, McpError> {
         tracing::info!("got tools/list request {:?}", request);
-        self.list_tools().await
+        let plugins = self.plugins.read().await;
+
+        let mut payload = ListToolsResult::default();
+
+        for (plugin_name, plugin) in plugins.iter() {
+            let plugin_name = plugin_name.clone();
+            let plugin = Arc::clone(plugin);
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+                McpError::internal_error(
+                    format!("Plugin configuration not found for {plugin_name}"),
+                    None,
+                )
+            })?;
+            let skip_tools = plugin_cfg
+                .runtime_config
+                .as_ref()
+                .and_then(|rc| rc.skip_tools.clone())
+                .unwrap_or_default();
+
+            match tokio::task::spawn_blocking(move || {
+                let mut plugin = plugin.lock().unwrap();
+                plugin.call::<&str, String>("describe", "")
+            })
+            .await
+            {
+                Ok(Ok(result)) => {
+                    if let Ok(parsed) = serde_json::from_str::<ListToolsResult>(&result) {
+                        for mut tool in parsed.tools {
+                            let tool_name = tool.name.as_ref() as &str;
+                            if skip_tools.iter().any(|s| s == tool_name) {
+                                log::info!(
+                                    "Skipping tool {} as requested in skip_tools",
+                                    tool.name
+                                );
+                                continue;
+                            }
+                            tool.name = std::borrow::Cow::Owned(match create_namespaced_tool_name(
+                                &plugin_name,
+                                tool_name,
+                            ) {
+                                Ok(namespaced) => namespaced,
+                                Err(_) => {
+                                    log::error!(
+                                        "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
+                                    );
+                                    continue;
+                                }
+                            });
+                            payload.tools.push(tool);
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    log::error!("{plugin_name} describe() error: {e}");
+                }
+                Err(e) => {
+                    log::error!("{plugin_name} spawn_blocking error: {e}");
+                }
+            }
+        }
+
+        Ok(payload)
     }
 
     fn initialize(
@@ -940,15 +936,18 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
+        let running = create_test_service(service);
 
         // Verify the service was created successfully
         assert!(
-            service.plugins.read().await.len() > 0,
+            running.service().plugins.read().await.len() > 0,
             "Should have loaded plugin"
         );
 
         // Test the list_tools function
-        let result = service.list_tools().await;
+        let request = None; // No pagination for this test
+        let ctx = create_test_ctx(&running);
+        let result = running.service().list_tools(request, ctx).await;
         assert!(result.is_ok(), "list_tools should succeed");
 
         let list_tools_result = result.unwrap();
@@ -1026,6 +1025,9 @@ plugins:
                             );
                         }
                     }
+
+                    // Cleanup
+                    assert_ok!(running.cancel().await);
                 }
             }
         }
@@ -1056,15 +1058,18 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
+        let running = create_test_service(service);
 
         // Verify the service was created successfully
         assert!(
-            service.plugins.read().await.len() > 0,
+            running.service().plugins.read().await.len() > 0,
             "Should have loaded plugin"
         );
 
         // Test the list_tools function with skip_tools configuration
-        let result = service.list_tools().await;
+        let request = None; // No pagination for this test
+        let ctx = create_test_ctx(&running);
+        let result = running.service().list_tools(request, ctx).await;
         assert!(result.is_ok(), "list_tools should succeed");
 
         let list_tools_result = result.unwrap();
@@ -1094,15 +1099,18 @@ plugins:
         );
 
         // Verify that the plugin itself was loaded (skip_tools should not prevent plugin loading)
-        let plugins = service.plugins.read().await;
-        let plugin_name: PluginName = "time_plugin".parse().unwrap();
-        assert!(
-            plugins.contains_key(&plugin_name),
-            "Plugin 'time_plugin' should still be loaded even with skip_tools configuration"
-        );
+        {
+            let plugins = running.service().plugins.read().await;
+            let plugin_name: PluginName = "time_plugin".parse().unwrap();
+            assert!(
+                plugins.contains_key(&plugin_name),
+                "Plugin 'time_plugin' should still be loaded even with skip_tools configuration"
+            );
+        } // plugins guard dropped here
 
         // Verify the plugin configuration includes skip_tools
-        let plugin_config = service.config.plugins.get(&plugin_name).unwrap();
+        let plugin_name: PluginName = "time_plugin".parse().unwrap();
+        let plugin_config = running.service().config.plugins.get(&plugin_name).unwrap();
         let skip_tools = plugin_config
             .runtime_config
             .as_ref()
@@ -1121,6 +1129,9 @@ plugins:
             "Should have exactly one tool in skip_tools list: {:?}",
             skip_tools
         );
+
+        // Cleanup
+        assert_ok!(running.cancel().await);
     }
 
     #[tokio::test]
