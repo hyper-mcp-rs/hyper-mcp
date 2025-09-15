@@ -785,7 +785,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -2550,6 +2550,7 @@ dependencies = [
  "docker_credential",
  "extism",
  "flate2",
+ "futures",
  "hex",
  "keyring",
  "log",
@@ -2567,6 +2568,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-test",
+ "tokio-util",
  "toml 0.9.5",
  "tracing",
  "tracing-subscriber",
@@ -4454,9 +4456,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7dd163d26e254725137b7933e4ba042ea6bf2d756a4260559aaea8b6ad4c27e"
+checksum = "41ab0892f4938752b34ae47cb53910b1b0921e55e77ddb6e44df666cab17939f"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -4485,9 +4487,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a43bb4c90a0d4b12f7315eb681a73115d335a2cee81322eca96f3467fe4cd06f"
+checksum = "1827cd98dab34cade0513243c6fe0351f0f0b2c9d6825460bcf45b42804bdda0"
 dependencies = [
  "darling 0.21.2",
  "proc-macro2",

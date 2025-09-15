@@ -84,74 +84,6 @@ impl PluginService {
         Ok(service)
     }
 
-    async fn call_tool(&self, request: CallToolRequestParam) -> Result<CallToolResult, McpError> {
-        let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name) {
-            Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
-            Err(e) => {
-                return Err(McpError::invalid_request(
-                    format!("Failed to parse tool name: {e}"),
-                    None,
-                ));
-            }
-        };
-        let plugin_config = match self.config.plugins.get(&plugin_name) {
-            Some(config) => config,
-            None => {
-                return Err(McpError::method_not_found::<CallToolRequestMethod>());
-            }
-        };
-        if let Some(skip_tools) = &plugin_config
-            .runtime_config
-            .as_ref()
-            .and_then(|rc| rc.skip_tools.clone())
-        {
-            if skip_tools.iter().any(|s| s == &tool_name) {
-                log::info!("Tool {tool_name} in skip_tools");
-                return Err(McpError::method_not_found::<CallToolRequestMethod>());
-            }
-        }
-
-        let call_payload = json!({
-            "params": CallToolRequestParam {
-                name: std::borrow::Cow::Owned(tool_name),
-                arguments: request.arguments,
-            },
-        });
-        let json_string =
-            serde_json::to_string(&call_payload).expect("Failed to serialize request");
-
-        let plugins = self.plugins.read().await;
-
-        if let Some(plugin_arc) = plugins.get(&plugin_name) {
-            let plugin_clone = Arc::clone(plugin_arc);
-
-            return match tokio::task::spawn_blocking(move || {
-                let mut plugin = plugin_clone.lock().unwrap();
-                plugin.call::<&str, String>("call", &json_string)
-            })
-            .await
-            {
-                Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
-                    Ok(parsed) => Ok(parsed),
-                    Err(e) => Err(McpError::internal_error(
-                        format!("Failed to deserialize data: {e}"),
-                        None,
-                    )),
-                },
-                Ok(Err(e)) => Err(McpError::internal_error(
-                    format!("Failed to execute plugin {plugin_name}: {e}"),
-                    None,
-                )),
-                Err(e) => Err(McpError::internal_error(
-                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
-                    None,
-                )),
-            };
-        }
-
-        Err(McpError::method_not_found::<CallToolRequestMethod>())
-    }
-
     async fn list_tools(&self) -> std::result::Result<ListToolsResult, McpError> {
         let plugins = self.plugins.read().await;
 
@@ -377,8 +309,11 @@ impl ServerHandler for PluginService {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2024_11_05,
             server_info: Implementation {
+                icons: None,
                 name: "hyper-mcp".to_string(),
+                title: Some("Hyper MCP".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
+                website_url: Some("https://github.com/tuananh/hyper-mcp".to_string()),
             },
             capabilities: ServerCapabilities::builder().enable_tools().build(),
 
@@ -392,7 +327,71 @@ impl ServerHandler for PluginService {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!("got tools/call request {:?}", request);
-        self.call_tool(request).await
+        let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name) {
+            Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
+            Err(e) => {
+                return Err(McpError::invalid_request(
+                    format!("Failed to parse tool name: {e}"),
+                    None,
+                ));
+            }
+        };
+        let plugin_config = match self.config.plugins.get(&plugin_name) {
+            Some(config) => config,
+            None => {
+                return Err(McpError::method_not_found::<CallToolRequestMethod>());
+            }
+        };
+        if let Some(skip_tools) = &plugin_config
+            .runtime_config
+            .as_ref()
+            .and_then(|rc| rc.skip_tools.clone())
+        {
+            if skip_tools.iter().any(|s| s == &tool_name) {
+                log::info!("Tool {tool_name} in skip_tools");
+                return Err(McpError::method_not_found::<CallToolRequestMethod>());
+            }
+        }
+
+        let call_payload = json!({
+            "params": CallToolRequestParam {
+                name: std::borrow::Cow::Owned(tool_name),
+                arguments: request.arguments,
+            },
+        });
+        let json_string =
+            serde_json::to_string(&call_payload).expect("Failed to serialize request");
+
+        let plugins = self.plugins.read().await;
+
+        if let Some(plugin_arc) = plugins.get(&plugin_name) {
+            let plugin_clone = Arc::clone(plugin_arc);
+
+            return match tokio::task::spawn_blocking(move || {
+                let mut plugin = plugin_clone.lock().unwrap();
+                plugin.call::<&str, String>("call", &json_string)
+            })
+            .await
+            {
+                Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
+                    Ok(parsed) => Ok(parsed),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Failed to deserialize data: {e}"),
+                        None,
+                    )),
+                },
+                Ok(Err(e)) => Err(McpError::internal_error(
+                    format!("Failed to execute plugin {plugin_name}: {e}"),
+                    None,
+                )),
+                Err(e) => Err(McpError::internal_error(
+                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                    None,
+                )),
+            };
+        }
+
+        Err(McpError::method_not_found::<CallToolRequestMethod>())
     }
 
     async fn list_tools(
@@ -459,11 +458,70 @@ impl ServerHandler for PluginService {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use rmcp::{ServerHandler, model::ProtocolVersion};
-    use std::collections::HashMap;
+    use futures::channel::mpsc;
+    use rmcp::{
+        service::{RunningService, serve_directly},
+        transport::sink_stream::SinkStreamTransport,
+    };
     use std::path::PathBuf;
     use tempfile::TempDir;
-    use tokio::sync::RwLock;
+    use tokio_test::assert_ok;
+    use tokio_util::sync::CancellationToken;
+
+    async fn create_temp_config_file(content: &str) -> anyhow::Result<(TempDir, PathBuf)> {
+        let temp_dir = TempDir::new()?;
+        let config_path = temp_dir.path().join("test_config.yaml");
+        tokio::fs::write(&config_path, content).await?;
+        Ok((temp_dir, config_path))
+    }
+
+    fn create_test_cli() -> Cli {
+        crate::Cli {
+            config_file: None,
+            log_level: Some("info".to_string()),
+            transport: "stdio".to_string(),
+            bind_address: "127.0.0.1:3001".to_string(),
+            insecure_skip_signature: false,
+            use_sigstore_tuf_data: true,
+            rekor_pub_keys: None,
+            fulcio_certs: None,
+            cert_issuer: None,
+            cert_email: None,
+            cert_url: None,
+        }
+    }
+
+    fn create_test_ctx(
+        running: &RunningService<RoleServer, PluginService>,
+    ) -> RequestContext<RoleServer> {
+        RequestContext {
+            ct: CancellationToken::new(),
+            extensions: Extensions::default(),
+            id: RequestId::Number(1),
+            meta: Meta::default(),
+            peer: running.peer().clone(),
+        }
+    }
+
+    fn create_test_service(service: PluginService) -> RunningService<RoleServer, PluginService> {
+        let (_, to_server_rx) = mpsc::channel(8);
+        let (to_client_tx, _) = mpsc::channel(8);
+        let transport = SinkStreamTransport::new(to_client_tx, to_server_rx);
+        serve_directly(service, transport, None)
+    }
+
+    fn get_test_wasm_path() -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("examples");
+        path.push("plugins");
+        path.push("time");
+        path.push("time.wasm");
+        path
+    }
+
+    fn test_wasm_exists() -> bool {
+        get_test_wasm_path().exists()
+    }
 
     #[test]
     fn test_create_tool_name() {
@@ -730,44 +788,6 @@ mod tests {
             parse_namespaced_tool_name(std::borrow::Cow::Owned(namespaced.clone())).unwrap();
         assert_eq!(parsed_plugin.as_str(), "test_plugin");
         assert_eq!(parsed_tool, "test_tool");
-    }
-
-    // Helper functions for PluginService tests
-
-    fn create_test_cli() -> crate::Cli {
-        crate::Cli {
-            config_file: None,
-            log_level: Some("info".to_string()),
-            transport: "stdio".to_string(),
-            bind_address: "127.0.0.1:3001".to_string(),
-            insecure_skip_signature: false,
-            use_sigstore_tuf_data: true,
-            rekor_pub_keys: None,
-            fulcio_certs: None,
-            cert_issuer: None,
-            cert_email: None,
-            cert_url: None,
-        }
-    }
-
-    async fn create_temp_config_file(content: &str) -> anyhow::Result<(TempDir, PathBuf)> {
-        let temp_dir = TempDir::new()?;
-        let config_path = temp_dir.path().join("test_config.yaml");
-        tokio::fs::write(&config_path, content).await?;
-        Ok((temp_dir, config_path))
-    }
-
-    fn get_test_wasm_path() -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("examples");
-        path.push("plugins");
-        path.push("time");
-        path.push("time.wasm");
-        path
-    }
-
-    fn test_wasm_exists() -> bool {
-        get_test_wasm_path().exists()
     }
 
     // Helper function to create a dummy request context for compilation
@@ -1113,6 +1133,7 @@ plugins:
             config,
             plugins: Arc::new(RwLock::new(HashMap::new())),
         };
+        let running = create_test_service(service);
 
         // Test calling tool with invalid format (missing plugin name separator)
         let request = CallToolRequestParam {
@@ -1120,7 +1141,8 @@ plugins:
             arguments: None,
         };
 
-        let result = service.call_tool(request).await;
+        let ctx = create_test_ctx(&running);
+        let result = running.service().call_tool(request, ctx).await;
         assert!(result.is_err(), "Should fail with invalid tool name format");
 
         if let Err(error) = result {
@@ -1138,8 +1160,10 @@ plugins:
             arguments: None,
         };
 
-        let result = service.call_tool(request).await;
+        let ctx = create_test_ctx(&running);
+        let result = running.service().call_tool(request, ctx).await;
         assert!(result.is_err(), "Should fail with empty tool name");
+        assert_ok!(running.cancel().await);
     }
 
     #[tokio::test]
@@ -1152,6 +1176,7 @@ plugins:
             config,
             plugins: Arc::new(RwLock::new(HashMap::new())),
         };
+        let running = create_test_service(service);
 
         // Test calling tool on nonexistent plugin
         let request = CallToolRequestParam {
@@ -1159,7 +1184,8 @@ plugins:
             arguments: None,
         };
 
-        let result = service.call_tool(request).await;
+        let ctx = create_test_ctx(&running);
+        let result = running.service().call_tool(request, ctx).await;
         assert!(result.is_err(), "Should fail with nonexistent plugin");
 
         if let Err(error) = result {
@@ -1171,6 +1197,7 @@ plugins:
                 error
             );
         }
+        assert_ok!(running.cancel().await);
     }
 
     #[tokio::test]
@@ -1195,10 +1222,11 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
+        let running = create_test_service(service);
 
         // Verify the service was created successfully
         assert!(
-            service.plugins.read().await.len() > 0,
+            running.service().plugins.read().await.len() > 0,
             "Should have loaded plugin"
         );
 
@@ -1215,7 +1243,8 @@ plugins:
             }),
         };
 
-        let result = service.call_tool(request).await;
+        let ctx = create_test_ctx(&running);
+        let result = running.service().call_tool(request, ctx).await;
         assert!(
             result.is_ok(),
             "Should successfully call time tool: {:?}",
@@ -1246,7 +1275,8 @@ plugins:
             }),
         };
 
-        let result = service.call_tool(request).await;
+        let ctx = create_test_ctx(&running);
+        let result = running.service().call_tool(request, ctx).await;
         assert!(
             result.is_ok(),
             "Should successfully call parse_time operation: {:?}",
@@ -1260,6 +1290,7 @@ plugins:
             !call_result.content.is_empty(),
             "Parse time operation should return non-empty content"
         );
+        assert_ok!(running.cancel().await);
     }
 
     #[tokio::test]
@@ -1287,10 +1318,11 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
+        let running = create_test_service(service);
 
         // Verify the service was created successfully
         assert!(
-            service.plugins.read().await.len() > 0,
+            running.service().plugins.read().await.len() > 0,
             "Should have loaded plugin"
         );
 
@@ -1307,7 +1339,8 @@ plugins:
             }),
         };
 
-        let result = service.call_tool(request).await;
+        let ctx = create_test_ctx(&running);
+        let result = running.service().call_tool(request, ctx).await;
         assert!(result.is_err(), "Should fail when calling skipped tool");
 
         if let Err(error) = result {
@@ -1319,6 +1352,7 @@ plugins:
                 error
             );
         }
+        assert_ok!(running.cancel().await);
     }
 
     #[test]
