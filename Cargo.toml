@@ -29,7 +29,6 @@ keyring = { version = "3.6.3", features = [
     "linux-native",
     "windows-native",
 ] }
-log = "0.4.27"
 oci-client = "0.15.0"
 once_cell = "1.21.3"
 rmcp = { version = "0.6.4", features = [
