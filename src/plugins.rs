@@ -143,10 +143,10 @@ impl PluginService {
                     )
                     .await
                     {
-                        log::error!("Error pulling oci plugin: {e}");
+                        tracing::error!("Error pulling oci plugin: {e}");
                         return Err(anyhow::anyhow!("Failed to pull OCI plugin: {}", e));
                     }
-                    log::info!("cache plugin `{plugin_name}` to : {local_output_path}");
+                    tracing::info!("cache plugin `{plugin_name}` to : {local_output_path}");
                     tokio::fs::read(local_output_path).await?
                 }
                 "s3" => {
@@ -168,7 +168,7 @@ impl PluginService {
                         Ok(response) => match response.body.collect().await {
                             Ok(body) => body.to_vec(),
                             Err(e) => {
-                                log::error!("Failed to collect S3 object body: {e}");
+                                tracing::error!("Failed to collect S3 object body: {e}");
                                 return Err(anyhow::anyhow!(
                                     "Failed to collect S3 object body: {}",
                                     e
@@ -176,13 +176,13 @@ impl PluginService {
                             }
                         },
                         Err(e) => {
-                            log::error!("Failed to get object from S3: {e}");
+                            tracing::error!("Failed to get object from S3: {e}");
                             return Err(anyhow::anyhow!("Failed to get object from S3: {}", e));
                         }
                     }
                 }
                 unsupported => {
-                    log::error!("Unsupported plugin URL scheme: {unsupported}");
+                    tracing::error!("Unsupported plugin URL scheme: {unsupported}");
                     return Err(anyhow::anyhow!(
                         "Unsupported plugin URL scheme: {}",
                         unsupported
@@ -192,7 +192,7 @@ impl PluginService {
 
             let mut manifest = Manifest::new([Wasm::data(wasm_content)]);
             if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
-                log::info!("runtime_cfg: {runtime_cfg:?}");
+                tracing::info!("runtime_cfg: {runtime_cfg:?}");
                 if let Some(hosts) = &runtime_cfg.allowed_hosts {
                     for host in hosts {
                         manifest = manifest.with_allowed_host(host);
@@ -220,7 +220,7 @@ impl PluginService {
                             manifest = manifest.with_memory_max(num_pages as u32);
                         }
                         Err(e) => {
-                            log::error!(
+                            tracing::error!(
                                 "Failed to parse memory_limit '{memory_limit}': {e}. Using default memory limit."
                             );
                         }
@@ -233,7 +233,7 @@ impl PluginService {
                 .write()
                 .await
                 .insert(plugin_name.clone(), plugin);
-            log::info!("Loaded plugin {plugin_name}");
+            tracing::info!("Loaded plugin {plugin_name}");
         }
         Ok(())
     }
@@ -283,7 +283,7 @@ impl ServerHandler for PluginService {
             .and_then(|rc| rc.skip_tools.clone())
         {
             if skip_tools.iter().any(|s| s == &tool_name) {
-                log::info!("Tool {tool_name} in skip_tools");
+                tracing::info!("Tool {tool_name} in skip_tools");
                 return Err(McpError::method_not_found::<CallToolRequestMethod>());
             }
         }
@@ -337,7 +337,7 @@ impl ServerHandler for PluginService {
                 //Cancellation requested
                 _ = context.ct.cancelled() => {
                     if let Err(e) = cancel_handle.cancel() {
-                        log::error!("Failed to cancel plugin {plugin_name}: {e}");
+                        tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
                         return Err(McpError::internal_error(
                             format!("Failed to cancel plugin {plugin_name}: {e}"),
                             None,
@@ -414,7 +414,7 @@ impl ServerHandler for PluginService {
                                 for mut tool in parsed.tools {
                                     let tool_name = tool.name.as_ref() as &str;
                                     if skip_tools.iter().any(|s| s == tool_name) {
-                                        log::info!(
+                                        tracing::info!(
                                             "Skipping tool {} as requested in skip_tools",
                                             tool.name
                                         );
@@ -426,7 +426,7 @@ impl ServerHandler for PluginService {
                                     ) {
                                         Ok(namespaced) => namespaced,
                                         Err(_) => {
-                                            log::error!(
+                                            tracing::error!(
                                                 "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
                                             );
                                             continue;
@@ -437,14 +437,14 @@ impl ServerHandler for PluginService {
                             }
                         }
                         Ok(Err(e)) => {
-                            log::error!("{plugin_name} describe() error: {e}");
+                            tracing::error!("{plugin_name} describe() error: {e}");
                             return Err(McpError::internal_error(
                                 format!("Failed to describe plugin {plugin_name}: {e}"),
                                 None,
                             ));
                         }
                         Err(e) => {
-                            log::error!("{plugin_name} spawn_blocking error: {e}");
+                            tracing::error!("{plugin_name} spawn_blocking error: {e}");
                             return Err(McpError::internal_error(
                                 format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
                                 None,
@@ -456,7 +456,7 @@ impl ServerHandler for PluginService {
                 //Cancellation requested
                 _ = context.ct.cancelled() => {
                     if let Err(e) = cancel_handle.cancel() {
-                        log::error!("Failed to cancel plugin {plugin_name}: {e}");
+                        tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
                         return Err(McpError::internal_error(
                             format!("Failed to cancel plugin {plugin_name}: {e}"),
                             None,
