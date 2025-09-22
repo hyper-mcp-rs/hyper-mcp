@@ -1404,9 +1404,7 @@ plugins:
         let add_output = match add_result {
             Ok(output) => output,
             Err(e) => {
-                println!(
-                    "Failed to execute keyring add command: {e}. Skipping test."
-                );
+                println!("Failed to execute keyring add command: {e}. Skipping test.");
                 return;
             }
         };
@@ -1422,9 +1420,8 @@ plugins:
         }
 
         // Test keyring auth deserialization
-        let keyring_config_json = format!(
-            r#"{{"type":"keyring","service":"{service_name}","user":"{user_name}"}}"#
-        );
+        let keyring_config_json =
+            format!(r#"{{"type":"keyring","service":"{service_name}","user":"{user_name}"}}"#);
 
         let test_result = std::panic::catch_unwind(|| {
             let internal_auth: InternalAuthConfig =
@@ -1596,9 +1593,7 @@ plugins:
         let add_output = match add_result {
             Ok(output) => output,
             Err(e) => {
-                println!(
-                    "Failed to execute keyring add command: {e}. Skipping test."
-                );
+                println!("Failed to execute keyring add command: {e}. Skipping test.");
                 let _ = rt.block_on(fs::remove_file(config_path));
                 return;
             }
