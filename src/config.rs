@@ -162,7 +162,7 @@ pub async fn load_config(path: &Path) -> Result<Config> {
         "json" => serde_json::from_str(&content)?,
         "yaml" | "yml" => serde_yaml::from_str(&content)?,
         "toml" => toml::from_str(&content)?,
-        _ => return Err(anyhow::anyhow!("Unsupported config format: {}", ext)),
+        _ => return Err(anyhow::anyhow!("Unsupported config format: {ext}")),
     };
 
     Ok(config)
@@ -180,8 +180,7 @@ mod tests {
         for name in valid_names {
             assert!(
                 PluginName::try_from(name).is_ok(),
-                "Failed to parse valid name: {}",
-                name
+                "Failed to parse valid name: {name}"
             );
         }
     }
@@ -206,9 +205,7 @@ mod tests {
         for (name, description) in hyphen_cases {
             assert!(
                 PluginName::try_from(name).is_err(),
-                "Should reject plugin name '{}' ({})",
-                name,
-                description
+                "Should reject plugin name '{name}' ({description})"
             );
         }
 
@@ -225,9 +222,7 @@ mod tests {
         for (name, description) in underscore_cases {
             assert!(
                 PluginName::try_from(name).is_err(),
-                "Should reject plugin name '{}' ({})",
-                name,
-                description
+                "Should reject plugin name '{name}' ({description})"
             );
         }
 
@@ -260,9 +255,7 @@ mod tests {
         for (name, description) in special_char_cases {
             assert!(
                 PluginName::try_from(name).is_err(),
-                "Should reject plugin name '{}' ({})",
-                name,
-                description
+                "Should reject plugin name '{name}' ({description})"
             );
         }
 
@@ -282,9 +275,7 @@ mod tests {
         for (name, description) in whitespace_cases {
             assert!(
                 PluginName::try_from(name).is_err(),
-                "Should reject plugin name '{}' ({})",
-                name,
-                description
+                "Should reject plugin name '{name}' ({description})"
             );
         }
 
@@ -302,9 +293,7 @@ mod tests {
         for (name, description) in empty_cases {
             assert!(
                 PluginName::try_from(name).is_err(),
-                "Should reject plugin name '{}' ({})",
-                name,
-                description
+                "Should reject plugin name '{name}' ({description})"
             );
         }
 
@@ -322,9 +311,7 @@ mod tests {
         for (name, description) in unicode_cases {
             assert!(
                 PluginName::try_from(name).is_err(),
-                "Should reject plugin name '{}' ({})",
-                name,
-                description
+                "Should reject plugin name '{name}' ({description})"
             );
         }
     }
@@ -347,9 +334,7 @@ mod tests {
         for (name, description) in basic_cases {
             assert!(
                 PluginName::try_from(name).is_ok(),
-                "Should accept valid plugin name '{}' ({})",
-                name,
-                description
+                "Should accept valid plugin name '{name}' ({description})"
             );
         }
 
@@ -368,9 +353,7 @@ mod tests {
         for (name, description) in underscore_cases {
             assert!(
                 PluginName::try_from(name).is_ok(),
-                "Should accept valid plugin name '{}' ({})",
-                name,
-                description
+                "Should accept valid plugin name '{name}' ({description})"
             );
         }
 
@@ -389,9 +372,7 @@ mod tests {
         for (name, description) in mixed_cases {
             assert!(
                 PluginName::try_from(name).is_ok(),
-                "Should accept valid plugin name '{}' ({})",
-                name,
-                description
+                "Should accept valid plugin name '{name}' ({description})"
             );
         }
 
@@ -412,9 +393,7 @@ mod tests {
         for (name, description) in longer_cases {
             assert!(
                 PluginName::try_from(name).is_ok(),
-                "Should accept valid plugin name '{}' ({})",
-                name,
-                description
+                "Should accept valid plugin name '{name}' ({description})"
             );
         }
 
@@ -429,9 +408,7 @@ mod tests {
         for (name, description) in edge_cases {
             assert!(
                 PluginName::try_from(name).is_ok(),
-                "Should accept valid plugin name '{}' ({})",
-                name,
-                description
+                "Should accept valid plugin name '{name}' ({description})"
             );
         }
     }
@@ -450,7 +427,7 @@ mod tests {
 
         // Serialize
         let serialized = serde_json::to_string(&plugin_name).unwrap();
-        assert_eq!(serialized, format!("\"{}\"", name_str));
+        assert_eq!(serialized, format!("\"{name_str}\""));
 
         // Deserialize
         let deserialized: PluginName = serde_json::from_str(&serialized).unwrap();
@@ -465,7 +442,7 @@ mod tests {
         let path = Path::new("tests/fixtures/valid_config.yaml");
 
         // Load the config
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(config_result.is_ok(), "Failed to load valid YAML config");
 
         let config = config_result.unwrap();
@@ -512,7 +489,7 @@ mod tests {
         let path = Path::new("tests/fixtures/valid_config.json");
 
         // Load the config
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
 
         assert!(config_result.is_ok(), "Failed to load valid JSON config");
 
@@ -554,7 +531,7 @@ mod tests {
         let path = Path::new("tests/fixtures/invalid_plugin_name.yaml");
 
         // Load the config
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(
             config_result.is_err(),
             "Expected error for invalid plugin name"
@@ -569,7 +546,7 @@ mod tests {
         let path = Path::new("tests/fixtures/invalid_url.yaml");
 
         // Load the config
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(config_result.is_err(), "Expected error for invalid URL");
 
         let error = config_result.unwrap_err();
@@ -588,7 +565,7 @@ mod tests {
         let path = Path::new("tests/fixtures/invalid_structure.yaml");
 
         // Load the config
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(
             config_result.is_err(),
             "Expected error for invalid structure"
@@ -623,7 +600,7 @@ mod tests {
         let path = Path::new("tests/fixtures/unsupported_config.txt");
 
         // Load the config
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(
             config_result.is_err(),
             "Expected error for unsupported extension"
@@ -865,7 +842,7 @@ plugins:
             token: "secret-token".to_string(),
         };
 
-        let debug_str = format!("{:?}", auth_config);
+        let debug_str = format!("{auth_config:?}");
         assert!(debug_str.contains("Token"));
         assert!(debug_str.contains("secret-token"));
     }
@@ -916,7 +893,7 @@ plugins:
         let rt = Runtime::new().unwrap();
         let path = Path::new("tests/fixtures/config_with_auths.yaml");
 
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(
             config_result.is_ok(),
             "Failed to load config with auths from YAML"
@@ -955,7 +932,7 @@ plugins:
         let rt = Runtime::new().unwrap();
         let path = Path::new("tests/fixtures/config_with_auths.json");
 
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(
             config_result.is_ok(),
             "Failed to load config with auths from JSON"
@@ -977,7 +954,7 @@ plugins:
 
         for url_str in expected_urls {
             let url = Url::parse(url_str).unwrap();
-            assert!(auths.contains_key(&url), "Missing auth for {}", url_str);
+            assert!(auths.contains_key(&url), "Missing auth for {url_str}");
         }
     }
 
@@ -986,7 +963,7 @@ plugins:
         let rt = Runtime::new().unwrap();
         let path = Path::new("tests/fixtures/invalid_auth_config.yaml");
 
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(
             config_result.is_err(),
             "Expected error for invalid auth config"
@@ -999,8 +976,7 @@ plugins:
             error_msg.contains("unknown variant")
                 || error_msg.contains("missing field")
                 || error_msg.contains("invalid"),
-            "Error should indicate invalid auth configuration: {}",
-            error_msg
+            "Error should indicate invalid auth configuration: {error_msg}"
         );
     }
 
@@ -1129,7 +1105,7 @@ plugins:
         let rt = Runtime::new().unwrap();
         let path = Path::new("tests/fixtures/documentation_example.yaml");
 
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(
             config_result.is_ok(),
             "Documentation YAML example should be valid"
@@ -1193,7 +1169,7 @@ plugins:
         let rt = Runtime::new().unwrap();
         let path = Path::new("tests/fixtures/documentation_example.json");
 
-        let config_result = rt.block_on(load_config(&path));
+        let config_result = rt.block_on(load_config(path));
         assert!(
             config_result.is_ok(),
             "Documentation JSON example should be valid"
@@ -1219,7 +1195,7 @@ plugins:
 
         for url_str in expected_auth_urls {
             let url = Url::parse(url_str).unwrap();
-            assert!(auths.contains_key(&url), "Missing auth for {}", url_str);
+            assert!(auths.contains_key(&url), "Missing auth for {url_str}");
         }
 
         // Verify plugins match the documentation
@@ -1352,8 +1328,8 @@ plugins:
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let service_name = format!("hyper-mcp-test-{}", timestamp);
-        let user_name = format!("test-user-{}", timestamp);
+        let service_name = format!("hyper-mcp-test-{timestamp}");
+        let user_name = format!("test-user-{timestamp}");
 
         // Test auth config to store in keyring
         let test_auth_json =
@@ -1390,8 +1366,7 @@ plugins:
             let add_result = Command::new("bash")
                 .args([
                     "-c",
-                    &format!("echo '{}' | secret-tool store --label='hyper-mcp test' service '{}' username '{}'",
-                        test_auth_json, service_name, user_name),
+                    &format!("echo '{test_auth_json}' | secret-tool store --label='hyper-mcp test' service '{service_name}' username '{user_name}'"),
                 ])
                 .output();
 
@@ -1405,14 +1380,14 @@ plugins:
             let escaped_json = test_auth_json.replace("\"", "\\\"");
             let add_result = Command::new("cmdkey")
                 .args([
-                    &format!("/generic:{}", service_name),
-                    &format!("/user:{}", user_name),
-                    &format!("/pass:{}", escaped_json),
+                    &format!("/generic:{service_name}"),
+                    &format!("/user:{user_name}"),
+                    &format!("/pass:{escaped_json}"),
                 ])
                 .output();
 
             let remove_result = Command::new("cmdkey")
-                .args([&format!("/delete:{}", service_name)])
+                .args([&format!("/delete:{service_name}")])
                 .output();
 
             (add_result, remove_result)
@@ -1430,8 +1405,7 @@ plugins:
             Ok(output) => output,
             Err(e) => {
                 println!(
-                    "Failed to execute keyring add command: {}. Skipping test.",
-                    e
+                    "Failed to execute keyring add command: {e}. Skipping test."
                 );
                 return;
             }
@@ -1449,8 +1423,7 @@ plugins:
 
         // Test keyring auth deserialization
         let keyring_config_json = format!(
-            r#"{{"type":"keyring","service":"{}","user":"{}"}}"#,
-            service_name, user_name
+            r#"{{"type":"keyring","service":"{service_name}","user":"{user_name}"}}"#
         );
 
         let test_result = std::panic::catch_unwind(|| {
@@ -1477,8 +1450,7 @@ plugins:
                         }
                         Err(e) => {
                             println!(
-                                "Keyring lookup failed (this is expected if keyring service is not available): {}",
-                                e
+                                "Keyring lookup failed (this is expected if keyring service is not available): {e}"
                             );
                         }
                     }
@@ -1519,9 +1491,9 @@ plugins:
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let service_name = format!("hyper-mcp-config-test-{}", timestamp);
-        let user_name = format!("config-test-user-{}", timestamp);
-        let temp_config_path = format!("test_config_{}.yaml", timestamp);
+        let service_name = format!("hyper-mcp-config-test-{timestamp}");
+        let user_name = format!("config-test-user-{timestamp}");
+        let temp_config_path = format!("test_config_{timestamp}.yaml");
 
         // Auth config to store in keyring
         let keyring_auth_json =
@@ -1533,8 +1505,8 @@ plugins:
 auths:
   "https://keyring-test.example.com":
     type: keyring
-    service: "{}"
-    user: "{}"
+    service: "{service_name}"
+    user: "{user_name}"
   "https://basic-test.example.com":
     type: basic
     username: "basic-user"
@@ -1546,8 +1518,7 @@ plugins:
       allowed_hosts:
         - "keyring-test.example.com"
         - "basic-test.example.com"
-"#,
-            service_name, user_name
+"#
         );
 
         // Platform-specific keyring operations
@@ -1580,8 +1551,7 @@ plugins:
                 .args([
                     "-c",
                     &format!(
-                        "echo '{}' | secret-tool store --label='hyper-mcp complete config test' service '{}' username '{}'",
-                        keyring_auth_json, service_name, user_name
+                        "echo '{keyring_auth_json}' | secret-tool store --label='hyper-mcp complete config test' service '{service_name}' username '{user_name}'"
                     ),
                 ])
                 .output();
@@ -1595,14 +1565,14 @@ plugins:
             let escaped_json = keyring_auth_json.replace("\"", "\\\"");
             let add_result = Command::new("cmdkey")
                 .args([
-                    &format!("/generic:{}", service_name),
-                    &format!("/user:{}", user_name),
-                    &format!("/pass:{}", escaped_json),
+                    &format!("/generic:{service_name}"),
+                    &format!("/user:{user_name}"),
+                    &format!("/pass:{escaped_json}"),
                 ])
                 .output();
 
             let remove_result = Command::new("cmdkey")
-                .args([&format!("/delete:{}", service_name)])
+                .args([&format!("/delete:{service_name}")])
                 .output();
 
             (add_result, remove_result)
@@ -1627,8 +1597,7 @@ plugins:
             Ok(output) => output,
             Err(e) => {
                 println!(
-                    "Failed to execute keyring add command: {}. Skipping test.",
-                    e
+                    "Failed to execute keyring add command: {e}. Skipping test."
                 );
                 let _ = rt.block_on(fs::remove_file(config_path));
                 return;
@@ -1725,11 +1694,10 @@ plugins:
                 let error_msg = e.to_string();
                 if error_msg.contains("keyring") || error_msg.contains("secure storage") {
                     println!(
-                        "Keyring lookup failed (keyring service may not be available): {}. This is acceptable for CI environments.",
-                        e
+                        "Keyring lookup failed (keyring service may not be available): {e}. This is acceptable for CI environments."
                     );
                 } else {
-                    panic!("Unexpected error loading config with keyring auth: {}", e);
+                    panic!("Unexpected error loading config with keyring auth: {e}");
                 }
             }
         }
@@ -1746,8 +1714,8 @@ plugins:
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let service_name = format!("hyper-mcp-direct-test-{}", timestamp);
-        let user_name = format!("direct-test-user-{}", timestamp);
+        let service_name = format!("hyper-mcp-direct-test-{timestamp}");
+        let user_name = format!("direct-test-user-{timestamp}");
 
         // Test auth config to store in keyring (basic auth this time)
         let test_auth_json =
@@ -1772,8 +1740,7 @@ plugins:
                 if add_output.status.success() {
                     // Test the keyring deserialization
                     let keyring_config_json = format!(
-                        r#"{{"type":"keyring","service":"{}","user":"{}"}}"#,
-                        service_name, user_name
+                        r#"{{"type":"keyring","service":"{service_name}","user":"{user_name}"}}"#
                     );
 
                     let auth_result: Result<AuthConfig, _> =
@@ -1800,8 +1767,7 @@ plugins:
                         Ok(_) => panic!("Expected Basic auth from keyring"),
                         Err(e) => {
                             println!(
-                                "Keyring lookup failed on macOS (may not be available in CI): {}",
-                                e
+                                "Keyring lookup failed on macOS (may not be available in CI): {e}"
                             );
                         }
                     }
@@ -1815,8 +1781,7 @@ plugins:
                 .args([
                     "-c",
                     &format!(
-                        "echo '{}' | secret-tool store --label='hyper-mcp direct test' service '{}' username '{}'",
-                        test_auth_json, service_name, user_name
+                        "echo '{test_auth_json}' | secret-tool store --label='hyper-mcp direct test' service '{service_name}' username '{user_name}'"
                     ),
                 ])
                 .output();
@@ -1825,8 +1790,7 @@ plugins:
                 if add_output.status.success() {
                     // Test the keyring deserialization
                     let keyring_config_json = format!(
-                        r#"{{"type":"keyring","service":"{}","user":"{}"}}"#,
-                        service_name, user_name
+                        r#"{{"type":"keyring","service":"{service_name}","user":"{user_name}"}}"#
                     );
 
                     let auth_result: Result<AuthConfig, _> =
@@ -1847,8 +1811,7 @@ plugins:
                         Ok(_) => panic!("Expected Basic auth from keyring"),
                         Err(e) => {
                             println!(
-                                "Keyring lookup failed on Linux (may not be available in CI): {}",
-                                e
+                                "Keyring lookup failed on Linux (may not be available in CI): {e}"
                             );
                         }
                     }
@@ -1861,9 +1824,9 @@ plugins:
             let escaped_json = test_auth_json.replace("\"", "\\\"");
             let add_cmd = Command::new("cmdkey")
                 .args([
-                    &format!("/generic:{}", service_name),
-                    &format!("/user:{}", user_name),
-                    &format!("/pass:{}", escaped_json),
+                    &format!("/generic:{service_name}"),
+                    &format!("/user:{user_name}"),
+                    &format!("/pass:{escaped_json}"),
                 ])
                 .output();
 
@@ -1871,8 +1834,7 @@ plugins:
                 if add_output.status.success() {
                     // Test the keyring deserialization
                     let keyring_config_json = format!(
-                        r#"{{"type":"keyring","service":"{}","user":"{}"}}"#,
-                        service_name, user_name
+                        r#"{{"type":"keyring","service":"{service_name}","user":"{user_name}"}}"#
                     );
 
                     let auth_result: Result<AuthConfig, _> =
@@ -1880,7 +1842,7 @@ plugins:
 
                     // Cleanup first
                     let _ = Command::new("cmdkey")
-                        .args([&format!("/delete:{}", service_name)])
+                        .args([&format!("/delete:{service_name}")])
                         .output();
 
                     // Verify result
@@ -1893,8 +1855,7 @@ plugins:
                         Ok(_) => panic!("Expected Basic auth from keyring"),
                         Err(e) => {
                             println!(
-                                "Keyring lookup failed on Windows (may not be available in CI): {}",
-                                e
+                                "Keyring lookup failed on Windows (may not be available in CI): {e}"
                             );
                         }
                     }
@@ -1943,7 +1904,7 @@ plugins:
                     }
                 }
                 Err(e) => {
-                    println!("❌ macOS security command not found: {}", e);
+                    println!("❌ macOS security command not found: {e}");
                 }
             }
         } else if cfg!(target_os = "linux") {
@@ -1960,8 +1921,7 @@ plugins:
                 }
                 Err(e) => {
                     println!(
-                        "❌ Linux secret-tool not found: {}. Install with: sudo apt-get install libsecret-tools",
-                        e
+                        "❌ Linux secret-tool not found: {e}. Install with: sudo apt-get install libsecret-tools"
                     );
                 }
             }
@@ -2009,7 +1969,7 @@ plugins:
                     }
                 }
                 Err(e) => {
-                    println!("❌ Windows cmdkey not found: {}", e);
+                    println!("❌ Windows cmdkey not found: {e}");
                 }
             }
         } else {
@@ -2018,9 +1978,6 @@ plugins:
                 std::env::consts::OS
             );
         }
-
-        // This test always passes - it's just for information gathering
-        assert!(true, "Platform detection completed");
     }
 
     #[test]

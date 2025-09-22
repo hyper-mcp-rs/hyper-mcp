@@ -144,7 +144,7 @@ impl PluginService {
                     .await
                     {
                         tracing::error!("Error pulling oci plugin: {e}");
-                        return Err(anyhow::anyhow!("Failed to pull OCI plugin: {}", e));
+                        return Err(anyhow::anyhow!("Failed to pull OCI plugin: {e}"));
                     }
                     tracing::info!("cache plugin `{plugin_name}` to : {local_output_path}");
                     tokio::fs::read(local_output_path).await?
@@ -170,22 +170,20 @@ impl PluginService {
                             Err(e) => {
                                 tracing::error!("Failed to collect S3 object body: {e}");
                                 return Err(anyhow::anyhow!(
-                                    "Failed to collect S3 object body: {}",
-                                    e
+                                    "Failed to collect S3 object body: {e}"
                                 ));
                             }
                         },
                         Err(e) => {
                             tracing::error!("Failed to get object from S3: {e}");
-                            return Err(anyhow::anyhow!("Failed to get object from S3: {}", e));
+                            return Err(anyhow::anyhow!("Failed to get object from S3: {e}"));
                         }
                     }
                 }
                 unsupported => {
                     tracing::error!("Unsupported plugin URL scheme: {unsupported}");
                     return Err(anyhow::anyhow!(
-                        "Unsupported plugin URL scheme: {}",
-                        unsupported
+                        "Unsupported plugin URL scheme: {unsupported}"
                     ));
                 }
             };
@@ -717,14 +715,14 @@ mod tests {
     #[test]
     fn test_tool_name_parse_error_display() {
         let error = ToolNameParseError;
-        assert_eq!(format!("{}", error), "Failed to parse tool name");
+        assert_eq!(format!("{error}"), "Failed to parse tool name");
     }
 
     #[test]
     fn test_tool_name_parse_error_from_plugin_name_error() {
         let plugin_error = PluginNameParseError;
         let tool_error: ToolNameParseError = plugin_error.into();
-        assert_eq!(format!("{}", tool_error), "Failed to parse tool name");
+        assert_eq!(format!("{tool_error}"), "Failed to parse tool name");
     }
 
     #[test]
@@ -772,7 +770,7 @@ mod tests {
 
         // Test that the error implements standard error traits
         assert!(std::error::Error::source(&tool_error).is_none());
-        assert!(!format!("{}", tool_error).is_empty());
+        assert!(!format!("{tool_error}").is_empty());
     }
 
     #[test]
@@ -824,20 +822,18 @@ mod tests {
             let result = create_namespaced_tool_name(&plugin, tool_name);
 
             if should_succeed {
-                assert!(result.is_ok(), "{}: {}", description, tool_name);
+                assert!(result.is_ok(), "{description}: {tool_name}");
 
                 if let Ok(namespaced) = result {
                     let parse_result =
                         parse_namespaced_tool_name(std::borrow::Cow::Owned(namespaced));
                     assert!(
                         parse_result.is_ok(),
-                        "Should parse back {}: {}",
-                        description,
-                        tool_name
+                        "Should parse back {description}: {tool_name}"
                     );
                 }
             } else {
-                assert!(result.is_err(), "{}: {}", description, tool_name);
+                assert!(result.is_err(), "{description}: {tool_name}");
             }
         }
     }
@@ -903,7 +899,7 @@ plugins: {}
     async fn test_plugin_service_creation_with_file_plugin() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -956,7 +952,7 @@ plugins:
     async fn test_plugin_service_creation_with_invalid_memory_limit() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -1007,7 +1003,7 @@ plugins:
     async fn test_plugin_service_list_tools_with_plugin() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -1029,7 +1025,7 @@ plugins:
 
         // Verify the service was created successfully
         assert!(
-            running.service().plugins.read().await.len() > 0,
+            !running.service().plugins.read().await.is_empty(),
             "Should have loaded plugin"
         );
 
@@ -1057,9 +1053,7 @@ plugins:
         for expected_tool in &expected_tools {
             assert!(
                 actual_tool_names.contains(&expected_tool.to_string()),
-                "Expected tool '{}' not found in actual tools: {:?}",
-                expected_tool,
-                actual_tool_names
+                "Expected tool '{expected_tool}' not found in actual tools: {actual_tool_names:?}"
             );
         }
 
@@ -1088,9 +1082,7 @@ plugins:
         for operation in &expected_operations {
             assert!(
                 description.contains(operation),
-                "Tool description should mention operation '{}': {}",
-                operation,
-                description
+                "Tool description should mention operation '{operation}': {description}"
             );
         }
 
@@ -1108,9 +1100,7 @@ plugins:
                         for operation in &expected_operations {
                             assert!(
                                 schema_operations.contains(&operation.to_string()),
-                                "Input schema should include operation '{}' in enum: {:?}",
-                                operation,
-                                schema_operations
+                                "Input schema should include operation '{operation}' in enum: {schema_operations:?}"
                             );
                         }
                     }
@@ -1126,7 +1116,7 @@ plugins:
     async fn test_plugin_service_list_tools_with_skip_tools() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -1151,7 +1141,7 @@ plugins:
 
         // Verify the service was created successfully
         assert!(
-            running.service().plugins.read().await.len() > 0,
+            !running.service().plugins.read().await.is_empty(),
             "Should have loaded plugin"
         );
 
@@ -1183,8 +1173,7 @@ plugins:
 
         assert!(
             !tool_names.contains(&"time_plugin-time".to_string()),
-            "time_plugin-time should be skipped but was found in tools: {:?}",
-            tool_names
+            "time_plugin-time should be skipped but was found in tools: {tool_names:?}"
         );
 
         // Verify that the plugin itself was loaded (skip_tools should not prevent plugin loading)
@@ -1208,15 +1197,13 @@ plugins:
 
         assert!(
             skip_tools.contains(&"time".to_string()),
-            "Configuration should include 'time' in skip_tools list: {:?}",
-            skip_tools
+            "Configuration should include 'time' in skip_tools list: {skip_tools:?}"
         );
 
         assert_eq!(
             skip_tools.len(),
             1,
-            "Should have exactly one tool in skip_tools list: {:?}",
-            skip_tools
+            "Should have exactly one tool in skip_tools list: {skip_tools:?}"
         );
 
         // Cleanup
@@ -1249,8 +1236,7 @@ plugins:
             // Should be an invalid_request error
             assert!(
                 error.to_string().contains("Failed to parse tool name"),
-                "Error should mention parsing failure: {}",
-                error
+                "Error should mention parsing failure: {error}"
             );
         }
 
@@ -1293,8 +1279,7 @@ plugins:
             let error_str = error.to_string();
             assert!(
                 error_str.contains("-32601") || error_str.contains("tools/call"),
-                "Error should indicate method not found: {}",
-                error
+                "Error should indicate method not found: {error}"
             );
         }
         assert_ok!(running.cancel().await);
@@ -1304,7 +1289,7 @@ plugins:
     async fn test_plugin_service_call_tool_with_plugin() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -1326,7 +1311,7 @@ plugins:
 
         // Verify the service was created successfully
         assert!(
-            running.service().plugins.read().await.len() > 0,
+            !running.service().plugins.read().await.is_empty(),
             "Should have loaded plugin"
         );
 
@@ -1347,8 +1332,7 @@ plugins:
         let result = running.service().call_tool(request, ctx).await;
         assert!(
             result.is_ok(),
-            "Should successfully call time tool: {:?}",
-            result
+            "Should successfully call time tool: {result:?}"
         );
 
         let call_result = result.unwrap();
@@ -1379,8 +1363,7 @@ plugins:
         let result = running.service().call_tool(request, ctx).await;
         assert!(
             result.is_ok(),
-            "Should successfully call parse_time operation: {:?}",
-            result
+            "Should successfully call parse_time operation: {result:?}"
         );
 
         let call_result = result.unwrap();
@@ -1397,7 +1380,7 @@ plugins:
     async fn test_plugin_service_call_tool_with_skipped_tool() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -1422,7 +1405,7 @@ plugins:
 
         // Verify the service was created successfully
         assert!(
-            running.service().plugins.read().await.len() > 0,
+            !running.service().plugins.read().await.is_empty(),
             "Should have loaded plugin"
         );
 
@@ -1448,8 +1431,7 @@ plugins:
             let error_str = error.to_string();
             assert!(
                 error_str.contains("-32601") || error_str.contains("tools/call"),
-                "Error should indicate method not found for skipped tool: {}",
-                error
+                "Error should indicate method not found for skipped tool: {error}"
             );
         }
         assert_ok!(running.cancel().await);
@@ -1508,7 +1490,7 @@ plugins:
     async fn test_plugin_service_multiple_plugins() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -1544,7 +1526,7 @@ plugins:
     async fn test_plugin_service_call_tool_with_cancellation() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -1602,8 +1584,7 @@ plugins:
         let error_message = error.to_string();
         assert!(
             error_message.contains("cancelled") || error_message.contains("canceled"),
-            "Expected cancellation error message, got: {}",
-            error_message
+            "Expected cancellation error message, got: {error_message}"
         );
         assert_ok!(running.cancel().await);
     }
@@ -1612,7 +1593,7 @@ plugins:
     async fn test_plugin_service_list_tools_with_cancellation() {
         let wasm_path = get_test_wasm_path();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {:?}", wasm_path);
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
             return;
         }
 
@@ -1658,8 +1639,7 @@ plugins:
         let error_message = error.to_string();
         assert!(
             error_message.contains("cancelled") || error_message.contains("canceled"),
-            "Expected cancellation error message, got: {}",
-            error_message
+            "Expected cancellation error message, got: {error_message}"
         );
         assert_ok!(running.cancel().await);
     }

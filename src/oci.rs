@@ -154,19 +154,19 @@ async fn verify_image_signature(cli: &Cli, image_reference: &str) -> Result<bool
     // Create client with trust repository
     let client_builder = match client_builder.with_trust_repository(repo.as_ref()) {
         Ok(builder) => builder,
-        Err(e) => return Err(anyhow!("Failed to set up trust repository: {}", e)),
+        Err(e) => return Err(anyhow!("Failed to set up trust repository: {e}")),
     };
 
     // Build the client
     let mut client = match client_builder.build() {
         Ok(client) => client,
-        Err(e) => return Err(anyhow!("Failed to build Sigstore client: {}", e)),
+        Err(e) => return Err(anyhow!("Failed to build Sigstore client: {e}")),
     };
 
     // Parse the reference
     let image_ref = match OciReference::from_str(image_reference) {
         Ok(reference) => reference,
-        Err(e) => return Err(anyhow!("Invalid image reference: {}", e)),
+        Err(e) => return Err(anyhow!("Invalid image reference: {e}")),
     };
 
     // Triangulate to find the signature image and source digest
