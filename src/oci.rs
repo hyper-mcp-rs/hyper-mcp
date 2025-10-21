@@ -76,7 +76,10 @@ async fn setup_trust_repository(cli: &Cli) -> Result<Box<dyn TrustRoot>, anyhow:
             match fs::read(rekor_keys_path) {
                 Ok(content) => {
                     tracing::info!("Added Rekor public key");
-                    data.rekor_keys.push(content);
+                    if let Some(path_str) = rekor_keys_path.to_str() {
+                        data.rekor_keys.insert(path_str.to_string(), content);
+                        tracing::info!("Added Rekor public key from: {}", path_str);
+                    }
                 }
                 Err(e) => tracing::warn!("Failed to read Rekor public keys file: {e}"),
             }
