@@ -47,7 +47,7 @@ jobs:
         run: cargo build
 
       - name: Set up TinyGo
-        uses: acifani/setup-tinygo@v2
+        uses: acifani/setup-tinygo@db56321a62b9a67922bb9ac8f9d085e218807bb3 # v2.0.1
         with:
           tinygo-version: "0.37.0"
 
