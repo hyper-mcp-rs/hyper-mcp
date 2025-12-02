@@ -128,10 +128,109 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auths: Option<HashMap<Url, AuthConfig>>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_protected_resource: Option<OauthProtectedResourceConfig>,
+
     #[serde(default)]
     pub oci: OciConfig,
 
     pub plugins: HashMap<PluginName, PluginConfig>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ResourceUrl(Url);
+
+impl fmt::Display for ResourceUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ResourceUrl {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let url = Url::deserialize(deserializer)?;
+        if url.scheme() != "https" {
+            return Err(serde::de::Error::custom(format!(
+                "Resource URL must use https scheme, found: {}",
+                url.scheme()
+            )));
+        }
+
+        if url.fragment().is_some() {
+            return Err(serde::de::Error::custom(
+                "Resource URL must not contain a fragment",
+            ));
+        }
+        Ok(ResourceUrl(url))
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AuthorizationServerUrl(Url);
+
+impl<'de> Deserialize<'de> for AuthorizationServerUrl {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let url = Url::deserialize(deserializer)?;
+        if url.scheme() != "https" {
+            return Err(serde::de::Error::custom(format!(
+                "Authorization server URL must use https scheme, found: {}",
+                url.scheme()
+            )));
+        }
+        Ok(AuthorizationServerUrl(url))
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OauthProtectedResourceConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorization_servers: Option<Vec<AuthorizationServerUrl>>,
+
+    pub resource: ResourceUrl,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_name: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_policy_uri: Option<Url>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_tos_uri: Option<Url>,
+}
+
+impl<'de> Deserialize<'de> for OauthProtectedResourceConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct OauthProtectedResourceConfigHelper {
+            authorization_servers: Option<Vec<AuthorizationServerUrl>>,
+            resource: ResourceUrl,
+            resource_name: Option<String>,
+            resource_policy_uri: Option<Url>,
+            resource_tos_uri: Option<Url>,
+        }
+        let mut helper = OauthProtectedResourceConfigHelper::deserialize(deserializer)?;
+        if let Some(authorization_servers) = helper.authorization_servers.clone()
+            && authorization_servers.is_empty()
+        {
+            helper.authorization_servers = None;
+        }
+        Ok(OauthProtectedResourceConfig {
+            authorization_servers: helper.authorization_servers,
+            resource: helper.resource,
+            resource_name: helper.resource_name,
+            resource_policy_uri: helper.resource_policy_uri,
+            resource_tos_uri: helper.resource_tos_uri,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
