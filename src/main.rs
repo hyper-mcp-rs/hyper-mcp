@@ -13,7 +13,7 @@ use axum::{
     Json,
     extract::State,
     http::{StatusCode, header::LOCATION},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::get,
 };
 use clap::Parser;
@@ -21,17 +21,23 @@ use rmcp::transport::sse_server::SseServer;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpService, session::local::LocalSessionManager,
 };
-use rmcp::{ServiceExt, transport::stdio};
+use rmcp::{
+    ServiceExt,
+    model::ClientInfo,
+    service::{RoleClient, RoleServer, RunningService, Service, serve_client, serve_server},
+    transport::stdio,
+};
 use std::sync::Arc;
-use tokio::{runtime::Handle, task::block_in_place};
+use tokio::{io::duplex, runtime::Handle, task::block_in_place};
 
 #[derive(Clone)]
 struct ServerState {
     config: Config,
+    documentation: String,
 }
 
 async fn docs(State(state): State<Arc<ServerState>>) -> Response {
-    (StatusCode::NOT_FOUND, "Not Found").into_response()
+    Html(state.documentation.clone()).into_response()
 }
 
 async fn oauth_protected_resource(State(state): State<Arc<ServerState>>) -> Response {
@@ -112,6 +118,10 @@ async fn main() -> Result<()> {
                 "Starting hyper-mcp with SSE transport at {}",
                 cli.bind_address
             );
+
+            // Pre-create the service to catch any initialization errors early
+            service::PluginService::new(&config).await?;
+
             let ct = SseServer::serve(cli.bind_address.parse()?)
                 .await?
                 .with_service({
@@ -134,9 +144,43 @@ async fn main() -> Result<()> {
                 bind_address
             );
 
+            // Pre-create the service to catch any initialization errors early
+            async fn documentation_pair<S, C>(
+                service: S,
+                client: C,
+            ) -> (RunningService<RoleServer, S>, RunningService<RoleClient, C>)
+            where
+                S: Service<RoleServer>,
+                C: Service<RoleClient>,
+            {
+                let (srv_io, cli_io) = duplex(64 * 1024);
+                tokio::try_join!(
+                    async {
+                        serve_server(service, srv_io)
+                            .await
+                            .map_err(anyhow::Error::from)
+                    },
+                    async {
+                        serve_client(client, cli_io)
+                            .await
+                            .map_err(anyhow::Error::from)
+                    }
+                )
+                .expect("Failed to create documentation pair")
+            }
+
+            let (server, client) = documentation_pair(
+                service::PluginService::new(&config).await?,
+                ClientInfo::default(),
+            )
+            .await;
+
             let server_state = Arc::new(ServerState {
                 config: config.clone(),
+                documentation: server.service().generate_docs().await?,
             });
+            server.cancel().await?;
+            client.cancel().await?;
 
             let service = StreamableHttpService::new(
                 {

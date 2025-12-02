@@ -552,6 +552,182 @@ impl PluginService {
         Ok(())
     }
 
+    pub async fn generate_docs(&self) -> Result<String> {
+        use tokio_util::sync::CancellationToken;
+
+        let mut html = String::new();
+        html.push_str("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<title>Hyper-MCP Documentation</title>\n<style>\nbody { font-family: Arial, sans-serif; margin: 20px; }\nh1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }\nh2 { color: #555; margin-top: 20px; }\n.section { margin-bottom: 40px; }\n.item { margin-bottom: 25px; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #007bff; }\n.description { margin: 10px 0; color: #666; }\n.parameters, .arguments { margin-top: 10px; }\n.param-list { list-style-type: none; padding-left: 0; }\n.param-list li { padding: 5px 0; }\n.param-name { font-weight: bold; color: #007bff; }\n.required { color: #dc3545; font-style: italic; }\n.mime-type { color: #666; font-family: monospace; }\n.error { color: #dc3545; }\n.empty-section { color: #999; font-style: italic; }\n</style>\n</head>\n<body>\n");
+
+        // Create a minimal request context for gathering documentation
+        let context = RequestContext {
+            ct: CancellationToken::new(),
+            extensions: Extensions::default(),
+            id: RequestId::Number(1),
+            meta: Meta::default(),
+            peer: self
+                .peer
+                .get()
+                .ok_or_else(|| anyhow::anyhow!("Peer not initialized"))?
+                .clone(),
+        };
+
+        // Gather tools documentation
+        html.push_str("<div class=\"section\">\n<h1>Tools</h1>\n");
+        match self.list_tools(None, context.clone()).await {
+            Ok(tools_result) => {
+                if tools_result.tools.is_empty() {
+                    html.push_str("<p class=\"empty-section\">No tools available.</p>\n");
+                } else {
+                    for tool in tools_result.tools {
+                        html.push_str("<div class=\"item\">\n");
+                        html.push_str(&format!("<h2>{}</h2>\n", tool.name));
+                        if let Some(desc) = tool.description {
+                            html.push_str(&format!("<p class=\"description\">{}</p>\n", desc));
+                        }
+                        // Extract parameters from JSON schema
+                        if let Some(props) = tool.input_schema.get("properties")
+                            && let Some(props_obj) = props.as_object()
+                            && !props_obj.is_empty()
+                        {
+                            html.push_str("<div class=\"parameters\">\n");
+                            html.push_str("<strong>Parameters:</strong>\n");
+                            html.push_str("<ul class=\"param-list\">\n");
+                            for (param_name, _param_schema) in props_obj.iter() {
+                                html.push_str(&format!(
+                                    "<li><span class=\"param-name\">{}</span></li>\n",
+                                    param_name
+                                ));
+                            }
+                            html.push_str("</ul>\n");
+                            html.push_str("</div>\n");
+                        }
+                        html.push_str("</div>\n");
+                    }
+                }
+            }
+            Err(e) => {
+                html.push_str(&format!(
+                    "<p class=\"error\">Error retrieving tools: {}</p>\n",
+                    e
+                ));
+            }
+        }
+        html.push_str("</div>\n");
+
+        // Gather prompts documentation
+        html.push_str("<div class=\"section\">\n<h1>Prompts</h1>\n");
+        match self.list_prompts(None, context.clone()).await {
+            Ok(prompts_result) => {
+                if prompts_result.prompts.is_empty() {
+                    html.push_str("<p class=\"empty-section\">No prompts available.</p>\n");
+                } else {
+                    for prompt in prompts_result.prompts {
+                        html.push_str("<div class=\"item\">\n");
+                        html.push_str(&format!("<h2>{}</h2>\n", prompt.name));
+                        if let Some(desc) = prompt.description {
+                            html.push_str(&format!("<p class=\"description\">{}</p>\n", desc));
+                        }
+                        if let Some(arguments) = prompt.arguments
+                            && !arguments.is_empty()
+                        {
+                            html.push_str("<div class=\"arguments\">\n");
+                            html.push_str("<strong>Arguments:</strong>\n");
+                            html.push_str("<ul class=\"param-list\">\n");
+                            for arg in arguments {
+                                html.push_str("<li><span class=\"param-name\">");
+                                html.push_str(&arg.name);
+                                html.push_str("</span>: ");
+                                if let Some(desc) = arg.description {
+                                    html.push_str(&desc);
+                                }
+                                if arg.required.unwrap_or(false) {
+                                    html.push_str(" <span class=\"required\">(required)</span>");
+                                }
+                                html.push_str("</li>\n");
+                            }
+                            html.push_str("</ul>\n");
+                            html.push_str("</div>\n");
+                        }
+                        html.push_str("</div>\n");
+                    }
+                }
+            }
+            Err(e) => {
+                html.push_str(&format!(
+                    "<p class=\"error\">Error retrieving prompts: {}</p>\n",
+                    e
+                ));
+            }
+        }
+        html.push_str("</div>\n");
+
+        // Gather resources documentation
+        html.push_str("<div class=\"section\">\n<h1>Resources</h1>\n");
+        match self.list_resources(None, context.clone()).await {
+            Ok(resources_result) => {
+                if resources_result.resources.is_empty() {
+                    html.push_str("<p class=\"empty-section\">No resources available.</p>\n");
+                } else {
+                    for resource in resources_result.resources {
+                        html.push_str("<div class=\"item\">\n");
+                        html.push_str(&format!("<h2>{}</h2>\n", resource.uri));
+                        if let Some(desc) = &resource.description {
+                            html.push_str(&format!("<p class=\"description\">{}</p>\n", desc));
+                        }
+                        if let Some(mime_type) = &resource.mime_type {
+                            html.push_str(&format!("<p><strong>MIME Type:</strong> <code class=\"mime-type\">{}</code></p>\n", mime_type));
+                        }
+                        html.push_str("</div>\n");
+                    }
+                }
+            }
+            Err(e) => {
+                html.push_str(&format!(
+                    "<p class=\"error\">Error retrieving resources: {}</p>\n",
+                    e
+                ));
+            }
+        }
+        html.push_str("</div>\n");
+
+        // Gather resource templates documentation
+        html.push_str("<div class=\"section\">\n<h1>Resource Templates</h1>\n");
+        match self.list_resource_templates(None, context.clone()).await {
+            Ok(templates_result) => {
+                if templates_result.resource_templates.is_empty() {
+                    html.push_str(
+                        "<p class=\"empty-section\">No resource templates available.</p>\n",
+                    );
+                } else {
+                    for template in templates_result.resource_templates {
+                        html.push_str("<div class=\"item\">\n");
+                        html.push_str(&format!(
+                            "<h2><code>{}</code></h2>\n",
+                            template.uri_template
+                        ));
+                        if let Some(desc) = &template.description {
+                            html.push_str(&format!("<p class=\"description\">{}</p>\n", desc));
+                        }
+                        if let Some(mime_type) = &template.mime_type {
+                            html.push_str(&format!("<p><strong>MIME Type:</strong> <code class=\"mime-type\">{}</code></p>\n", mime_type));
+                        }
+                        html.push_str("</div>\n");
+                    }
+                }
+            }
+            Err(e) => {
+                html.push_str(&format!(
+                    "<p class=\"error\">Error retrieving resource templates: {}</p>\n",
+                    e
+                ));
+            }
+        }
+        html.push_str("</div>\n");
+
+        html.push_str("</body>\n</html>");
+        Ok(html)
+    }
+
     pub fn logging_level(&self) -> LoggingLevel {
         *self.logging_level.read().unwrap()
     }
@@ -1080,7 +1256,6 @@ mod tests {
     use crate::{cli::Cli, config::load_config};
     use rmcp::{
         ClientHandler,
-        model::ClientInfo,
         service::{RoleClient, RunningService, Service, serve_client, serve_server},
     };
     use std::{
@@ -3587,6 +3762,177 @@ plugins:
                 );
             }
         }
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_generate_docs_with_empty_config() {
+        let config_content = r#"
+plugins: {}
+"#;
+        let (_temp_dir, config_path) = create_temp_config_file(config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
+
+        let (server, _client) = create_test_pair(
+            PluginService::new(&config).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+        let docs = server.service().generate_docs().await.unwrap();
+
+        // Verify structure
+        assert!(docs.contains("<h1>Tools</h1>"));
+        assert!(docs.contains("<h1>Prompts</h1>"));
+        assert!(docs.contains("<h1>Resources</h1>"));
+        assert!(docs.contains("<h1>Resource Templates</h1>"));
+        assert!(docs.contains("No tools available."));
+        assert!(docs.contains("No prompts available."));
+        assert!(docs.contains("No resources available."));
+        assert!(docs.contains("No resource templates available."));
+    }
+
+    #[tokio::test]
+    async fn test_generate_docs_with_rstime_plugin() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&config).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+        let docs = server.service().generate_docs().await.unwrap();
+
+        // Verify documentation structure
+        assert!(docs.contains("<h1>Tools</h1>"));
+        assert!(docs.contains("<h1>Prompts</h1>"));
+        assert!(docs.contains("<h1>Resources</h1>"));
+        assert!(docs.contains("<h1>Resource Templates</h1>"));
+
+        // Verify content (rstime plugin should have tools and prompts)
+        assert!(
+            docs.contains("rstime-"),
+            "Documentation should include rstime plugin tools"
+        );
+
+        // Verify that it's valid HTML
+        assert!(
+            docs.len() > 100,
+            "Documentation should have substantial content"
+        );
+        assert!(
+            docs.contains("<!DOCTYPE html>"),
+            "Should be valid HTML document"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_generate_docs_markdown_format() {
+        let config_content = r#"
+plugins: {}
+"#;
+        let (_temp_dir, config_path) = create_temp_config_file(config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&config).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+        let docs = server.service().generate_docs().await.unwrap();
+
+        // Verify HTML formatting
+        assert!(docs.contains("<!DOCTYPE html>"), "Should have HTML doctype");
+        assert!(docs.contains("<html>"), "Should have html tag");
+        assert!(docs.contains("<h1>Tools</h1>"), "Should have Tools heading");
+        assert!(
+            docs.contains("<h1>Prompts</h1>"),
+            "Should have Prompts heading"
+        );
+        assert!(
+            docs.contains("<h1>Resources</h1>"),
+            "Should have Resources heading"
+        );
+        assert!(
+            docs.contains("<h1>Resource Templates</h1>"),
+            "Should have Resource Templates heading"
+        );
+        assert!(docs.contains("</html>"), "Should have closing html tag");
+        assert!(
+            docs.contains("No tools available."),
+            "Should have empty tools message"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_generate_docs_display_example() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&config).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+        let docs = server.service().generate_docs().await.unwrap();
+
+        println!(
+            "\n========== GENERATED DOCUMENTATION ==========\n{}\n========== END DOCUMENTATION ==========\n",
+            docs
+        );
 
         assert_ok!(server.cancel().await);
         assert_ok!(client.cancel().await);
