@@ -36,6 +36,54 @@ struct ServerState {
     documentation: String,
 }
 
+impl ServerState {
+    async fn create_documentation(config: &Config) -> Result<String> {
+        async fn documentation_pair<S, C>(
+            service: S,
+            client: C,
+        ) -> (RunningService<RoleServer, S>, RunningService<RoleClient, C>)
+        where
+            S: Service<RoleServer>,
+            C: Service<RoleClient>,
+        {
+            let (srv_io, cli_io) = duplex(64 * 1024);
+            tokio::try_join!(
+                async {
+                    serve_server(service, srv_io)
+                        .await
+                        .map_err(anyhow::Error::from)
+                },
+                async {
+                    serve_client(client, cli_io)
+                        .await
+                        .map_err(anyhow::Error::from)
+                }
+            )
+            .expect("Failed to create documentation pair")
+        }
+
+        let (server, client) = documentation_pair(
+            service::PluginService::new(&config).await?,
+            ClientInfo::default(),
+        )
+        .await;
+
+        let docs = server.service().generate_docs().await?;
+
+        server.cancel().await?;
+        client.cancel().await?;
+
+        Ok(docs)
+    }
+
+    pub async fn new(config: &Config) -> Result<Self> {
+        Ok(Self {
+            config: config.clone(),
+            documentation: Self::create_documentation(config).await?,
+        })
+    }
+}
+
 async fn docs(State(state): State<Arc<ServerState>>) -> Response {
     Html(state.documentation.clone()).into_response()
 }
@@ -144,43 +192,7 @@ async fn main() -> Result<()> {
                 bind_address
             );
 
-            // Pre-create the service to catch any initialization errors early
-            async fn documentation_pair<S, C>(
-                service: S,
-                client: C,
-            ) -> (RunningService<RoleServer, S>, RunningService<RoleClient, C>)
-            where
-                S: Service<RoleServer>,
-                C: Service<RoleClient>,
-            {
-                let (srv_io, cli_io) = duplex(64 * 1024);
-                tokio::try_join!(
-                    async {
-                        serve_server(service, srv_io)
-                            .await
-                            .map_err(anyhow::Error::from)
-                    },
-                    async {
-                        serve_client(client, cli_io)
-                            .await
-                            .map_err(anyhow::Error::from)
-                    }
-                )
-                .expect("Failed to create documentation pair")
-            }
-
-            let (server, client) = documentation_pair(
-                service::PluginService::new(&config).await?,
-                ClientInfo::default(),
-            )
-            .await;
-
-            let server_state = Arc::new(ServerState {
-                config: config.clone(),
-                documentation: server.service().generate_docs().await?,
-            });
-            server.cancel().await?;
-            client.cancel().await?;
+            let server_state = Arc::new(ServerState::new(&config).await?);
 
             let service = StreamableHttpService::new(
                 {
@@ -198,12 +210,12 @@ async fn main() -> Result<()> {
 
             let router = axum::Router::new()
                 .route("/docs", get(docs))
+                .route("/policy", get(policy))
+                .route("/tos", get(tos))
                 .route(
                     "/.well-known/oauth-protected-resource",
                     get(oauth_protected_resource),
                 )
-                .route("/policy", get(policy))
-                .route("/tos", get(tos))
                 .nest_service("/mcp", service)
                 .with_state(server_state);
 
