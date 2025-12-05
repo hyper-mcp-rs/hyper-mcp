@@ -6,17 +6,13 @@ mod naming;
 mod plugin;
 mod service;
 mod state;
+mod streamable_http;
 mod wasm;
 
 use crate::state::ServerState;
+use crate::streamable_http::routes;
 use anyhow::Result;
-use axum::{
-    Json,
-    extract::State,
-    http::{StatusCode, header::LOCATION},
-    response::{Html, IntoResponse, Response},
-    routing::get,
-};
+use axum::routing::get;
 use clap::Parser;
 use rmcp::transport::sse_server::SseServer;
 use rmcp::transport::streamable_http_server::{
@@ -25,65 +21,6 @@ use rmcp::transport::streamable_http_server::{
 use rmcp::{ServiceExt, transport::stdio};
 use std::sync::Arc;
 use tokio::{runtime::Handle, task::block_in_place};
-
-async fn docs(State(state): State<Arc<ServerState>>) -> Response {
-    Html(state.documentation.clone()).into_response()
-}
-
-async fn oauth_protected_resource(State(state): State<Arc<ServerState>>) -> Response {
-    match state.config.clone().oauth_protected_resource {
-        Some(oath_protected_resource) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "authorization_servers": oath_protected_resource.authorization_servers,
-                "bearer_methods_supported": vec!["header"],
-                "resource": oath_protected_resource.resource,
-                "resource_documentation": format!("{}/docs", oath_protected_resource.resource),
-                "resource_name": oath_protected_resource.resource_name,
-                "resource_policy_uri": if oath_protected_resource.resource_policy_uri.is_some() {
-                    Some(format!("{}/policy", oath_protected_resource.resource))
-                } else {
-                    None
-                },
-                "resource_tos_uri": if oath_protected_resource.resource_tos_uri.is_some() {
-                    Some(format!("{}/tos", oath_protected_resource.resource))
-                } else {
-                    None
-                },
-            })),
-        )
-            .into_response(),
-        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-    }
-}
-
-async fn policy(State(state): State<Arc<ServerState>>) -> Response {
-    match state.config.clone().oauth_protected_resource {
-        Some(oath_protected_resource) => match oath_protected_resource.resource_policy_uri {
-            Some(policy_uri) => (
-                StatusCode::TEMPORARY_REDIRECT,
-                [(LOCATION, policy_uri.to_string())],
-            )
-                .into_response(),
-            None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-        },
-        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-    }
-}
-
-async fn tos(State(state): State<Arc<ServerState>>) -> Response {
-    match state.config.clone().oauth_protected_resource {
-        Some(oath_protected_resource) => match oath_protected_resource.resource_tos_uri {
-            Some(tos_uri) => (
-                StatusCode::TEMPORARY_REDIRECT,
-                [(LOCATION, tos_uri.to_string())],
-            )
-                .into_response(),
-            None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-        },
-        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -151,12 +88,12 @@ async fn main() -> Result<()> {
             );
 
             let router = axum::Router::new()
-                .route("/docs", get(docs))
-                .route("/policy", get(policy))
-                .route("/tos", get(tos))
+                .route("/docs", get(routes::docs))
+                .route("/policy", get(routes::policy))
+                .route("/tos", get(routes::tos))
                 .route(
                     "/.well-known/oauth-protected-resource",
-                    get(oauth_protected_resource),
+                    get(routes::oauth_protected_resource),
                 )
                 .nest_service("/mcp", service)
                 .with_state(server_state);
