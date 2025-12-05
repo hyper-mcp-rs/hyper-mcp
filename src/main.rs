@@ -5,12 +5,11 @@ mod logging;
 mod naming;
 mod plugin;
 mod service;
-mod state;
 mod streamable_http;
 mod wasm;
 
-use crate::state::ServerState;
 use crate::streamable_http::routes;
+use crate::streamable_http::state::ServerState;
 use anyhow::Result;
 use axum::routing::get;
 use clap::Parser;
