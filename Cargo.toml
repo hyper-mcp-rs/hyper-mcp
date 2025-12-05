@@ -28,6 +28,7 @@ extism = "1.12.0"
 extism-convert = "1.12.0"
 flate2 = "1.1.2"
 hex = "0.4.3"
+jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
 keyring = { version = "3.6.3", features = [
     "apple-native",
     "linux-native",

@@ -187,6 +187,12 @@ impl<'de> Deserialize<'de> for AuthorizationServerUrl {
     }
 }
 
+impl fmt::Display for AuthorizationServerUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct OauthProtectedResourceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]

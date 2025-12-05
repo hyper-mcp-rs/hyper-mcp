@@ -16,7 +16,7 @@ pub async fn oauth_protected_resource(State(state): State<Arc<ServerState>>) -> 
         Some(oath_protected_resource) => (
             StatusCode::OK,
             Json(serde_json::json!({
-                "authorization_servers": oath_protected_resource.authorization_servers,
+                "authorization_servers": state.authorization_servers,
                 "bearer_methods_supported": vec!["header"],
                 "resource": oath_protected_resource.resource,
                 "resource_documentation": format!("{}/docs", oath_protected_resource.resource),
