@@ -8,7 +8,7 @@ use axum::{
 use std::sync::Arc;
 
 pub async fn docs(State(state): State<Arc<ServerState>>) -> Response {
-    Html(state.documentation.clone()).into_response()
+    Html(state.docs.clone()).into_response()
 }
 
 pub async fn oauth_protected_resource(State(state): State<Arc<ServerState>>) -> Response {
@@ -16,7 +16,7 @@ pub async fn oauth_protected_resource(State(state): State<Arc<ServerState>>) -> 
         Some(oath_protected_resource) => (
             StatusCode::OK,
             Json(serde_json::json!({
-                "authorization_servers": state.authorization_servers,
+                "authorization_servers": state.auth_servers,
                 "bearer_methods_supported": vec!["header"],
                 "resource": oath_protected_resource.resource,
                 "resource_documentation": format!("{}/docs", oath_protected_resource.resource),

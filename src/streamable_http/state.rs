@@ -167,29 +167,33 @@ async fn create_jwks(
 
 #[derive(Clone)]
 pub struct ServerState {
-    pub authorization_servers: Vec<AuthorizationServerUrl>,
+    pub auth_servers: Vec<AuthorizationServerUrl>,
     pub config: Config,
-    pub documentation: String,
+    pub docs: String,
     pub jwks: HashMap<String, JwkSet>,
 }
 
 impl ServerState {
     pub async fn new(config: &Config) -> Result<Self> {
-        let (authorization_servers, jwks) = create_jwks(config).await?;
-        if authorization_servers.is_empty()
-            && let Some(oauth_protected_resource) = &config.oauth_protected_resource
-            && let Some(authorization_servers_configured) =
-                &oauth_protected_resource.authorization_servers
-            && !authorization_servers_configured.is_empty()
-        {
-            return Err(anyhow!(
-                "No valid authorization servers configured for OAuth protected resource, check logs"
-            ));
+        let (auth_servers, jwks) = create_jwks(config).await?;
+        if auth_servers.is_empty() {
+            if let Some(oauth_protected_resource) = &config.oauth_protected_resource
+                && let Some(auth_servers_configed) = &oauth_protected_resource.authorization_servers
+                && !auth_servers_configed.is_empty()
+            {
+                return Err(anyhow!(
+                    "No valid authorization servers configured for OAuth protected resource, check logs"
+                ));
+            } else {
+                tracing::warn!(
+                    "No authorization servers configured for OAuth protected resource, this server will not be secured"
+                );
+            }
         }
         Ok(Self {
-            authorization_servers: authorization_servers,
+            auth_servers,
             config: config.clone(),
-            documentation: create_documentation(config).await?,
+            docs: create_documentation(config).await?,
             jwks: jwks,
         })
     }
