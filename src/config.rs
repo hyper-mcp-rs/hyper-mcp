@@ -168,6 +168,14 @@ impl<'de> Deserialize<'de> for ResourceUrl {
     }
 }
 
+impl ResourceUrl {
+    pub fn resource_metadata_url(&self) -> Url {
+        let mut url = self.0.clone();
+        url.set_path("/.well-known/oauth-protected-resource");
+        url
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct AuthorizationServerUrl(Url);
 

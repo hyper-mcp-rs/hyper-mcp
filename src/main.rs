@@ -8,9 +8,9 @@ mod service;
 mod streamable_http;
 mod wasm;
 
-use crate::streamable_http::routes;
-use crate::streamable_http::state::ServerState;
+use crate::streamable_http::{auth::authentication, routes, state::ServerState};
 use anyhow::Result;
+use axum::middleware;
 use axum::routing::get;
 use clap::Parser;
 use rmcp::transport::sse_server::SseServer;
@@ -95,6 +95,10 @@ async fn main() -> Result<()> {
                     get(routes::oauth_protected_resource),
                 )
                 .nest_service("/mcp", service)
+                .layer(middleware::from_fn_with_state(
+                    server_state.clone(),
+                    authentication,
+                ))
                 .with_state(server_state);
 
             let listener = tokio::net::TcpListener::bind(bind_address.clone()).await?;
