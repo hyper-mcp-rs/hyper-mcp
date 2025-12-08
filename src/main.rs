@@ -40,8 +40,8 @@ async fn main() -> Result<()> {
             service.waiting().await?;
         }
         "sse" => {
-            tracing::info!(
-                "Starting hyper-mcp with SSE transport at {}",
+            tracing::warn!(
+                "THE SSE TRANSPORT IS DEPRICATED AND WILL BE REMOVED IN A FUTURE RELEASE. Please migrate to the streamable-http transport. Starting hyper-mcp with SSE transport at {}.",
                 cli.bind_address
             );
 
