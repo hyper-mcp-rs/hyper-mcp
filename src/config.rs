@@ -1,9 +1,15 @@
 use crate::cli::Cli;
 use anyhow::{Context, Result};
-use once_cell::sync::Lazy;
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, convert::TryFrom, fmt, path::PathBuf, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+    fmt,
+    path::PathBuf,
+    str::FromStr,
+    sync::LazyLock,
+};
 use url::Url;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -20,8 +26,14 @@ impl fmt::Display for PluginNameParseError {
 
 impl std::error::Error for PluginNameParseError {}
 
-static PLUGIN_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
+static PLUGIN_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[A-Za-z0-9]+(?:[_][A-Za-z0-9]+)*$").expect("Failed to compile plugin name regex")
+});
+
+static RESERVED_PLUGIN_NAMES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    let mut set = HashSet::new();
+    set.insert("hyper_mcp");
+    set
 });
 
 impl PluginName {
@@ -123,7 +135,7 @@ impl<'de> Deserialize<'de> for AuthConfig {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auths: Option<HashMap<Url, AuthConfig>>,
@@ -135,6 +147,48 @@ pub struct Config {
     pub oci: OciConfig,
 
     pub plugins: HashMap<PluginName, PluginConfig>,
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Helper type that describes the *input* representation.
+        // This can have defaults, optional fields, etc.
+        #[derive(Deserialize)]
+        struct ConfigHelper {
+            #[serde(default)]
+            auths: Option<HashMap<Url, AuthConfig>>,
+
+            #[serde(default)]
+            oauth_protected_resource: Option<OauthProtectedResourceConfig>,
+
+            #[serde(default)] // if missing, will be `None`, we’ll map to Default
+            oci: OciConfig,
+
+            #[serde(default)]
+            plugins: HashMap<PluginName, PluginConfig>,
+        }
+
+        let helper = ConfigHelper::deserialize(deserializer)?;
+
+        for plugin_name in helper.plugins.keys() {
+            if RESERVED_PLUGIN_NAMES.contains(plugin_name.as_str()) {
+                return Err(serde::de::Error::custom(format!(
+                    "Plugin name '{}' is reserved and cannot be used.",
+                    plugin_name
+                )));
+            }
+        }
+
+        Ok(Config {
+            auths: helper.auths,
+            oauth_protected_resource: helper.oauth_protected_resource,
+            oci: helper.oci,
+            plugins: helper.plugins,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

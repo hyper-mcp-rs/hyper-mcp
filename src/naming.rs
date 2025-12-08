@@ -1,7 +1,6 @@
 use crate::config::{PluginName, PluginNameParseError};
 use anyhow::Result;
-use std::fmt;
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 use url::Url;
 
 #[derive(Debug, Clone)]
