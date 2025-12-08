@@ -32,7 +32,9 @@ static PLUGIN_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 static RESERVED_PLUGIN_NAMES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     let mut set = HashSet::new();
-    set.insert("hyper_mcp");
+    set.insert("prompts");
+    set.insert("resources");
+    set.insert("tools");
     set
 });
 
@@ -2982,7 +2984,7 @@ allowed_hosts:
         let json_with_reserved_name = r#"
         {
             "plugins": {
-                "hyper_mcp": {
+                "tools": {
                     "url": "http://example.com/plugin"
                 }
             }
@@ -2993,8 +2995,8 @@ allowed_hosts:
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("hyper_mcp") && error_msg.contains("reserved"),
-            "Error message should mention 'hyper_mcp' and 'reserved', got: {}",
+            error_msg.contains("tools") && error_msg.contains("reserved"),
+            "Error message should mention 'tools' and 'reserved', got: {}",
             error_msg
         );
     }
