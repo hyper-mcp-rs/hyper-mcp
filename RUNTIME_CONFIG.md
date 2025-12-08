@@ -56,6 +56,27 @@ Plugin names must follow strict naming conventions to ensure consistency and avo
 - Consider using prefixes for related plugins (e.g., `company_auth`, `company_logging`)
 - Use underscores to separate logical components (e.g., `api_client`, `data_processor`)
 
+### Reserved Names
+The following plugin names are reserved and cannot be used:
+
+- `hyper_mcp` - Reserved for the core hyper-mcp framework
+
+Attempting to use a reserved plugin name will result in a deserialization error when loading the configuration. If you encounter an error stating that a plugin name is reserved, choose a different name for your plugin.
+
+**Example of Invalid Configuration:**
+```yaml
+plugins:
+  hyper_mcp:  # ❌ This will cause an error - reserved name
+    url: "oci://ghcr.io/example/plugin:latest"
+```
+
+**Corrected Configuration:**
+```yaml
+plugins:
+  my_hyper_plugin:  # ✅ Use a different name instead
+    url: "oci://ghcr.io/example/plugin:latest"
+```
+
 ## Authentication Configuration
 
 The `auths` field allows you to configure authentication for HTTPS requests made by plugins. Authentication is matched by URL prefix, with longer prefixes taking precedence.

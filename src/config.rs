@@ -2975,4 +2975,27 @@ allowed_hosts:
         assert_eq!(full_runtime.env_vars.as_ref().unwrap().len(), 2);
         assert_eq!(full_runtime.memory_limit.as_ref().unwrap(), "2GB");
     }
+
+    #[test]
+    fn test_config_reserved_plugin_names() {
+        // Test that reserved plugin names are rejected during deserialization
+        let json_with_reserved_name = r#"
+        {
+            "plugins": {
+                "hyper_mcp": {
+                    "url": "http://example.com/plugin"
+                }
+            }
+        }
+        "#;
+
+        let result: Result<Config, _> = serde_json::from_str(json_with_reserved_name);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("hyper_mcp") && error_msg.contains("reserved"),
+            "Error message should mention 'hyper_mcp' and 'reserved', got: {}",
+            error_msg
+        );
+    }
 }
