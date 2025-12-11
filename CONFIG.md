@@ -13,6 +13,12 @@ The configuration is structured as follows:
   - **cert_issuer** (`string`, optional): Certificate issuer to verify OCI images against (e.g., `"https://github.com/login/oauth"`).
   - **cert_email** (`string`, optional): Certificate email to verify OCI images against.
   - **cert_url** (`string`, optional): Certificate URL to verify OCI images against.
+- **oauth_protected_resource** (`object`, optional): OAuth 2.0 protected resource configuration for securing the streamable-http transport. **CRITICAL:** Populate `authorization_servers` to enable authorization enforcement. The available fields are:
+  - **resource** (`string`, required): The canonical URI of your MCP server (e.g., `"https://mcp.example.com"`).
+  - **authorization_servers** (`array[string]`, **REQUIRED to secure the server**): Authorization server URIs where clients obtain tokens. If empty or not provided, authorization is disabled.
+  - **resource_name** (`string`, optional): Human-readable name for the resource.
+  - **resource_policy_uri** (`string`, optional): URI to resource policy document.
+  - **resource_tos_uri** (`string`, optional): URI to resource terms of service.
 - **plugins**: A map of plugin names to  plugin configuration objects.
   - **path** (`string`): OCI path or HTTP URL or local path for the plugin.
   - **runtime_config** (`object`, optional): Plugin-specific runtime configuration. The available fields are:
@@ -95,6 +101,273 @@ When loading OCI plugins:
 3. The final merged configuration is used for signature verification
 4. If `insecure_skip_signature` is `true`, all signature verification is disabled regardless of other settings
 5. Otherwise, the configured certificates and keys (from config or CLI) are used for verification
+
+## OAuth Protected Resource Configuration
+
+The `oauth_protected_resource` configuration section enables OAuth 2.0-based authorization for the hyper-mcp server when using the streamable-http transport. This allows you to secure your MCP server with industry-standard OAuth mechanisms, following the [MCP Authorization Specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+
+### Overview
+
+When configured, `oauth_protected_resource` defines:
+- **The protected resource**: Your MCP server endpoint that requires authorization
+- **Authorization servers**: Where clients should obtain access tokens
+- **Supported scopes**: What permissions are available for your resource
+
+### Configuration Fields
+
+```yaml
+oauth_protected_resource:
+  resource: "https://mcp.example.com"
+  authorization_servers:
+    - "https://auth.example.com"
+  resource_name: "Example MCP Server"
+  resource_policy_uri: "https://example.com/policy"
+  resource_tos_uri: "https://example.com/tos"
+```
+
+**Note:** The `scopes_supported` field is automatically calculated at runtime from your configured plugins and is served via the Protected Resource Metadata endpoint. See [Dynamic Scope Calculation](#dynamic-scope-calculation) below for details.
+
+- **resource** (`string`, required): The canonical URI of your MCP server as defined in RFC 8707. This is the identifier that clients will request tokens for. Use the most specific URI that identifies your MCP server (e.g., `https://mcp.example.com` or `https://mcp.example.com/mcp`).
+
+- **authorization_servers** (`array[string]`, optional but **REQUIRED** to secure streamable-http): An array of authorization server URIs that clients should use to obtain access tokens for this protected resource. **This field MUST be populated for the streamable-http transport to enforce authorization.** If this array is empty or not provided, the server will not require authorization, even if other oauth_protected_resource fields are configured.
+
+- **resource_name** (`string`, optional): A human-readable name for your protected resource. Displayed to end-users during the authorization flow.
+
+- **resource_policy_uri** (`string`, optional): A URL pointing to your resource's policy document or terms of service related to data handling.
+
+- **resource_tos_uri** (`string`, optional): A URL pointing to your resource's terms of service.
+
+### Critical Security Requirement: Securing streamable-http Transport
+
+**To enforce authorization on the streamable-http transport, you MUST populate the `authorization_servers` array.**
+
+Without populating `authorization_servers`:
+- ❌ The MCP server will NOT enforce authorization
+- ❌ All requests will be accepted without OAuth tokens
+- ❌ Your server is exposed to unauthorized access
+
+With `authorization_servers` populated:
+- ✅ The MCP server will require valid OAuth tokens from specified authorization servers
+- ✅ Invalid or missing tokens will be rejected with HTTP 401 Unauthorized
+- ✅ Token audience validation ensures tokens are issued for your specific server
+
+**Example of INSECURE configuration (authorization disabled):**
+```yaml
+oauth_protected_resource:
+  resource: "https://mcp.example.com"
+  # ❌ MISSING authorization_servers - server will NOT enforce authorization!
+```
+
+**Example of SECURE configuration (authorization enabled):**
+```yaml
+oauth_protected_resource:
+  resource: "https://mcp.example.com"
+  # ✅ authorization_servers populated - server WILL enforce authorization
+  authorization_servers:
+    - "https://auth.example.com"
+```
+
+### MCP Authorization Flow
+
+The `oauth_protected_resource` configuration plays a crucial role in the MCP OAuth 2.0 authorization flow, as defined in the [MCP Authorization Specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization):
+
+#### 1. **Protected Resource Metadata Discovery**
+
+When a client attempts to access your MCP server and receives a `401 Unauthorized` response, the server provides the Protected Resource Metadata URL via the `WWW-Authenticate` header:
+
+```
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"
+```
+
+The client uses this URL to fetch metadata about your protected resource, which includes:
+- Your authorization server(s) from the `authorization_servers` field
+- Available scopes from `scopes_supported`
+- Your resource URI from the `resource` field
+
+#### 2. **Authorization Server Discovery**
+
+Using the authorization server URI(s) from your configuration, the client discovers the authorization server's metadata endpoint by checking:
+
+For issuer `https://auth.example.com`:
+- `https://auth.example.com/.well-known/oauth-authorization-server`
+- `https://auth.example.com/.well-known/openid-configuration`
+
+This metadata tells the client:
+- The authorization endpoint for user authentication
+- The token endpoint for obtaining access tokens
+- Supported capabilities (PKCE, scopes, grant types, etc.)
+
+Your server's `scopes_supported` is automatically calculated from your plugins and advertised through this discovery process (see [Dynamic Scope Calculation](#dynamic-scope-calculation) below).
+
+#### 3. **Authorization Request**
+
+The client initiates an OAuth 2.0 authorization code flow with the authorization server, including:
+- Your `resource` URI as the `resource` parameter (RFC 8707)
+- Requested scopes (from your server's dynamically-calculated `scopes_supported` or from the WWW-Authenticate `scope` challenge)
+- PKCE parameters for code interception prevention
+
+#### 4. **Token Issuance**
+
+The authorization server issues an access token bound to:
+- Your MCP server as the intended audience (resource)
+- The scopes requested by the client
+- The authorization server that issued it
+
+#### 5. **Token Validation**
+
+Your hyper-mcp server receives requests with the OAuth access token in the `Authorization: Bearer` header and validates:
+- The token is cryptographically valid
+- The token's audience matches your server's `resource` URI
+- The token was issued by one of your configured `authorization_servers`
+- The token has not expired
+- The token has appropriate scopes for the requested operation
+
+#### 6. **Scope Challenge (Optional)**
+
+If a client needs additional scopes at runtime (e.g., to perform a protected operation), the server responds with:
+
+```
+HTTP/1.1 403 Forbidden
+WWW-Authenticate: Bearer error="insufficient_scope",
+                         scope="mcp:read mcp:write",
+                         resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"
+```
+
+The client then initiates a step-up authorization flow to request the additional scopes.
+
+### Real-World Configuration Examples
+
+#### Example 1: Simple OAuth-Protected Server
+
+Minimal configuration for securing your MCP server with a single authorization server:
+
+```yaml
+oauth_protected_resource:
+  resource: "https://mcp.example.com"
+  authorization_servers:
+    - "https://auth.example.com"
+```
+
+Available scopes will be automatically calculated from your configured plugins at runtime.
+
+#### Example 2: Multi-Authorization Server Setup
+
+For enterprise environments with multiple identity providers:
+
+```yaml
+oauth_protected_resource:
+  resource: "https://mcp.example.com/production"
+  authorization_servers:
+    - "https://primary-auth.company.com"
+    - "https://backup-auth.company.com"
+  resource_name: "Company MCP Production Server"
+  resource_policy_uri: "https://company.com/mcp-policy"
+  resource_tos_uri: "https://company.com/tos"
+```
+
+Scopes are dynamically calculated from your plugins. Clients will receive the full list at the Protected Resource Metadata endpoint.
+
+#### Example 3: Development vs Production
+
+Development environment (authorization disabled):
+```yaml
+# .env.development.yaml
+oauth_protected_resource:
+  resource: "https://localhost:3001"
+  # No authorization_servers - authorization disabled for local testing
+```
+
+Production environment (authorization enabled):
+```yaml
+# .env.production.yaml
+oauth_protected_resource:
+  resource: "https://mcp.production.company.com"
+  authorization_servers:
+    - "https://auth.company.com"  # ✅ MUST be present for security
+  resource_name: "Production MCP Server"
+  resource_policy_uri: "https://company.com/policy"
+  resource_tos_uri: "https://company.com/tos"
+```
+
+Scopes are automatically calculated from your configured plugins in both environments.
+
+### Important Notes
+
+- **Transport Type**: OAuth Protected Resource configuration is specifically designed for the `streamable-http` transport. The `stdio` transport does not support OAuth-based authorization.
+
+- **Metadata Endpoint**: hyper-mcp automatically serves your `oauth_protected_resource` configuration at the well-known endpoints specified in RFC 9728:
+  - `https://mcp.example.com/.well-known/oauth-protected-resource`
+  - At your MCP endpoint path: `https://mcp.example.com/mcp/.well-known/oauth-protected-resource`
+
+- **Token Validation**: Your server validates tokens using standard OAuth 2.0 practices, including audience validation as defined in RFC 8707 and RFC 9068.
+
+- **Backward Compatibility**: If `oauth_protected_resource` is not configured, the server operates without OAuth authorization, allowing any client to access your MCP server. This is suitable for development environments but NOT recommended for production.
+
+- **Scope Challenge Handling**: When clients encounter insufficient scopes at runtime, they initiate a step-up authorization flow to request additional permissions, as detailed in the [MCP Authorization Specification - Scope Challenge Handling](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#runtime-insufficient-scope-errors).
+
+### Dynamic Scope Calculation
+
+Your hyper-mcp server automatically calculates available scopes based on your configured plugins and their capabilities. You do not need to manually specify scopes in your configuration.
+
+#### How Scopes Are Calculated
+
+When the server starts, it:
+1. Loads all configured plugins
+2. Introspects each plugin to discover available tools, prompts, and resources
+3. Generates a scope for each capability in the format: `plugins.{plugin_name}.{resource_type}.{resource_name}`
+
+#### Scope Format
+
+Scopes follow a hierarchical dot-notation format:
+
+- **Global scopes**: `plugins`, `plugins.tools`, `plugins.prompts`, `plugins.resources`
+- **Plugin-level scopes**: `plugins.{plugin_name}`, `plugins.{plugin_name}.tools`, `plugins.{plugin_name}.prompts`, `plugins.{plugin_name}.resources`
+- **Resource-specific scopes**: `plugins.{plugin_name}.tools.{tool_name}`, `plugins.{plugin_name}.prompts.{prompt_name}`, `plugins.{plugin_name}.resources.{resource_uri}`
+
+**Example scopes generated from plugins:**
+- `plugins.search_plugin.tools.web_search` - Access to the web_search tool in search_plugin
+- `plugins.file_manager.resources.file://*` - Access to file resources in file_manager. Note that resources support wildcards for pattern matching.
+- `plugins.weather.prompts.forecast` - Access to the forecast prompt in weather plugin
+
+#### Scope Authorization
+
+Your server validates that client tokens include the required scopes for each operation:
+
+- A client requesting a tool must have the corresponding `plugins.{plugin_name}.tools.{tool_name}` scope (or a parent scope like `plugins.{plugin_name}.tools`, `plugins.{plugin_name}`, `plugins.tools` or `plugins`)
+- A client requesting a prompt must have the corresponding `plugins.{plugin_name}.prompts.{prompt_name}` scope (or a parent scope like `plugins.{plugin_name}.prompts`, `plugins.{plugin_name}`, `plugins.prompts` or `plugins`)
+- A client requesting a resource must have the corresponding `plugins.{plugin_name}.resources.{resource_uri}` scope (supporting wildcards for pattern matching) (or a parent scope like `plugins.{plugin_name}.resources`, `plugins.{plugin_name}`, `plugins.resources` or `plugins`)
+
+#### Scope Discovery by Clients
+
+When clients access your server, they discover available scopes through:
+
+1. **Protected Resource Metadata Endpoint**: The server serves dynamically-calculated scopes at:
+   ```
+   GET https://mcp.example.com/.well-known/oauth-protected-resource
+   ```
+
+   Response includes `scopes_supported`:
+   ```json
+   {
+     "resource": "https://mcp.example.com",
+     "authorization_servers": ["https://auth.example.com"],
+     "scopes_supported": [
+       "plugins",
+       "plugins.tools",
+       "plugins.search_plugin.tools.web_search",
+       "plugins.file_manager.resources.file://*",
+       ...
+     ]
+   }
+   ```
+
+2. **WWW-Authenticate Challenge**: When a client lacks sufficient scopes, the server responds with a 403 Forbidden and includes required scope.
+   ```
+   HTTP/1.1 403 Forbidden
+   WWW-Authenticate: Bearer error="insufficient_scope",
+                            scope="plugins.database.tools.query"
+   ```
 
 ## Plugin Names
 
