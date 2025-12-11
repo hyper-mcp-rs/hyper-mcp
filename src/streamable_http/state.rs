@@ -195,3 +195,252 @@ impl ServerState {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // Helper function to create a minimal valid Config for testing
+    fn create_test_config() -> Config {
+        Config {
+            auths: None,
+            oauth_protected_resource: None,
+            oci: Default::default(),
+            plugins: Default::default(),
+        }
+    }
+
+    // Helper to create a DiscoveryMetadata for testing
+    fn create_test_discovery_metadata() -> DiscoveryMetadata {
+        DiscoveryMetadata {
+            issuer: Some("https://example.com".to_string()),
+            jwks_uri: "https://example.com/.well-known/jwks.json".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_discovery_metadata_creation() {
+        let metadata = create_test_discovery_metadata();
+        assert_eq!(metadata.issuer, Some("https://example.com".to_string()));
+        assert_eq!(
+            metadata.jwks_uri,
+            "https://example.com/.well-known/jwks.json"
+        );
+    }
+
+    #[test]
+    fn test_discovery_metadata_issuer_optional() {
+        let metadata = DiscoveryMetadata {
+            issuer: None,
+            jwks_uri: "https://example.com/.well-known/jwks.json".to_string(),
+        };
+        assert_eq!(metadata.issuer, None);
+    }
+
+    #[test]
+    fn test_discovery_metadata_deserialization() {
+        let json = json!({
+            "issuer": "https://auth.example.com",
+            "jwks_uri": "https://auth.example.com/jwks"
+        });
+
+        let metadata: DiscoveryMetadata = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            metadata.issuer,
+            Some("https://auth.example.com".to_string())
+        );
+        assert_eq!(metadata.jwks_uri, "https://auth.example.com/jwks");
+    }
+
+    #[test]
+    fn test_discovery_metadata_deserialization_without_issuer() {
+        let json = json!({
+            "jwks_uri": "https://auth.example.com/jwks"
+        });
+
+        let metadata: DiscoveryMetadata = serde_json::from_value(json).unwrap();
+        assert_eq!(metadata.issuer, None);
+        assert_eq!(metadata.jwks_uri, "https://auth.example.com/jwks");
+    }
+
+    #[test]
+    fn test_server_state_clone() {
+        let state = ServerState {
+            auth_servers: vec![],
+            config: create_test_config(),
+            docs: "test docs".to_string(),
+            jwks: HashMap::new(),
+            scopes: HashSet::new(),
+        };
+
+        let cloned = state.clone();
+        assert_eq!(state.docs, cloned.docs);
+        assert_eq!(state.auth_servers.len(), cloned.auth_servers.len());
+        assert_eq!(state.jwks.len(), cloned.jwks.len());
+        assert_eq!(state.scopes.len(), cloned.scopes.len());
+    }
+
+    #[test]
+    fn test_server_state_with_empty_auth_servers() {
+        let state = ServerState {
+            auth_servers: vec![],
+            config: create_test_config(),
+            docs: "documentation".to_string(),
+            jwks: HashMap::new(),
+            scopes: HashSet::new(),
+        };
+
+        assert!(state.auth_servers.is_empty());
+        assert!(state.jwks.is_empty());
+    }
+
+    #[test]
+    fn test_server_state_with_jwks() {
+        let mut jwks_map = HashMap::new();
+        let jwks_set = JwkSet { keys: vec![] };
+        jwks_map.insert("https://example.com".to_string(), jwks_set);
+
+        let state = ServerState {
+            auth_servers: vec![],
+            config: create_test_config(),
+            docs: "docs".to_string(),
+            jwks: jwks_map,
+            scopes: HashSet::new(),
+        };
+
+        assert_eq!(state.jwks.len(), 1);
+        assert!(state.jwks.contains_key("https://example.com"));
+    }
+
+    #[test]
+    fn test_server_state_with_scopes() {
+        let mut scopes = HashSet::new();
+        scopes.insert("read".to_string());
+        scopes.insert("write".to_string());
+
+        let state = ServerState {
+            auth_servers: vec![],
+            config: create_test_config(),
+            docs: "docs".to_string(),
+            jwks: HashMap::new(),
+            scopes,
+        };
+
+        assert_eq!(state.scopes.len(), 2);
+        assert!(state.scopes.contains("read"));
+        assert!(state.scopes.contains("write"));
+    }
+
+    #[tokio::test]
+    async fn test_create_jwks_with_no_oauth_config() {
+        let config = create_test_config();
+        let (auth_servers, jwks) = create_jwks(&config).await.unwrap();
+
+        assert!(auth_servers.is_empty());
+        assert!(jwks.is_empty());
+    }
+
+    #[test]
+    fn test_create_test_config() {
+        let config = create_test_config();
+        assert!(config.oauth_protected_resource.is_none());
+        assert!(config.auths.is_none());
+    }
+
+    #[test]
+    fn test_server_state_fields_are_initialized() {
+        let state = ServerState {
+            auth_servers: vec![],
+            config: create_test_config(),
+            docs: "test documentation".to_string(),
+            jwks: HashMap::new(),
+            scopes: HashSet::new(),
+        };
+
+        assert!(state.docs.len() > 0);
+        assert_eq!(state.docs, "test documentation");
+        assert!(state.auth_servers.is_empty());
+        assert!(state.jwks.is_empty());
+        assert!(state.scopes.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_scopes_in_hashset() {
+        let mut scopes = HashSet::new();
+        let scope_names = vec!["read", "write", "admin", "delete"];
+
+        for scope in &scope_names {
+            scopes.insert(scope.to_string());
+        }
+
+        assert_eq!(scopes.len(), scope_names.len());
+        for scope in scope_names {
+            assert!(scopes.contains(scope));
+        }
+    }
+
+    #[test]
+    fn test_server_state_with_multiple_jwks() {
+        let mut jwks_map = HashMap::new();
+        let issuers = vec![
+            "https://auth1.example.com",
+            "https://auth2.example.com",
+            "https://auth3.example.com",
+        ];
+
+        for issuer in &issuers {
+            let jwks_set = JwkSet { keys: vec![] };
+            jwks_map.insert(issuer.to_string(), jwks_set);
+        }
+
+        let state = ServerState {
+            auth_servers: vec![],
+            config: create_test_config(),
+            docs: "docs".to_string(),
+            jwks: jwks_map,
+            scopes: HashSet::new(),
+        };
+
+        assert_eq!(state.jwks.len(), issuers.len());
+        for issuer in issuers {
+            assert!(state.jwks.contains_key(issuer));
+        }
+    }
+
+    #[test]
+    fn test_server_state_clone_independence() {
+        let mut scopes1 = HashSet::new();
+        scopes1.insert("read".to_string());
+
+        let state1 = ServerState {
+            auth_servers: vec![],
+            config: create_test_config(),
+            docs: "docs1".to_string(),
+            jwks: HashMap::new(),
+            scopes: scopes1,
+        };
+
+        let mut state2 = state1.clone();
+        state2.docs = "docs2".to_string();
+
+        // Ensure cloning creates independent copies
+        assert_eq!(state1.docs, "docs1");
+        assert_eq!(state2.docs, "docs2");
+        assert_eq!(state1.scopes, state2.scopes); // scopes should still be equal
+    }
+
+    #[test]
+    fn test_discovery_metadata_with_trailing_slash_in_jwks_uri() {
+        let metadata = DiscoveryMetadata {
+            issuer: Some("https://example.com".to_string()),
+            jwks_uri: "https://example.com/.well-known/jwks.json/".to_string(),
+        };
+
+        // The jwks_uri should be stored as-is (trailing slash handling is done by HTTP client)
+        assert_eq!(
+            metadata.jwks_uri,
+            "https://example.com/.well-known/jwks.json/"
+        );
+    }
+}
