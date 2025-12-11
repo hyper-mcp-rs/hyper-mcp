@@ -56,10 +56,9 @@ impl DiscoveryMetadata {
             );
         }
 
-        Ok(resp
-            .json::<Self>()
+        resp.json::<Self>()
             .await
-            .with_context(|| format!("failed to parse OIDC metadata from {oidc_url}"))?)
+            .with_context(|| format!("failed to parse OIDC metadata from {oidc_url}"))
     }
 
     async fn fetch_jwks(&self, client: &Client) -> Result<JwkSet> {
@@ -69,11 +68,10 @@ impl DiscoveryMetadata {
             .await
             .with_context(|| format!("failed to GET JWKS from {}", self.jwks_uri))?;
 
-        Ok(resp
-            .error_for_status()?
+        resp.error_for_status()?
             .json::<JwkSet>()
             .await
-            .with_context(|| format!("failed to parse JWKS from {}", self.jwks_uri))?)
+            .with_context(|| format!("failed to parse JWKS from {}", self.jwks_uri))
     }
 }
 
@@ -83,40 +81,40 @@ async fn create_jwks(
     let mut auth_servers = Vec::new();
     let mut jwks = HashMap::new();
 
-    if let Some(oauth_protected_resource) = &config.oauth_protected_resource {
-        if let Some(authorization_servers) = &oauth_protected_resource.authorization_servers {
-            let client = reqwest::Client::new();
-            for auth_server_url in authorization_servers {
-                match DiscoveryMetadata::from_url(&client, auth_server_url).await {
-                    Ok(discovery_metadata) => {
-                        if let Some(issuer) = &discovery_metadata.issuer {
-                            match discovery_metadata.fetch_jwks(&client).await {
-                                Ok(jwk_set) => {
-                                    auth_servers.push(auth_server_url.clone());
-                                    jwks.insert(issuer.clone(), jwk_set);
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Failed to fetch JWKS for issuer {}, skipping: {}",
-                                        issuer,
-                                        e
-                                    );
-                                }
+    if let Some(oauth_protected_resource) = &config.oauth_protected_resource
+        && let Some(authorization_servers) = &oauth_protected_resource.authorization_servers
+    {
+        let client = reqwest::Client::new();
+        for auth_server_url in authorization_servers {
+            match DiscoveryMetadata::from_url(&client, auth_server_url).await {
+                Ok(discovery_metadata) => {
+                    if let Some(issuer) = &discovery_metadata.issuer {
+                        match discovery_metadata.fetch_jwks(&client).await {
+                            Ok(jwk_set) => {
+                                auth_servers.push(auth_server_url.clone());
+                                jwks.insert(issuer.clone(), jwk_set);
                             }
-                        } else {
-                            tracing::error!(
-                                "Issuer missing in discovery metadata for authorization server {}, skipping",
-                                auth_server_url
-                            );
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to fetch JWKS for issuer {}, skipping: {}",
+                                    issuer,
+                                    e
+                                );
+                            }
                         }
-                    }
-                    Err(e) => {
+                    } else {
                         tracing::error!(
-                            "Failed to fetch discovery metadata for authorization server {}, skipping: {}",
-                            auth_server_url,
-                            e
+                            "Issuer missing in discovery metadata for authorization server {}, skipping",
+                            auth_server_url
                         );
                     }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to fetch discovery metadata for authorization server {}, skipping: {}",
+                        auth_server_url,
+                        e
+                    );
                 }
             }
         }
@@ -177,7 +175,7 @@ impl ServerState {
         }
 
         let (server, client) = temp_pair(
-            crate::service::PluginService::new(&config).await?,
+            crate::service::PluginService::new(config).await?,
             ClientInfo::default(),
         )
         .await;
@@ -191,9 +189,9 @@ impl ServerState {
         Ok(Self {
             auth_servers,
             config: config.clone(),
-            docs: docs,
-            jwks: jwks,
-            scopes: scopes,
+            docs,
+            jwks,
+            scopes,
         })
     }
 }

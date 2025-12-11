@@ -8,7 +8,11 @@ mod service;
 mod streamable_http;
 mod wasm;
 
-use crate::streamable_http::{auth::authentication, routes, state::ServerState};
+use crate::streamable_http::{
+    auth::{authentication, authorization},
+    routes,
+    state::ServerState,
+};
 use anyhow::Result;
 use axum::middleware;
 use axum::routing::get;
@@ -95,6 +99,10 @@ async fn main() -> Result<()> {
                     get(routes::oauth_protected_resource),
                 )
                 .nest_service("/mcp", service)
+                .layer(middleware::from_fn_with_state(
+                    server_state.clone(),
+                    authorization,
+                ))
                 .layer(middleware::from_fn_with_state(
                     server_state.clone(),
                     authentication,
