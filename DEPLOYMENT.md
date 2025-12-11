@@ -26,7 +26,7 @@ Create a sample config file like this, assume at `/home/ubuntu/config.json`
 }
 ```
 
-> 📖 **For authentication configuration and advanced options, see [RUNTIME_CONFIG.md](./RUNTIME_CONFIG.md)**
+> 📖 **For authentication configuration and advanced options, see [CONFIG.md](./CONFIG.md)**
 
 ### Authentication in Docker
 

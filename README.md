@@ -81,7 +81,7 @@ Built with security-first mindset:
 }
 ```
 
-> 📖 **For detailed configuration options including authentication setup, runtime configuration, and advanced features, see [RUNTIME_CONFIG.md](./RUNTIME_CONFIG.md)**
+> 📖 **For detailed configuration options including authentication setup, runtime configuration, and advanced features, see [CONFIG.md](./CONFIG.md)**
 
 Supported URL schemes:
 - `oci://` - for OCI-compliant registries (like Docker Hub, GitHub Container Registry, etc.)
@@ -165,7 +165,7 @@ These plugins use the v2 plugin interface. New plugins should use this interface
 
 ## Documentation
 
-- **[Runtime Configuration Guide](./RUNTIME_CONFIG.md)** - Comprehensive guide to configuration options including:
+- **[Runtime Configuration Guide](./CONFIG.md)** - Comprehensive guide to configuration options including:
   - Authentication setup (Basic, Token, and Keyring)
   - Plugin runtime configuration
   - Security considerations and best practices
