@@ -61,6 +61,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1.18", features = ["serde"] }
+wildmatch = "2.6.1"
 
 [dev-dependencies]
 futures = "0.3.31"
