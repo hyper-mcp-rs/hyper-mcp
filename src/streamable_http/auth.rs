@@ -12,7 +12,7 @@ use axum::{
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use rmcp::model::JsonRpcRequest;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
@@ -24,6 +24,12 @@ pub struct Claims {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ClientToken(String);
+
+impl fmt::Display for ClientToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 pub async fn authentication(
     State(state): State<Arc<ServerState>>,
