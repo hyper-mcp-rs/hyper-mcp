@@ -2,7 +2,6 @@ use crate::{
     naming::{parse_namespaced_name, parse_namespaced_uri},
     streamable_http::{scopes::ClientScopes, state::ServerState},
 };
-use anyhow::Result;
 use axum::{
     body::Body,
     extract::State,
