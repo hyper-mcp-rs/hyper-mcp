@@ -5,6 +5,14 @@
 The configuration is structured as follows:
 
 - **auths** (`object`, optional): Authentication configurations for HTTPS requests, keyed by URL.
+- **oci** (`object`, optional): OCI image verification and signature configuration. Applies globally to all OCI plugins. CLI arguments will override these values. The available fields are:
+  - **insecure_skip_signature** (`boolean`, optional, default: `false`): Skip signature verification for OCI images.
+  - **use_sigstore_tuf_data** (`boolean`, optional, default: `true`): Use Sigstore TUF data for OCI verification.
+  - **rekor_pub_keys** (`string`, optional): Path to Rekor public keys for OCI verification.
+  - **fulcio_certs** (`string`, optional): Path to Fulcio certificates for OCI verification.
+  - **cert_issuer** (`string`, optional): Certificate issuer to verify OCI images against (e.g., `"https://github.com/login/oauth"`).
+  - **cert_email** (`string`, optional): Certificate email to verify OCI images against.
+  - **cert_url** (`string`, optional): Certificate URL to verify OCI images against.
 - **plugins**: A map of plugin names to  plugin configuration objects.
   - **path** (`string`): OCI path or HTTP URL or local path for the plugin.
   - **runtime_config** (`object`, optional): Plugin-specific runtime configuration. The available fields are:
@@ -13,6 +21,80 @@ The configuration is structured as follows:
     - **allowed_paths** (`array[string]`, optional): List of allowed file system paths.
     - **env_vars** (`object`, optional): Key-value pairs of environment variables for the plugin.
     - **memory_limit** (`string`, optional): Memory limit for the plugin (e.g., `"512Mi"`).
+
+## OCI Configuration
+
+The `oci` configuration section allows you to control how OCI (Open Container Initiative) images are loaded and verified. This is particularly important for plugins distributed as OCI images (using the `oci://` scheme).
+
+### CLI Override Behavior
+
+All OCI configuration fields can be overridden via command-line arguments and environment variables. When a CLI argument or environment variable is provided, it takes precedence over the corresponding value in the configuration file.
+
+**Example of CLI override:**
+
+If your config file has:
+```yaml
+oci:
+  insecure_skip_signature: false
+  cert_issuer: "https://github.com/login/oauth"
+```
+
+And you run hyper-mcp with:
+```bash
+hyper-mcp --insecure-skip-signature true --cert-email "user@example.com"
+```
+
+The final effective configuration will be:
+- `insecure_skip_signature`: `true` (overridden by CLI)
+- `cert_issuer`: `"https://github.com/login/oauth"` (from config file)
+- `cert_email`: `"user@example.com"` (set by CLI)
+
+### Available CLI Arguments and Environment Variables
+
+| Config Field | CLI Argument | Environment Variable |
+|---|---|---|
+| `insecure_skip_signature` | `--insecure-skip-signature` | `HYPER_MCP_INSECURE_SKIP_SIGNATURE` |
+| `use_sigstore_tuf_data` | `--use-sigstore-tuf-data` | `HYPER_MCP_USE_SIGSTORE_TUF_DATA` |
+| `rekor_pub_keys` | `--rekor-pub-keys` | `HYPER_MCP_REKOR_PUB_KEYS` |
+| `fulcio_certs` | `--fulcio-certs` | `HYPER_MCP_FULCIO_CERTS` |
+| `cert_issuer` | `--cert-issuer` | `HYPER_MCP_CERT_ISSUER` |
+| `cert_email` | `--cert-email` | `HYPER_MCP_CERT_EMAIL` |
+| `cert_url` | `--cert-url` | `HYPER_MCP_CERT_URL` |
+
+### Usage Examples
+
+**Configuration file only (YAML):**
+```yaml
+oci:
+  cert_issuer: "https://github.com/login/oauth"
+  cert_email: "user@github.com"
+  use_sigstore_tuf_data: true
+```
+
+**CLI override (environment variable):**
+```bash
+HYPER_MCP_INSECURE_SKIP_SIGNATURE=true hyper-mcp
+```
+
+**CLI override (argument):**
+```bash
+hyper-mcp --cert-issuer "https://example.com" --cert-email "admin@example.com"
+```
+
+**Combined approach (config file + CLI override):**
+```bash
+# Config file has default cert_issuer, but this run uses a different one
+hyper-mcp --config config.yaml --cert-issuer "https://production.example.com"
+```
+
+### Signature Verification Behavior
+
+When loading OCI plugins:
+1. The system first loads values from the config file
+2. Any CLI arguments or environment variables override the config file values
+3. The final merged configuration is used for signature verification
+4. If `insecure_skip_signature` is `true`, all signature verification is disabled regardless of other settings
+5. Otherwise, the configured certificates and keys (from config or CLI) are used for verification
 
 ## Plugin Names
 
