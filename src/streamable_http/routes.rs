@@ -31,6 +31,7 @@ pub async fn oauth_protected_resource(State(state): State<Arc<ServerState>>) -> 
                 } else {
                     None
                 },
+                "scopes_supported": state.scopes,
             })),
         )
             .into_response(),

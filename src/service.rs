@@ -4,6 +4,7 @@ use crate::{
         create_namespaced_name, create_namespaced_uri, parse_namespaced_name, parse_namespaced_uri,
     },
     plugin::{Plugin, PluginV1, PluginV2},
+    streamable_http::scopes::COMMON_SCOPES,
     wasm,
 };
 use anyhow::{Error, Result};
@@ -20,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{DurationSeconds, serde_as};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     ops::Deref,
     str::FromStr,
@@ -726,6 +727,40 @@ impl PluginService {
 
         html.push_str("</body>\n</html>");
         Ok(html)
+    }
+
+    pub async fn generate_scopes(&self) -> Result<HashSet<String>> {
+        use tokio_util::sync::CancellationToken;
+
+        let mut scopes = COMMON_SCOPES.clone();
+
+        let context = RequestContext {
+            ct: CancellationToken::new(),
+            extensions: Extensions::default(),
+            id: RequestId::Number(1),
+            meta: Meta::default(),
+            peer: self
+                .peer
+                .get()
+                .ok_or_else(|| anyhow::anyhow!("Peer not initialized"))?
+                .clone(),
+        };
+        for tool in self.list_tools(None, context.clone()).await?.tools {
+            let (plugin_name, tool_name) = parse_namespaced_name(tool.name.to_string())?;
+            scopes.insert(format!("plugins.{}.tools.{}", plugin_name, tool_name));
+        }
+        for prompt in self.list_prompts(None, context.clone()).await?.prompts {
+            let (plugin_name, prompt_name) = parse_namespaced_name(prompt.name.to_string())?;
+            scopes.insert(format!("plugins.{}.prompts.{}", plugin_name, prompt_name));
+        }
+        for resources in self.list_resources(None, context.clone()).await?.resources {
+            let (plugin_name, resource_uri) = parse_namespaced_uri(resources.uri.to_string())?;
+            scopes.insert(format!(
+                "plugins.{}.resources.{}",
+                plugin_name, resource_uri
+            ));
+        }
+        Ok(scopes)
     }
 
     pub fn logging_level(&self) -> LoggingLevel {

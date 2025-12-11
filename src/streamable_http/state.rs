@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::config::{AuthorizationServerUrl, Config};
 use anyhow::{Context, Result, anyhow};
 use jsonwebtoken::jwk::JwkSet;
@@ -7,6 +5,7 @@ use reqwest::Client;
 use rmcp::model::ClientInfo;
 use rmcp::service::{RoleClient, RoleServer, RunningService, Service, serve_client, serve_server};
 use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use tokio::io::duplex;
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +131,7 @@ pub struct ServerState {
     pub config: Config,
     pub docs: String,
     pub jwks: HashMap<String, JwkSet>,
+    pub scopes: HashSet<String>,
 }
 
 impl ServerState {
@@ -183,6 +183,7 @@ impl ServerState {
         .await;
 
         let docs = server.service().generate_docs().await?;
+        let scopes = server.service().generate_scopes().await?;
 
         server.cancel().await?;
         client.cancel().await?;
@@ -192,6 +193,7 @@ impl ServerState {
             config: config.clone(),
             docs: docs,
             jwks: jwks,
+            scopes: scopes,
         })
     }
 }

@@ -1,4 +1,7 @@
-use crate::{config::ResourceUrl, streamable_http::state::ServerState};
+use crate::{
+    config::ResourceUrl,
+    streamable_http::{scopes::ClientScopes, state::ServerState},
+};
 use axum::{
     extract::State,
     http::{HeaderValue, Request, StatusCode, header::WWW_AUTHENTICATE},
@@ -18,7 +21,7 @@ pub struct Claims {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Token(String);
+pub struct ClientToken(String);
 
 fn mcp_error_response(resource_url: &ResourceUrl) -> Response {
     let mut response = StatusCode::UNAUTHORIZED.into_response();
@@ -105,9 +108,12 @@ pub async fn authentication(
                         match decode::<Claims>(token, &decoding_key, &validation) {
                             Ok(token_data) => {
                                 // Valid token found, inject claims into request extensions
-                                let token = Token(token.to_string());
+                                let token = ClientToken(token.to_string());
+                                let scopes = ClientScopes::from_scope(
+                                    &token_data.claims.scope.unwrap_or("".to_string()),
+                                );
                                 let extensions = request.extensions_mut();
-                                extensions.insert(token_data.claims);
+                                extensions.insert(scopes);
                                 extensions.insert(token);
                                 next.run(request).await
                             }
