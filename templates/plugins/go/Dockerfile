@@ -1,4 +1,4 @@
-FROM tinygo/tinygo:0.40.0 AS builder
+FROM tinygo/tinygo:0.40.1 AS builder
 
 WORKDIR /workspace
 COPY go.mod .
