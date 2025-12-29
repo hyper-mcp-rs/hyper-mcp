@@ -1,4 +1,4 @@
-use crate::config::{PluginName, PluginNameParseError};
+use crate::models::{PluginName, PluginNameParseError};
 use anyhow::Result;
 use std::{fmt, str::FromStr};
 use url::Url;

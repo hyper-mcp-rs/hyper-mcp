@@ -1,4 +1,5 @@
 use crate::{
+    models::ClientToken,
     naming::{parse_namespaced_name, parse_namespaced_uri},
     streamable_http::{scopes::ClientScopes, state::ServerState},
 };
@@ -12,7 +13,7 @@ use axum::{
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use rmcp::model::JsonRpcRequest;
 use serde::{Deserialize, Serialize};
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
@@ -20,15 +21,6 @@ pub struct Claims {
     pub sub: String,
     #[serde(default)]
     pub scope: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ClientToken(String);
-
-impl fmt::Display for ClientToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
 }
 
 pub async fn authentication(
@@ -116,7 +108,7 @@ pub async fn authentication(
                         match decode::<Claims>(token, &decoding_key, &validation) {
                             Ok(token_data) => {
                                 // Valid token found, inject claims into request extensions
-                                let token = ClientToken(token.to_string());
+                                let token: ClientToken = token.into();
                                 let scopes = ClientScopes::from_scope(
                                     &token_data.claims.scope.unwrap_or("".to_string()),
                                 );

@@ -1,4 +1,5 @@
-use crate::config::PluginName;
+use crate::{models::PluginName, service::HostContext};
+use anyhow::Result;
 use async_trait::async_trait;
 use rmcp::{
     ErrorData as McpError,
@@ -126,6 +127,7 @@ async fn call_plugin<R>(
     name: &str,
     payload: String,
     ct: CancellationToken,
+    host_context: HostContext,
 ) -> Result<R, McpError>
 where
     R: DeserializeOwned + Send + 'static,
@@ -146,7 +148,8 @@ where
     let name = name.to_string();
     let mut join = tokio::task::spawn_blocking(move || {
         let mut plugin = plugin.lock().unwrap();
-        let result: Result<String, extism::Error> = plugin.call(&name, payload);
+        let result: Result<String, extism::Error> =
+            plugin.call_with_host_context(&name, payload, host_context);
         match result {
             Ok(res) => match serde_json::from_str::<R>(&res) {
                 Ok(parsed) => Ok(parsed),
@@ -211,7 +214,12 @@ fn function_exists_plugin(plugin: &dyn Plugin, name: &str) -> bool {
     plugin.lock().unwrap().function_exists(name)
 }
 
-async fn notify_plugin(plugin: &dyn Plugin, name: &str, payload: String) -> Result<(), McpError> {
+async fn notify_plugin(
+    plugin: &dyn Plugin,
+    name: &str,
+    payload: String,
+    host_context: HostContext,
+) -> Result<(), McpError> {
     let plugin_name = plugin.name().to_string();
     if !function_exists_plugin(plugin, name) {
         return Err(McpError::invalid_request(
@@ -223,7 +231,8 @@ async fn notify_plugin(plugin: &dyn Plugin, name: &str, payload: String) -> Resu
     let name = name.to_string();
     tokio::task::spawn_blocking(move || {
         let mut plugin = plugin.lock().unwrap();
-        let result: Result<String, extism::Error> = plugin.call(&name, payload);
+        let result: Result<String, extism::Error> =
+            plugin.call_with_host_context(&name, payload, host_context);
         if let Err(e) = result {
             tracing::error!("Failed to notify plugin {plugin_name}: {e}");
         }
@@ -232,13 +241,13 @@ async fn notify_plugin(plugin: &dyn Plugin, name: &str, payload: String) -> Resu
 }
 
 #[derive(Debug)]
-pub struct PluginBase {
-    pub name: PluginName,
-    pub plugin: PluginHandle,
+struct PluginBase {
+    name: PluginName,
+    plugin: PluginHandle,
 }
 
 #[derive(Debug)]
-pub struct PluginV1(pub PluginBase);
+struct PluginV1(pub PluginBase);
 
 impl Deref for PluginV1 {
     type Target = PluginBase;
@@ -262,7 +271,17 @@ impl Plugin for PluginV1 {
                 "params": request,
             }))
             .expect("Failed to serialize request"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -272,7 +291,23 @@ impl Plugin for PluginV1 {
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        call_plugin::<ListToolsResult>(self, "describe", "".to_string(), context.ct).await
+        call_plugin::<ListToolsResult>(
+            self,
+            "describe",
+            "".to_string(),
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
+        )
+        .await
     }
 
     fn name(&self) -> &PluginName {
@@ -285,13 +320,13 @@ impl Plugin for PluginV1 {
 }
 
 impl PluginV1 {
-    pub fn new(name: PluginName, plugin: PluginHandle) -> Self {
+    fn new(name: PluginName, plugin: PluginHandle) -> Self {
         Self(PluginBase { name, plugin })
     }
 }
 
 #[derive(Debug)]
-pub struct PluginV2(pub PluginBase);
+struct PluginV2(pub PluginBase);
 
 impl Deref for PluginV2 {
     type Target = PluginBase;
@@ -316,7 +351,17 @@ impl Plugin for PluginV2 {
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize request"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -356,7 +401,17 @@ impl Plugin for PluginV2 {
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize request"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -374,7 +429,17 @@ impl Plugin for PluginV2 {
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize request"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -394,7 +459,17 @@ impl Plugin for PluginV2 {
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize context"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -414,7 +489,17 @@ impl Plugin for PluginV2 {
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize context"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -434,7 +519,17 @@ impl Plugin for PluginV2 {
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize context"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -454,7 +549,17 @@ impl Plugin for PluginV2 {
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize context"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -477,6 +582,16 @@ impl Plugin for PluginV2 {
                 "context": PluginNotificationContext::from(&context),
             }))
             .expect("Failed to serialize context"),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -498,7 +613,17 @@ impl Plugin for PluginV2 {
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize request"),
-            context.ct,
+            context.ct.clone(),
+            context
+                .extensions
+                .get::<HostContext>()
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "RequestContext<RoleServer> missing HostContext in extensions",
+                        None,
+                    )
+                })?,
         )
         .await
     }
@@ -507,5 +632,19 @@ impl Plugin for PluginV2 {
 impl PluginV2 {
     pub fn new(name: PluginName, plugin: PluginHandle) -> Self {
         Self(PluginBase { name, plugin })
+    }
+}
+
+pub fn create_plugin(name: &PluginName, extism_plugin: extism::Plugin) -> Box<dyn Plugin> {
+    if extism_plugin.function_exists("call") && extism_plugin.function_exists("describe") {
+        Box::new(PluginV1::new(
+            name.to_owned(),
+            Arc::new(Mutex::new(extism_plugin)),
+        ))
+    } else {
+        Box::new(PluginV2::new(
+            name.to_owned(),
+            Arc::new(Mutex::new(extism_plugin)),
+        ))
     }
 }

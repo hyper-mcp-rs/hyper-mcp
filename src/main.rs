@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod https_auth;
 mod logging;
+mod models;
 mod naming;
 mod plugin;
 mod service;
