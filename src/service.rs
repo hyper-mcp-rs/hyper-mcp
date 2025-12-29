@@ -1,8 +1,8 @@
 use crate::{
     config::Config,
-    models::PluginName,
     naming::{
-        create_namespaced_name, create_namespaced_uri, parse_namespaced_name, parse_namespaced_uri,
+        PluginName, create_namespaced_name, create_namespaced_uri, parse_namespaced_name,
+        parse_namespaced_uri,
     },
     plugin::{Plugin, create_plugin},
     streamable_http::scopes::COMMON_SCOPES,

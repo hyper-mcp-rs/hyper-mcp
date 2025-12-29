@@ -1,6 +1,6 @@
 use crate::{
     cli::Cli,
-    models::{PluginName, RESERVED_PLUGIN_NAMES},
+    naming::{PluginName, RESERVED_PLUGIN_NAMES},
 };
 use anyhow::{Context, Result};
 use regex::RegexSet;

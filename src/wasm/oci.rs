@@ -1,4 +1,4 @@
-use crate::{config::OciConfig, models::PluginName};
+use crate::{config::OciConfig, naming::PluginName};
 use anyhow::{Result, anyhow};
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use flate2::read::GzDecoder;

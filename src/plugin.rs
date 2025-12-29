@@ -1,4 +1,4 @@
-use crate::{models::PluginName, service::HostContext};
+use crate::{naming::PluginName, service::HostContext};
 use anyhow::Result;
 use async_trait::async_trait;
 use rmcp::{
