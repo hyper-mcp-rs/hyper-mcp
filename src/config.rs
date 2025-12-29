@@ -11,16 +11,45 @@ use url::Url;
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum AuthConfig {
-    Basic { username: String, password: String },
-    Token { token: String },
+    Basic {
+        username: String,
+        password: String,
+    },
+    OAuth2 {
+        client_id: String,
+        client_secret: String,
+        auth_uri: Url,
+        token_uri: Url,
+        params: Option<Vec<(String, String)>>,
+        scopes: Option<Vec<String>>,
+    },
+    Token {
+        token: String,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum InternalAuthConfig {
-    Basic { username: String, password: String },
-    Keyring { service: String, user: String },
-    Token { token: String },
+    Basic {
+        username: String,
+        password: String,
+    },
+    Keyring {
+        service: String,
+        user: String,
+    },
+    OAuth2 {
+        client_id: String,
+        client_secret: String,
+        auth_uri: Url,
+        token_uri: Url,
+        params: Option<Vec<(String, String)>>,
+        scopes: Option<Vec<String>>,
+    },
+    Token {
+        token: String,
+    },
 }
 
 impl<'de> Deserialize<'de> for AuthConfig {
@@ -33,6 +62,21 @@ impl<'de> Deserialize<'de> for AuthConfig {
             InternalAuthConfig::Basic { username, password } => {
                 Ok(AuthConfig::Basic { username, password })
             }
+            InternalAuthConfig::OAuth2 {
+                client_id,
+                client_secret,
+                auth_uri,
+                token_uri,
+                params,
+                scopes,
+            } => Ok(AuthConfig::OAuth2 {
+                client_id,
+                client_secret,
+                auth_uri,
+                token_uri,
+                params,
+                scopes,
+            }),
             InternalAuthConfig::Token { token } => Ok(AuthConfig::Token { token }),
             InternalAuthConfig::Keyring { service, user } => {
                 use keyring::Entry;
@@ -1484,6 +1528,9 @@ plugins:
                         }
                         Ok(AuthConfig::Token { .. }) => {
                             panic!("Expected Basic auth from keyring, got Token");
+                        }
+                        Ok(AuthConfig::OAuth2 { .. }) => {
+                            panic!("Expected Basic auth from keyring, got OAuth2");
                         }
                         Err(e) => {
                             println!(

@@ -434,7 +434,7 @@ plugins:
 
 ## Authentication Configuration
 
-The `auths` field allows you to configure authentication for HTTPS requests made by plugins. Authentication is matched by URL prefix, with longer prefixes taking precedence.
+The `auths` field allows you to configure authentication for HTTPS requests for WASM binaries made by `hyper-mcp`. Authentication is matched by URL prefix, with longer prefixes taking precedence.
 
 ### Supported Authentication Types
 
@@ -454,6 +454,24 @@ auths:
     type: token
     token: "your-bearer-token"
 ```
+
+#### OAuth2 Authentication
+```yaml
+auths:
+  "https://api.example.com":
+    type: oauth2
+    client_id: "your-client-id"
+    client_secret: "your-client-secret"
+    auth_uri: "https://auth.example.com/authorize"
+    token_uri: "https://auth.example.com/token"
+    scopes:
+      - "read"
+      - "write"
+    params:
+      - ["custom_param", "value"]
+```
+
+The `params` and `scopes` fields are optional. The `scopes` field specifies which scopes to request during the OAuth2 flow, while `params` allows passing additional custom parameters to the authorization and token endpoints.
 
 #### Keyring Authentication
 ```yaml
@@ -477,6 +495,9 @@ security add-generic-password -a "registry-user" -s "my-app" -w '{"type":"basic"
 
 # Store token auth credentials
 security add-generic-password -a "api-user" -s "my-service" -w '{"type":"token","token":"actual-bearer-token"}'
+
+# Store OAuth2 credentials
+security add-generic-password -a "oauth-user" -s "my-oauth-app" -w '{"type":"oauth2","client_id":"my-client-id","client_secret":"my-client-secret","auth_uri":"https://auth.example.com/authorize","token_uri":"https://auth.example.com/token","scopes":["read","write"]}'
 
 # Verify the entry was created
 security find-generic-password -a "registry-user" -s "my-app"
@@ -509,6 +530,9 @@ echo '{"type":"basic","username":"actual-user","password":"actual-pass"}' | secr
 # Store token auth credentials
 echo '{"type":"token","token":"actual-bearer-token"}' | secret-tool store --label="my-service token" service "my-service" username "api-user"
 
+# Store OAuth2 credentials
+echo '{"type":"oauth2","client_id":"my-client-id","client_secret":"my-client-secret","auth_uri":"https://auth.example.com/authorize","token_uri":"https://auth.example.com/token","scopes":["read","write"]}' | secret-tool store --label="my-oauth-app credentials" service "my-oauth-app" username "oauth-user"
+
 # Verify the entry was created
 secret-tool lookup service "my-app" username "registry-user"
 ```
@@ -523,6 +547,9 @@ cmdkey /generic:"my-app" /user:"registry-user" /pass:"{\"type\":\"basic\",\"user
 REM Store token auth credentials
 cmdkey /generic:"my-service" /user:"api-user" /pass:"{\"type\":\"token\",\"token\":\"actual-bearer-token\"}"
 
+REM Store OAuth2 credentials
+cmdkey /generic:"my-oauth-app" /user:"oauth-user" /pass:"{\"type\":\"oauth2\",\"client_id\":\"my-client-id\",\"client_secret\":\"my-client-secret\",\"auth_uri\":\"https://auth.example.com/authorize\",\"token_uri\":\"https://auth.example.com/token\",\"scopes\":[\"read\",\"write\"]}"
+
 REM Verify the entry was created
 cmdkey /list:"my-app"
 ```
@@ -532,7 +559,9 @@ cmdkey /list:"my-app"
 2. Click "Add a generic credential"
 3. Set "Internet or network address" to your service name (e.g., "my-app")
 4. Set "User name" to your user name (e.g., "registry-user")
-5. Set "Password" to the JSON auth config: `{"type":"basic","username":"actual-user","password":"actual-pass"}`
+5. Set "Password" to the JSON auth config (examples below):
+   - Basic: `{"type":"basic","username":"actual-user","password":"actual-pass"}`
+   - OAuth2: `{"type":"oauth2","client_id":"my-client-id","client_secret":"my-client-secret","auth_uri":"https://auth.example.com/authorize","token_uri":"https://auth.example.com/token","scopes":["read","write"]}`
 6. Click "OK"
 
 **Using PowerShell:**
@@ -540,6 +569,10 @@ cmdkey /list:"my-app"
 # Store basic auth credentials
 $cred = New-Object System.Management.Automation.PSCredential("registry-user", (ConvertTo-SecureString '{"type":"basic","username":"actual-user","password":"actual-pass"}' -AsPlainText -Force))
 New-StoredCredential -Target "my-app" -Credential $cred -Type Generic
+
+# Store OAuth2 credentials
+$cred = New-Object System.Management.Automation.PSCredential("oauth-user", (ConvertTo-SecureString '{"type":"oauth2","client_id":"my-client-id","client_secret":"my-client-secret","auth_uri":"https://auth.example.com/authorize","token_uri":"https://auth.example.com/token","scopes":["read","write"]}' -AsPlainText -Force))
+New-StoredCredential -Target "my-oauth-app" -Credential $cred -Type Generic
 ```
 
 ### URL Matching Behavior
@@ -688,6 +721,15 @@ auths:
     type: basic
     username: "enterprise-user"
     password: "enterprise-pass"
+  "https://oauth.example.com":
+    type: oauth2
+    client_id: "my-client-id"
+    client_secret: "my-client-secret"
+    auth_uri: "https://oauth.example.com/authorize"
+    token_uri: "https://oauth.example.com/token"
+    scopes:
+      - "read:api"
+      - "write:api"
 
 plugins:
   time:
@@ -730,6 +772,14 @@ plugins:
       "type": "basic",
       "username": "enterprise-user",
       "password": "enterprise-pass"
+    },
+    "https://oauth.example.com": {
+      "type": "oauth2",
+      "client_id": "my-client-id",
+      "client_secret": "my-client-secret",
+      "auth_uri": "https://oauth.example.com/authorize",
+      "token_uri": "https://oauth.example.com/token",
+      "scopes": ["read:api", "write:api"]
     }
   },
   "plugins": {
