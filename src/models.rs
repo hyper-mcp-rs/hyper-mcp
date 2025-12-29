@@ -3,33 +3,6 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, convert::TryFrom, fmt, str::FromStr, sync::LazyLock};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ClientToken(String);
-
-impl fmt::Display for ClientToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<&str> for ClientToken {
-    fn from(value: &str) -> Self {
-        ClientToken(value.to_owned())
-    }
-}
-
-impl From<String> for ClientToken {
-    fn from(value: String) -> Self {
-        ClientToken(value)
-    }
-}
-
-impl From<&String> for ClientToken {
-    fn from(value: &String) -> Self {
-        ClientToken(value.clone())
-    }
-}
-
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct PluginName(String);
 

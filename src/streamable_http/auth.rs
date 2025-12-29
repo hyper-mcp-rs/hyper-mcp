@@ -1,5 +1,4 @@
 use crate::{
-    models::ClientToken,
     naming::{parse_namespaced_name, parse_namespaced_uri},
     streamable_http::{scopes::ClientScopes, state::ServerState},
 };
@@ -108,13 +107,11 @@ pub async fn authentication(
                         match decode::<Claims>(token, &decoding_key, &validation) {
                             Ok(token_data) => {
                                 // Valid token found, inject claims into request extensions
-                                let token: ClientToken = token.into();
                                 let scopes = ClientScopes::from_scope(
                                     &token_data.claims.scope.unwrap_or("".to_string()),
                                 );
                                 let extensions = request.extensions_mut();
                                 extensions.insert(scopes);
-                                extensions.insert(token);
                                 next.run(request).await
                             }
                             Err(e) => {

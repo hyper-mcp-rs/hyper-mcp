@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    models::{ClientToken, PluginName},
+    models::PluginName,
     naming::{
         create_namespaced_name, create_namespaced_uri, parse_namespaced_name, parse_namespaced_uri,
     },
@@ -495,13 +495,8 @@ impl PluginService {
         Ok(())
     }
 
-    pub fn create_host_context(
-        &self,
-        plugin_name: PluginName,
-        client_token: Option<ClientToken>,
-    ) -> HostContext {
+    pub fn create_host_context(&self, plugin_name: PluginName) -> HostContext {
         HostContext {
-            client_token,
             handle: Handle::current(),
             plugin_name,
             plugin_service: self.clone(),
@@ -735,7 +730,6 @@ impl PluginService {
 
 #[derive(Clone)]
 pub struct HostContext {
-    pub client_token: Option<ClientToken>,
     pub handle: Handle,
     pub plugin_name: PluginName,
     pub plugin_service: PluginService,
@@ -788,10 +782,9 @@ impl ServerHandler for PluginService {
         let Some(plugin) = plugins.get(&plugin_name) else {
             return Err(McpError::method_not_found::<CallToolRequestMethod>());
         };
-        context.extensions.insert(self.create_host_context(
-            plugin_name,
-            context.extensions.get::<ClientToken>().cloned(),
-        ));
+        context
+            .extensions
+            .insert(self.create_host_context(plugin_name));
         plugin.call_tool(request, context).await
     }
 
@@ -885,10 +878,9 @@ impl ServerHandler for PluginService {
         let Some(plugin) = plugins.get(&plugin_name) else {
             return Err(McpError::method_not_found::<CallToolRequestMethod>());
         };
-        context.extensions.insert(self.create_host_context(
-            plugin_name,
-            context.extensions.get::<ClientToken>().cloned(),
-        ));
+        context
+            .extensions
+            .insert(self.create_host_context(plugin_name));
         plugin.complete(request, context).await
     }
 
@@ -964,10 +956,9 @@ impl ServerHandler for PluginService {
         let Some(plugin) = plugins.get(&plugin_name) else {
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         };
-        context.extensions.insert(self.create_host_context(
-            plugin_name,
-            context.extensions.get::<ClientToken>().cloned(),
-        ));
+        context
+            .extensions
+            .insert(self.create_host_context(plugin_name));
         plugin.get_prompt(request, context).await
     }
 
@@ -988,10 +979,8 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin) in plugins.iter() {
             let mut ctx = context.clone();
-            ctx.extensions.insert(self.create_host_context(
-                plugin_name.clone(),
-                context.extensions.get::<ClientToken>().cloned(),
-            ));
+            ctx.extensions
+                .insert(self.create_host_context(plugin_name.clone()));
             let plugin_prompts = plugin.list_prompts(request.clone(), ctx).await?;
             let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
@@ -1039,10 +1028,8 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin) in plugins.iter() {
             let mut ctx = context.clone();
-            ctx.extensions.insert(self.create_host_context(
-                plugin_name.clone(),
-                context.extensions.get::<ClientToken>().cloned(),
-            ));
+            ctx.extensions
+                .insert(self.create_host_context(plugin_name.clone()));
             let plugin_resources = plugin.list_resources(request.clone(), ctx).await?;
             let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
@@ -1093,10 +1080,8 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin) in plugins.iter() {
             let mut ctx = context.clone();
-            ctx.extensions.insert(self.create_host_context(
-                plugin_name.clone(),
-                context.extensions.get::<ClientToken>().cloned(),
-            ));
+            ctx.extensions
+                .insert(self.create_host_context(plugin_name.clone()));
             let plugin_resource_templates =
                 plugin.list_resource_templates(request.clone(), ctx).await?;
             let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
@@ -1151,10 +1136,8 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin) in plugins.iter() {
             let mut ctx = context.clone();
-            ctx.extensions.insert(self.create_host_context(
-                plugin_name.clone(),
-                context.extensions.get::<ClientToken>().cloned(),
-            ));
+            ctx.extensions
+                .insert(self.create_host_context(plugin_name.clone()));
             let plugin_tools = plugin.list_tools(request.clone(), ctx).await?;
             let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
@@ -1200,10 +1183,8 @@ impl ServerHandler for PluginService {
         };
         for (plugin_name, plugin) in plugins.iter() {
             let mut ctx = context.clone();
-            ctx.extensions.insert(self.create_host_context(
-                plugin_name.clone(),
-                context.extensions.get::<ClientToken>().cloned(),
-            ));
+            ctx.extensions
+                .insert(self.create_host_context(plugin_name.clone()));
             if let Err(e) = plugin.on_roots_list_changed(ctx).await {
                 tracing::error!("Failed to notify plugin {plugin_name} of roots list change: {e}");
             }
@@ -1255,10 +1236,9 @@ impl ServerHandler for PluginService {
         let Some(plugin) = plugins.get(&plugin_name) else {
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         };
-        context.extensions.insert(self.create_host_context(
-            plugin_name,
-            context.extensions.get::<ClientToken>().cloned(),
-        ));
+        context
+            .extensions
+            .insert(self.create_host_context(plugin_name));
         plugin.read_resource(request, context).await
     }
 
