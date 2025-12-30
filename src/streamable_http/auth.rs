@@ -3,6 +3,7 @@ use crate::{
     naming::{parse_namespaced_name, parse_namespaced_uri},
     streamable_http::{scopes::ClientScopes, state::ServerState},
 };
+use anyhow::Result;
 use axum::{
     body::Body,
     extract::State,
@@ -151,6 +152,54 @@ pub async fn authentication(
     }
 }
 
+fn extract_scope_from_json_rpc(json_rpc: &JsonRpcRequest) -> Result<Option<[String; 4]>> {
+    match json_rpc.request.method.as_str() {
+        "tools/call" => {
+            let tool_name = match json_rpc.request.params.get("name") {
+                Some(name) => name.to_string(),
+                None => return Err(anyhow::anyhow!("Missing tool name parameter")),
+            };
+            let (plugin_name, tool_name) = parse_namespaced_name(tool_name)?;
+            Ok(Some([
+                "plugins".to_string(),
+                plugin_name.to_string(),
+                "tools".to_string(),
+                tool_name,
+            ]))
+        }
+        "prompts/get" => {
+            let prompt_name = match json_rpc.request.params.get("name") {
+                Some(name) => name.to_string(),
+                None => return Err(anyhow::anyhow!("Missing prompt name parameter")),
+            };
+            let (plugin_name, prompt_name) = parse_namespaced_name(prompt_name)?;
+            Ok(Some([
+                "plugins".to_string(),
+                plugin_name.to_string(),
+                "prompts".to_string(),
+                prompt_name.to_string(),
+            ]))
+        }
+        "resources/read" => {
+            let resource_uri = match json_rpc.request.params.get("uri") {
+                Some(uri) => uri.to_string(),
+                None => return Err(anyhow::anyhow!("Missing resource URI parameter")),
+            };
+            let (plugin_name, resource_uri) = parse_namespaced_uri(resource_uri)?;
+            Ok(Some([
+                "plugins".to_string(),
+                plugin_name.to_string(),
+                "resources".to_string(),
+                resource_uri.to_string(),
+            ]))
+        }
+        _ => {
+            // Unknown method, pass through
+            Ok(None)
+        }
+    }
+}
+
 pub async fn authorization(
     State(state): State<Arc<ServerState>>,
     request: Request<Body>,
@@ -173,98 +222,42 @@ pub async fn authorization(
     };
 
     // Try to parse the JSON-RPC request
-    let json_rpc: JsonRpcRequest = match serde_json::from_slice(&bytes) {
-        Ok(req) => req,
-        Err(_) => {
-            // If it's not valid JSON-RPC, pass through
-            return next
-                .run(Request::from_parts(parts, Body::from(bytes)))
-                .await;
-        }
-    };
-
-    let extract_scope_from_json_rpc = || {
-        match json_rpc.request.method.as_str() {
-            "tools/call" => {
-                let tool_name = match json_rpc.request.params.get("name") {
-                    Some(name) => name.to_string(),
-                    None => return Err(anyhow::anyhow!("Missing tool name parameter")),
-                };
-                let (plugin_name, tool_name) = parse_namespaced_name(tool_name)?;
-                Ok(Some([
-                    "plugins".to_string(),
-                    plugin_name.to_string(),
-                    "tools".to_string(),
-                    tool_name,
-                ]))
-            }
-            "prompts/get" => {
-                let prompt_name = match json_rpc.request.params.get("name") {
-                    Some(name) => name.to_string(),
-                    None => return Err(anyhow::anyhow!("Missing prompt name parameter")),
-                };
-                let (plugin_name, prompt_name) = parse_namespaced_name(prompt_name)?;
-                Ok(Some([
-                    "plugins".to_string(),
-                    plugin_name.to_string(),
-                    "prompts".to_string(),
-                    prompt_name.to_string(),
-                ]))
-            }
-            "resources/read" => {
-                let resource_uri = match json_rpc.request.params.get("uri") {
-                    Some(uri) => uri.to_string(),
-                    None => return Err(anyhow::anyhow!("Missing resource URI parameter")),
-                };
-                let (plugin_name, resource_uri) = parse_namespaced_uri(resource_uri)?;
-                Ok(Some([
-                    "plugins".to_string(),
-                    plugin_name.to_string(),
-                    "resources".to_string(),
-                    resource_uri.to_string(),
-                ]))
-            }
-            _ => {
-                // Unknown method, pass through
-                Ok(None)
-            }
-        }
-    };
-
-    // Extract scope from the method and parameters
-    match extract_scope_from_json_rpc() {
-        Ok(Some(scope)) => {
-            // Check if the required scope is contained in the client scopes
-            if !scopes.contains_scope(&scope) {
-                // Return 403 with the required scope information
-                let resource_url = match state.config.oauth_protected_resource {
-                    Some(ref resource) => resource.resource.clone(),
-                    None => {
-                        tracing::error!("OAuth protected resource configuration missing");
-                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                    }
-                };
-                let mut response = StatusCode::FORBIDDEN.into_response();
-                response.headers_mut().insert(
-                    WWW_AUTHENTICATE,
-                    HeaderValue::from_str(
-                        format!(
-                            "Bearer error=\"insufficient_scope\", resource_metadata=\"{}\", scope=\"{}.{}.{}.{}\"",
-                            resource_url.resource_metadata_url(), scope[0], scope[1], scope[2], scope[3],
+    if let Ok(json_rpc) = serde_json::from_slice::<JsonRpcRequest>(&bytes) {
+        // Extract scope from the method and parameters
+        match extract_scope_from_json_rpc(&json_rpc) {
+            Ok(Some(scope)) => {
+                // Check if the required scope is contained in the client scopes
+                if !scopes.contains_scope(&scope) {
+                    // Return 403 with the required scope information
+                    let resource_url = match state.config.oauth_protected_resource {
+                        Some(ref resource) => resource.resource.clone(),
+                        None => {
+                            tracing::error!("OAuth protected resource configuration missing");
+                            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                        }
+                    };
+                    let mut response = StatusCode::FORBIDDEN.into_response();
+                    response.headers_mut().insert(
+                        WWW_AUTHENTICATE,
+                        HeaderValue::from_str(
+                            format!(
+                                "Bearer error=\"insufficient_scope\", resource_metadata=\"{}\", scope=\"{}.{}.{}.{}\"",
+                                resource_url.resource_metadata_url(), scope[0], scope[1], scope[2], scope[3],
+                            )
+                            .as_str(),
                         )
-                        .as_str(),
-                    )
-                    .unwrap_or_else(|_| HeaderValue::from_static("Bearer error=\"insufficient_scope\"")),
-                );
-                return response;
+                        .unwrap_or_else(|_| HeaderValue::from_static("Bearer error=\"insufficient_scope\"")),
+                    );
+                    return response;
+                }
             }
-        }
-        Ok(None) => {}
-        Err(e) => {
-            tracing::error!("Failed to extract scope from JSON-RPC request: {}", e);
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-    };
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!("Failed to extract scope from JSON-RPC request: {}", e);
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+        };
+    }
 
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
