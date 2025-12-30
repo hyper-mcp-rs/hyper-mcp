@@ -749,6 +749,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base64-url"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5b428e9fb429c6fda7316e9b006f993e6b4c33005e4659339fb5214479dddec"
+dependencies = [
+ "base64 0.22.1",
+]
+
+[[package]]
 name = "base64ct"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2564,6 +2573,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "axum",
+ "base64-url",
  "bytesize",
  "clap",
  "ctor",
@@ -2580,9 +2590,11 @@ dependencies = [
  "oauth2",
  "oci-client",
  "once_cell",
+ "rand 0.8.5",
  "regex",
  "reqwest",
  "rmcp",
+ "rsa",
  "serde",
  "serde_json",
  "serde_with",
@@ -4194,7 +4206,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.35",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -4231,9 +4243,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
