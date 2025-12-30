@@ -156,7 +156,10 @@ fn extract_scope_from_json_rpc(json_rpc: &JsonRpcRequest) -> Result<Option<[Stri
     match json_rpc.request.method.as_str() {
         "tools/call" => {
             let tool_name = match json_rpc.request.params.get("name") {
-                Some(name) => name.to_string(),
+                Some(name) => name
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Tool name must be a string"))?
+                    .to_string(),
                 None => return Err(anyhow::anyhow!("Missing tool name parameter")),
             };
             let (plugin_name, tool_name) = parse_namespaced_name(tool_name)?;
@@ -169,7 +172,10 @@ fn extract_scope_from_json_rpc(json_rpc: &JsonRpcRequest) -> Result<Option<[Stri
         }
         "prompts/get" => {
             let prompt_name = match json_rpc.request.params.get("name") {
-                Some(name) => name.to_string(),
+                Some(name) => name
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Prompt name must be a string"))?
+                    .to_string(),
                 None => return Err(anyhow::anyhow!("Missing prompt name parameter")),
             };
             let (plugin_name, prompt_name) = parse_namespaced_name(prompt_name)?;
@@ -182,7 +188,10 @@ fn extract_scope_from_json_rpc(json_rpc: &JsonRpcRequest) -> Result<Option<[Stri
         }
         "resources/read" => {
             let resource_uri = match json_rpc.request.params.get("uri") {
-                Some(uri) => uri.to_string(),
+                Some(uri) => uri
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Resource URI must be a string"))?
+                    .to_string(),
                 None => return Err(anyhow::anyhow!("Missing resource URI parameter")),
             };
             let (plugin_name, resource_uri) = parse_namespaced_uri(resource_uri)?;
@@ -951,5 +960,284 @@ mod tests {
             scopes.is_none(),
             "ClientScopes should not be in extensions when JWT has no kid"
         );
+    }
+
+    // ============================================================================
+    // Tests for extract_scope_from_json_rpc
+    // ============================================================================
+
+    #[test]
+    fn test_extract_scope_tools_call_valid() {
+        // Test that "tools/call" method correctly extracts plugin and tool names
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"myplugin-mytool"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_ok(), "Expected Ok but got error: {:?}", result);
+        let scope = result.unwrap();
+        assert!(scope.is_some());
+        let scope_array = scope.unwrap();
+        assert_eq!(
+            scope_array,
+            [
+                "plugins".to_string(),
+                "myplugin".to_string(),
+                "tools".to_string(),
+                "mytool".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_scope_tools_call_missing_name_parameter() {
+        // Test that "tools/call" without "name" parameter returns an error
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Missing tool name parameter")
+        );
+    }
+
+    #[test]
+    fn test_extract_scope_tools_call_with_hyphens_in_names() {
+        // Test "tools/call" where hyphen is used to split plugin and tool names
+        // Plugin names can only have alphanumeric, but tool names can have more characters
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"myplugin-tool_with_hyphens_and_underscores"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_ok());
+        let scope = result.unwrap();
+        assert!(scope.is_some());
+        let scope_array = scope.unwrap();
+        assert_eq!(scope_array[0], "plugins".to_string());
+        assert_eq!(scope_array[1], "myplugin".to_string());
+        // The rest after the first hyphen becomes the tool name
+        assert_eq!(scope_array[2], "tools".to_string());
+        assert_eq!(
+            scope_array[3],
+            "tool_with_hyphens_and_underscores".to_string()
+        );
+    }
+
+    #[test]
+    fn test_extract_scope_tools_call_invalid_format() {
+        // Test "tools/call" with name that cannot be parsed (no hyphen)
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"invalid_no_hyphen"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_scope_prompts_get_valid() {
+        // Test that "prompts/get" method correctly extracts plugin and prompt names
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"myplugin-myprompt"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_ok());
+        let scope = result.unwrap();
+        assert!(scope.is_some());
+        let scope_array = scope.unwrap();
+        assert_eq!(
+            scope_array,
+            [
+                "plugins".to_string(),
+                "myplugin".to_string(),
+                "prompts".to_string(),
+                "myprompt".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_scope_prompts_get_missing_name_parameter() {
+        // Test that "prompts/get" without "name" parameter returns an error
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Missing prompt name parameter")
+        );
+    }
+
+    #[test]
+    fn test_extract_scope_prompts_get_invalid_format() {
+        // Test "prompts/get" with name that cannot be parsed (no hyphen)
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"invalid_no_hyphen"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_scope_resources_read_valid() {
+        // Test that "resources/read" method correctly extracts plugin and resource URI
+        // The plugin name is the first path segment in the URI
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"http://example.com/my_storage/docs/file.txt"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_ok(), "Expected Ok but got error: {:?}", result);
+        let scope = result.unwrap();
+        assert!(scope.is_some());
+        let scope_array = scope.unwrap();
+        assert_eq!(scope_array[0], "plugins".to_string());
+        assert_eq!(scope_array[1], "my_storage".to_string());
+        assert_eq!(scope_array[2], "resources".to_string());
+        // The rest of the URL path becomes the resource identifier
+        assert!(scope_array[3].contains("/docs/file.txt"));
+    }
+
+    #[test]
+    fn test_extract_scope_resources_read_missing_uri_parameter() {
+        // Test that "resources/read" without "uri" parameter returns an error
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Missing resource URI parameter")
+        );
+    }
+
+    #[test]
+    fn test_extract_scope_resources_read_invalid_uri() {
+        // Test "resources/read" with invalid URI format (not a valid URL)
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"not a valid uri at all !!!"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_scope_resources_read_uri_without_plugin() {
+        // Test "resources/read" with URI that has no path segments (no plugin name)
+        let json_bytes =
+            br#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"file:///"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_scope_unknown_method() {
+        // Test that unknown methods return Ok(None)
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"unknown/method","params":{"some_param":"value"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_ok());
+        let scope = result.unwrap();
+        assert!(scope.is_none());
+    }
+
+    #[test]
+    fn test_extract_scope_resources_read_nested_paths() {
+        // Test "resources/read" with nested resource path
+        // Format: http://host/plugin_name/path/to/resource
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"http://example.com/archive_plugin/documents/2024/report.pdf"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_ok(), "Expected Ok but got error: {:?}", result);
+        let scope = result.unwrap();
+        assert!(scope.is_some());
+        let scope_array = scope.unwrap();
+        assert_eq!(scope_array[0], "plugins".to_string());
+        assert_eq!(scope_array[1], "archive_plugin".to_string());
+        assert_eq!(scope_array[2], "resources".to_string());
+        // The remaining path becomes the resource identifier
+        assert!(scope_array[3].contains("documents/2024/report.pdf"));
+    }
+
+    #[test]
+    fn test_extract_scope_tools_call_empty_name() {
+        // Test "tools/call" with empty string as name
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":""}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_scope_prompts_get_with_extra_params() {
+        // Test that "prompts/get" correctly extracts scope even with extra parameters
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"myplugin-myprompt","extra_param":"extra_value","another_param":123}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        assert!(result.is_ok());
+        let scope = result.unwrap();
+        assert!(scope.is_some());
+        let scope_array = scope.unwrap();
+        assert_eq!(scope_array[1], "myplugin".to_string());
+        assert_eq!(scope_array[3], "myprompt".to_string());
+    }
+
+    #[test]
+    fn test_extract_scope_case_sensitive_methods() {
+        // Test that method names are case-sensitive
+        let json_bytes = br#"{"jsonrpc":"2.0","id":1,"method":"Tools/Call","params":{"name":"myplugin-mytool"}}"#;
+        let json_rpc: JsonRpcRequest =
+            serde_json::from_slice(json_bytes).expect("Failed to deserialize");
+
+        let result = extract_scope_from_json_rpc(&json_rpc);
+
+        // "Tools/Call" should not match "tools/call"
+        assert!(result.is_ok());
+        let scope = result.unwrap();
+        assert!(scope.is_none());
     }
 }
