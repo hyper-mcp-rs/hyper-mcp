@@ -18,8 +18,8 @@ pub enum AuthConfig {
     OAuth2 {
         client_id: String,
         client_secret: String,
-        auth_uri: Url,
-        token_uri: Url,
+        auth_uri: Box<Url>,
+        token_uri: Box<Url>,
         params: Option<Vec<(String, String)>>,
         scopes: Option<Vec<String>>,
     },
@@ -42,8 +42,8 @@ enum InternalAuthConfig {
     OAuth2 {
         client_id: String,
         client_secret: String,
-        auth_uri: Url,
-        token_uri: Url,
+        auth_uri: Box<Url>,
+        token_uri: Box<Url>,
         params: Option<Vec<(String, String)>>,
         scopes: Option<Vec<String>>,
     },
