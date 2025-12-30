@@ -171,6 +171,12 @@ These plugins use the v2 plugin interface. New plugins should use this interface
   - Security considerations and best practices
   - Platform-specific keyring setup for macOS, Linux, and Windows
   - Troubleshooting authentication issues
+- **[OAuth Scopes Guide](./OAUTH_SCOPES.md)** - Detailed guide to OAuth 2.0 scopes for streamable-http transport:
+  - Scope hierarchy and structure
+  - Common scopes (global, plugin-specific, and resource-level)
+  - Wildcard patterns for fine-grained access control
+  - Practical examples and use cases
+  - Best practices and troubleshooting
 - **[Skip Tools Pattern Guide](./SKIP_TOOLS_GUIDE.md)** - Comprehensive guide to filtering tools using regex patterns:
   - Pattern syntax and examples
   - Common use cases and best practices
