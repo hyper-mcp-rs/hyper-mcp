@@ -10,7 +10,7 @@ mod wasm;
 use crate::streamable_http::{
     auth::{authentication, authorization},
     routes,
-    state::ServerState,
+    state::{ServerState, create_jwks},
 };
 use anyhow::Result;
 use axum::middleware;
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
                 bind_address
             );
 
-            let server_state = Arc::new(ServerState::new(&config).await?);
+            let server_state = Arc::new(ServerState::new(&config, create_jwks).await?);
 
             let service = StreamableHttpService::new(
                 {

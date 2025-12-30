@@ -75,8 +75,8 @@ impl DiscoveryMetadata {
     }
 }
 
-async fn create_jwks(
-    config: &Config,
+pub async fn create_jwks(
+    config: Config,
 ) -> Result<(Vec<AuthorizationServerUrl>, HashMap<String, JwkSet>)> {
     let mut auth_servers = Vec::new();
     let mut jwks = HashMap::new();
@@ -133,8 +133,12 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    pub async fn new(config: &Config) -> Result<Self> {
-        let (auth_servers, jwks) = create_jwks(config).await?;
+    pub async fn new<F, Fut>(config: &Config, create_jwks: F) -> Result<Self>
+    where
+        F: Fn(Config) -> Fut + Send + Sync,
+        Fut: Future<Output = Result<(Vec<AuthorizationServerUrl>, HashMap<String, JwkSet>)>>,
+    {
+        let (auth_servers, jwks) = create_jwks(config.clone()).await?;
         if auth_servers.is_empty() {
             if let Some(oauth_protected_resource) = &config.oauth_protected_resource
                 && let Some(auth_servers_configed) = &oauth_protected_resource.authorization_servers
@@ -335,7 +339,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_jwks_with_no_oauth_config() {
         let config = create_test_config();
-        let (auth_servers, jwks) = create_jwks(&config).await.unwrap();
+        let (auth_servers, jwks) = create_jwks(config).await.unwrap();
 
         assert!(auth_servers.is_empty());
         assert!(jwks.is_empty());
