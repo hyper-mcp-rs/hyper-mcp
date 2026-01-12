@@ -176,6 +176,8 @@ jobs:
           name: Nightly build
           draft: false
           prerelease: true
+          generate_release_notes: true
+          preserve_order: true
           files: |
             dist/hyper-mcp-${{ matrix.target }}.tar.gz
             dist/hyper-mcp-${{ matrix.target }}.zip
