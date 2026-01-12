@@ -171,6 +171,8 @@ jobs:
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
+          generate_release_notes: true
+          preserve_order: true
           files: |
             dist/hyper-mcp-${{ matrix.target }}.tar.gz
             dist/checksums.txt
@@ -186,7 +188,7 @@ jobs:
 
             ```bash
             cosign verify \
-              --certificate-identity "https://github.com/tuananh/hyper-mcp/.github/workflows/release.yml@refs/tags/${{ github.ref_name }}" \
+              --certificate-identity "https://github.com/hyper-mcp-rs/hyper-mcp/.github/workflows/release.yml@refs/tags/${{ github.ref_name }}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              ghcr.io/tuananh/hyper-mcp:${{ github.ref_name }}
+              ghcr.io/hyper-mcp-rs/hyper-mcp:${{ github.ref_name }}
             ```
