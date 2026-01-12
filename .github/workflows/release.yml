@@ -7,7 +7,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  REGISTRY: ghcr.io
 
 jobs:
   build-oci-images:
@@ -38,7 +37,7 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -46,7 +45,7 @@ jobs:
       - name: Build and push hyper-mcp arch specific image
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          hyper_mcp_image_arch="${{ env.REGISTRY }}/${{ github.repository_owner }}/hyper-mcp:$TAG-${{ matrix.arch }}"
+          hyper_mcp_image_arch="ghcr.io/${{ github.repository_owner }}/hyper-mcp:$TAG-${{ matrix.arch }}"
           echo "Building and tagging arch specific image: $hyper_mcp_image_arch for ${{ matrix.arch }}"
           docker build -t $hyper_mcp_image_arch .
           docker push $hyper_mcp_image_arch
@@ -58,7 +57,7 @@ jobs:
           TAG=${GITHUB_REF#refs/tags/}
           for plugin in examples/plugins/v{1,2}/*/; do
             plugin_name=$(basename $plugin)
-            plugin_base_image="${{ env.REGISTRY }}/${{ github.repository_owner }}/${plugin_name}-plugin"
+            plugin_base_image="ghcr.io/${{ github.repository_owner }}/${plugin_name}-plugin"
 
             echo "Building and tagging plugin: $plugin_name as $plugin_base_image:$TAG and $plugin_base_image:latest"
             docker build -t $plugin_base_image:$TAG -t $plugin_base_image:latest $plugin
@@ -89,14 +88,14 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifest for hyper-mcp
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          hyper_mcp_base_image="${{ env.REGISTRY }}/${{ github.repository_owner }}/hyper-mcp"
+          hyper_mcp_base_image="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
 
           echo "Creating multi-arch manifest for $hyper_mcp_base_image:$TAG"
           docker buildx imagetools create \

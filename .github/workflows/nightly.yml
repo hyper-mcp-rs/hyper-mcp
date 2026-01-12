@@ -43,25 +43,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to DockerHub Registry
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
-
       - name: Build and push hyper-mcp
         run: |
           echo "Building hyper-mcp image"
           ghcr_image="ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly-${{ matrix.arch }}"
-          dockerhub_image="docker.io/tuananh/hyper-mcp:nightly-${{ matrix.arch }}"
-          docker build -t $ghcr_image -t $dockerhub_image .
+          docker build -t $ghcr_image .
 
           docker push $ghcr_image
-          docker push $dockerhub_image
 
           cosign sign --yes $ghcr_image
-          cosign sign --yes $dockerhub_image
 
       # we dont need to build multi-arch plugin images as they are wasm32-wasip1
       # so we can just build amd64 and push it to the registry
@@ -229,13 +219,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to DockerHub Registry
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
-
       - name: Create and push multi-arch nightly tags
         run: |
           # Main image
@@ -245,11 +228,5 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly-arm64
 
           cosign sign --yes ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly
-
-          # DockerHub
-          docker buildx imagetools create \
-            -t tuananh/hyper-mcp:nightly \
-            tuananh/hyper-mcp:nightly-amd64 \
-            tuananh/hyper-mcp:nightly-arm64
 
           cosign sign --yes tuananh/hyper-mcp:nightly
