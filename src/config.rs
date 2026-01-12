@@ -129,6 +129,9 @@ pub struct Config {
     pub auths: Option<HashMap<Url, AuthConfig>>,
 
     #[serde(default)]
+    pub disable_logging: bool,
+
+    #[serde(default)]
     pub oci: OciConfig,
 
     pub plugins: HashMap<PluginName, PluginConfig>,
@@ -2807,5 +2810,125 @@ allowed_hosts:
         assert_eq!(full_runtime.allowed_paths.as_ref().unwrap().len(), 2);
         assert_eq!(full_runtime.env_vars.as_ref().unwrap().len(), 2);
         assert_eq!(full_runtime.memory_limit.as_ref().unwrap(), "2GB");
+    }
+
+    #[test]
+    fn test_disable_logging_default() {
+        // Test that disable_logging defaults to false when not specified
+        let json = r#"
+{
+  "plugins": {
+    "test_plugin": {
+      "url": "file:///path/to/plugin"
+    }
+  }
+}
+"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(
+            !config.disable_logging,
+            "disable_logging should default to false (logging enabled)"
+        );
+    }
+
+    #[test]
+    fn test_disable_logging_explicit_true() {
+        // Test that disable_logging can be explicitly set to true
+        let json = r#"
+{
+  "disable_logging": true,
+  "plugins": {
+    "test_plugin": {
+      "url": "file:///path/to/plugin"
+    }
+  }
+}
+"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(config.disable_logging);
+    }
+
+    #[test]
+    fn test_disable_logging_explicit_false() {
+        // Test that disable_logging can be explicitly set to false
+        let json = r#"
+{
+  "disable_logging": false,
+  "plugins": {
+    "test_plugin": {
+      "url": "file:///path/to/plugin"
+    }
+  }
+}
+"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(!config.disable_logging);
+    }
+
+    #[test]
+    fn test_disable_flags_yaml_defaults() {
+        // Test that disable flags default to false in YAML when not specified
+        let yaml = r#"
+plugins:
+  test_plugin:
+    url: file:///path/to/plugin
+"#;
+
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(
+            !config.disable_logging,
+            "disable_logging should default to false in YAML"
+        );
+    }
+
+    #[test]
+    fn test_disable_flags_with_auths() {
+        // Test that disable flags work alongside other config options like auths
+        let json = r#"
+{
+  "disable_logging": false,
+  "auths": {
+    "https://example.com": {
+      "type": "token",
+      "token": "test_token_123"
+    }
+  },
+  "plugins": {
+    "test_plugin": {
+      "url": "file:///path/to/plugin"
+    }
+  }
+}
+"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(!config.disable_logging);
+        assert!(config.auths.is_some());
+        assert_eq!(config.auths.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_disable_flags_serialization_roundtrip() {
+        // Test that disable flags survive serialization and deserialization
+        let original_json = r#"
+{
+  "disable_logging": true,
+  "plugins": {
+    "test_plugin": {
+      "url": "file:///path/to/plugin"
+    }
+  }
+}
+"#;
+
+        let config: Config = serde_json::from_str(original_json).unwrap();
+        let serialized = serde_json::to_string(&config).unwrap();
+        let deserialized: Config = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(config.disable_logging, deserialized.disable_logging);
+        assert!(deserialized.disable_logging);
     }
 }

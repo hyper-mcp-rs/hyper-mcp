@@ -259,7 +259,7 @@ impl PluginService {
             let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
                 anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
             })?;
-            if (plugin_service.logging_level() as u8) <= (log_msg.level as u8) && let Some(peer) = plugin_service.peer.get() {
+            if !plugin_service.config.disable_logging && (plugin_service.logging_level() as u8) <= (log_msg.level as u8) && let Some(peer) = plugin_service.peer.get() {
                 tracing::debug!("Logging message from {}", ctx.plugin_name);
                 return ctx.handle.block_on(peer.notify_logging_message(log_msg)).map_err(Error::from);
             }
@@ -714,17 +714,30 @@ impl ServerHandler for PluginService {
 
                 ..Default::default()
             },
-            capabilities: ServerCapabilities::builder()
-                .enable_completions()
-                .enable_logging()
-                .enable_prompts()
-                .enable_prompts_list_changed()
-                .enable_resources()
-                .enable_resources_list_changed()
-                .enable_resources_subscribe()
-                .enable_tools()
-                .enable_tool_list_changed()
-                .build(),
+            capabilities: if self.config.disable_logging {
+                ServerCapabilities::builder()
+                    .enable_completions()
+                    .enable_prompts()
+                    .enable_prompts_list_changed()
+                    .enable_resources()
+                    .enable_resources_list_changed()
+                    .enable_resources_subscribe()
+                    .enable_tools()
+                    .enable_tool_list_changed()
+                    .build()
+            } else {
+                ServerCapabilities::builder()
+                    .enable_completions()
+                    .enable_logging()
+                    .enable_prompts()
+                    .enable_prompts_list_changed()
+                    .enable_resources()
+                    .enable_resources_list_changed()
+                    .enable_resources_subscribe()
+                    .enable_tools()
+                    .enable_tool_list_changed()
+                    .build()
+            },
 
             ..Default::default()
         }
@@ -1363,6 +1376,84 @@ plugins:
         assert_eq!(info.server_info.name, "hyper-mcp");
         assert!(!info.server_info.version.is_empty());
         assert!(info.capabilities.tools.is_some());
+    }
+
+    #[test]
+    fn test_plugin_service_get_info_default_flags() {
+        // Test with default config (both flags false, so both features enabled)
+        let config = Config::default();
+        let service = create_test_service(config);
+
+        let info = rmcp::ServerHandler::get_info(&service);
+
+        // Verify basic info
+        assert_eq!(info.server_info.name, "hyper-mcp");
+        assert_eq!(info.server_info.title, Some("Hyper MCP".to_string()));
+        assert!(!info.server_info.version.is_empty());
+        assert_eq!(
+            info.server_info.website_url,
+            Some("https://github.com/tuananh/hyper-mcp".to_string())
+        );
+
+        // With both flags false, both completions and logging should be enabled
+        assert!(
+            info.capabilities.completions.is_some(),
+            "completions should be enabled"
+        );
+        assert!(
+            info.capabilities.logging.is_some(),
+            "logging should be enabled"
+        );
+
+        // Standard capabilities should always be present
+        assert!(info.capabilities.prompts.is_some());
+        assert!(info.capabilities.resources.is_some());
+        assert!(info.capabilities.tools.is_some());
+    }
+
+    #[test]
+    fn test_plugin_service_get_info_capabilities_structure() {
+        // Test that all expected capability fields are present with default config
+        let config = Config::default();
+        let service = create_test_service(config);
+
+        let info = rmcp::ServerHandler::get_info(&service);
+        let caps = &info.capabilities;
+
+        // Check all expected capabilities
+        assert!(caps.completions.is_some());
+        assert!(caps.logging.is_some());
+        assert!(caps.prompts.is_some());
+        assert!(caps.resources.is_some());
+        assert!(caps.tools.is_some());
+
+        // Check that prompts capabilities are properly set
+        if let Some(prompts) = &caps.prompts {
+            assert!(
+                prompts.list_changed.unwrap_or(false),
+                "prompts list_changed should be enabled"
+            );
+        }
+
+        // Check that resources capabilities are properly set
+        if let Some(resources) = &caps.resources {
+            assert!(
+                resources.list_changed.unwrap_or(false),
+                "resources list_changed should be enabled"
+            );
+            assert!(
+                resources.subscribe.unwrap_or(false),
+                "resources subscribe should be enabled"
+            );
+        }
+
+        // Check that tools capabilities are properly set
+        if let Some(tools) = &caps.tools {
+            assert!(
+                tools.list_changed.unwrap_or(false),
+                "tools list_changed should be enabled"
+            );
+        }
     }
 
     #[tokio::test]

@@ -4,6 +4,8 @@
 
 The configuration is structured as follows:
 
+- **disable_completions** (`boolean`, optional, default: `false`): When set to `true`, disables the completions capability in the MCP server. This means the server will not provide completion suggestions to clients.
+- **disable_logging** (`boolean`, optional, default: `false`): When set to `true`, disables the logging capability in the MCP server. This prevents the server from accepting and processing log messages from clients.
 - **auths** (`object`, optional): Authentication configurations for HTTPS requests, keyed by URL.
 - **plugins**: A map of plugin names to  plugin configuration objects.
   - **path** (`string`): OCI path or HTTP URL or local path for the plugin.
@@ -55,6 +57,20 @@ Plugin names must follow strict naming conventions to ensure consistency and avo
 - Follow consistent naming conventions within your organization
 - Consider using prefixes for related plugins (e.g., `company_auth`, `company_logging`)
 - Use underscores to separate logical components (e.g., `api_client`, `data_processor`)
+
+## Server Capabilities
+
+The top-level configuration includes flags to control which MCP server capabilities are enabled:
+
+### disable_logging
+
+When set to `true`, the MCP server will not advertise or provide the logging capability. This is useful if you want to:
+- Disable log message output when 
+    - not needed
+    - the client cannot accept them or calls setLevel before initialization is complete (e.g. - VS Code/Copilot)
+- Reduce server overhead by disabling unused features
+
+**Default**: `false` (logging is enabled by default)
 
 ## Authentication Configuration
 
@@ -300,6 +316,9 @@ security add-generic-password -a "developer" -s "team-registry" -w '{"type":"bas
 ## Example (YAML)
 
 ```yaml
+# Optional: Disable specific server capabilities
+disable_logging: false       # Set to true to disable logging capability
+
 auths:
   "https://private.registry.io":
     type: basic
@@ -340,6 +359,7 @@ plugins:
 
 ```json
 {
+  "disable_logging": false,
   "auths": {
     "https://private.registry.io": {
       "type": "basic",
