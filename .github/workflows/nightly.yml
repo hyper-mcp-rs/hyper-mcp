@@ -191,9 +191,9 @@ jobs:
             All container images are signed with Cosign. Verify the image like this:
             ```bash
             cosign verify \
-              --certificate-identity "https://github.com/tuananh/hyper-mcp/.github/workflows/nightly.yml@refs/heads/main" \
+              --certificate-identity "https://github.com/hyper-mcp-rs/hyper-mcp/.github/workflows/nightly.yml@refs/heads/main" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              ghcr.io/tuananh/hyper-mcp:nightly
+              ghcr.io/hyper-mcp-rs/hyper-mcp:nightly
             ```
 
   create-multiarch-manifests:
@@ -228,5 +228,3 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly-arm64
 
           cosign sign --yes ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly
-
-          cosign sign --yes tuananh/hyper-mcp:nightly
