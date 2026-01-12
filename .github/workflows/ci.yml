@@ -3,6 +3,15 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - ".github/workflows/nightly.yml"
+      - ".github/workflows/release.yml"
+      - "**/.md"
+      - ".cursor/**"
+      - ".windsurf/**"
+      - ".gitignore"
+      - "LICENSE"
+      - ".github/renovate.json5"
   pull_request:
     branches: [main]
   workflow_dispatch:
