@@ -2,7 +2,7 @@ name: Nightly Release
 
 on:
   schedule:
-    - cron: "0 17 * * *" # midnight GMT+7
+    - cron: "0 0 * * *" # midnight GMT
   workflow_dispatch:
 
 env:
