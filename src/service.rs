@@ -7,7 +7,6 @@ use crate::{
     wasm,
 };
 use anyhow::{Error, Result};
-use bytesize::ByteSize;
 use dashmap::{DashMap, DashSet, Entry};
 use extism::{EXTISM_USER_MODULE, Function, Manifest, UserData, Wasm, host_fn};
 use extism_convert::Json;
@@ -23,7 +22,6 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     ops::Deref,
-    str::FromStr,
     sync::{Arc, LazyLock, Mutex, RwLock, Weak},
     time::Duration,
 };
@@ -398,18 +396,9 @@ impl PluginService {
                 }
 
                 if let Some(memory_limit) = &runtime_cfg.memory_limit {
-                    match ByteSize::from_str(memory_limit) {
-                        Ok(b) => {
-                            // Wasm page size 64KiB, convert to number of pages
-                            let num_pages = b.as_u64() / (64 * 1024);
-                            manifest = manifest.with_memory_max(num_pages as u32);
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to parse memory_limit '{memory_limit}': {e}. Using default memory limit."
-                            );
-                        }
-                    }
+                    // Wasm page size 64KiB, convert to number of pages
+                    let num_pages = memory_limit.as_u64() / (64 * 1024);
+                    manifest = manifest.with_memory_max(num_pages as u32);
                 }
             }
             let extism_plugin = extism::Plugin::new(
@@ -1098,6 +1087,7 @@ mod tests {
     };
     use std::{
         path::PathBuf,
+        str::FromStr,
         sync::atomic::{AtomicUsize, Ordering},
     };
     use tempfile::TempDir;
@@ -1354,14 +1344,9 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
-        let config = load_config(&cli).await.unwrap();
+        let result = load_config(&cli).await;
 
-        let result = PluginService::new(&config).await;
-        // Should still succeed but log an error about invalid memory limit
-        assert!(
-            result.is_ok(),
-            "Should handle invalid memory limit gracefully"
-        );
+        assert!(result.is_err(), "Should fail on invalid memory limit");
     }
 
     // ServerHandler tests

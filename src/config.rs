@@ -1,9 +1,11 @@
 use crate::cli::Cli;
 use anyhow::{Context, Result};
+use bytesize::ByteSize;
 use camino::Utf8PathBuf;
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize, de};
+use serde_with::{DisplayFromStr, serde_as};
 use std::{collections::HashMap, convert::TryFrom, fmt, path::PathBuf, str::FromStr};
 use url::Url;
 
@@ -273,6 +275,7 @@ impl Serialize for AllowedPath {
     }
 }
 
+#[serde_as]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct RuntimeConfig {
     // List of prompts to skip loading at runtime.
@@ -290,7 +293,9 @@ pub struct RuntimeConfig {
     pub allowed_hosts: Option<Vec<String>>,
     pub allowed_paths: Option<Vec<AllowedPath>>,
     pub env_vars: Option<HashMap<String, String>>,
-    pub memory_limit: Option<String>,
+
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    pub memory_limit: Option<ByteSize>,
 }
 
 pub async fn load_config(cli: &Cli) -> Result<Config> {
@@ -683,7 +688,10 @@ mod tests {
         assert_eq!(allowed_paths[2].plugin.as_str(), "/home/user/data");
 
         assert_eq!(runtime_config.env_vars.as_ref().unwrap().len(), 2);
-        assert_eq!(runtime_config.memory_limit.as_ref().unwrap(), "1GB");
+        assert_eq!(
+            *runtime_config.memory_limit.as_ref().unwrap(),
+            ByteSize::gb(1)
+        );
 
         // Verify minimal plugin has no runtime config
         let minimal_plugin = &config.plugins[&PluginName("minimal_plugin".to_string())];
@@ -1481,7 +1489,10 @@ plugins:
         let myip_plugin = &config.plugins[&PluginName("myip".to_string())];
         let runtime_config = myip_plugin.runtime_config.as_ref().unwrap();
         assert_eq!(runtime_config.env_vars.as_ref().unwrap()["FOO"], "bar");
-        assert_eq!(runtime_config.memory_limit.as_ref().unwrap(), "512Mi");
+        assert_eq!(
+            *runtime_config.memory_limit.as_ref().unwrap(),
+            ByteSize::mib(512)
+        );
     }
 
     #[test]
@@ -2885,7 +2896,10 @@ allowed_hosts:
         assert_eq!(full_allowed_paths[2].plugin.as_str(), "/home/user/data");
 
         assert_eq!(full_runtime.env_vars.as_ref().unwrap().len(), 2);
-        assert_eq!(full_runtime.memory_limit.as_ref().unwrap(), "2GB");
+        assert_eq!(
+            *full_runtime.memory_limit.as_ref().unwrap(),
+            ByteSize::gb(2)
+        );
     }
 
     #[test]
@@ -3741,7 +3755,10 @@ allowed_paths:
         assert_eq!(full_paths[2].host.as_str(), "/home/user/data");
         assert_eq!(full_paths[2].plugin.as_str(), "/home/user/data");
         assert_eq!(full_runtime.env_vars.as_ref().unwrap().len(), 3);
-        assert_eq!(full_runtime.memory_limit.as_ref().unwrap(), "4GB");
+        assert_eq!(
+            *full_runtime.memory_limit.as_ref().unwrap(),
+            ByteSize::gb(4)
+        );
 
         // Test nested_paths_plugin
         let nested_plugin = &config.plugins[&PluginName("nested_paths_plugin".to_string())];
