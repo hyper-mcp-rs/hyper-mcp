@@ -10,7 +10,8 @@ plugins:
         - "localhost"
       allowed_paths:
         - "/tmp"
-        - "/var/log"
+        - "/var/log:/plugin/logs"
+        - "/home/user/data"
       env_vars:
         DEBUG: "true"
         LOG_LEVEL: "info"

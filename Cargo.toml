@@ -19,6 +19,7 @@ aws-config = { version = "1.8.12", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1.119.0"
 axum = "0.8.8"
 bytesize = "2.0.1"
+camino = "1.2.2"
 clap = { version = "4.5.54", features = ["derive", "env"] }
 ctor = "0.6"
 dashmap = "6.1.0"

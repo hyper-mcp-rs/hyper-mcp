@@ -12,7 +12,7 @@ The configuration is structured as follows:
   - **runtime_config** (`object`, optional): Plugin-specific runtime configuration. The available fields are:
     - **skip_tools** (`array[string]`, optional): List of regex patterns for tool names to skip loading at runtime. Each pattern is automatically anchored to match the entire tool name (equivalent to wrapping with `^` and `$`). Supports full regex syntax for powerful pattern matching.
     - **allowed_hosts** (`array[string]`, optional): List of allowed hosts for the plugin (e.g., `["1.1.1.1"]` or `["*"]`).
-    - **allowed_paths** (`array[string]`, optional): List of allowed file system paths.
+    - **allowed_paths** (`array[string]`, optional): List of allowed file system paths. Supports both simple paths and host-to-plugin path mapping. See [Allowed Paths Configuration](#allowed-paths-configuration) for detailed documentation.
     - **env_vars** (`object`, optional): Key-value pairs of environment variables for the plugin.
     - **memory_limit** (`string`, optional): Memory limit for the plugin (e.g., `"512Mi"`).
 
@@ -340,6 +340,10 @@ plugins:
     runtime_config:
       allowed_hosts:
         - "1.1.1.1"
+      allowed_paths:
+        - "/tmp"                      # Single path (same for host and plugin)
+        - "/var/log:/plugin/logs"     # Mapped path (host:plugin)
+        - "/home/user/data"           # Another single path
       skip_tools:
         - "debug_tool"           # Skip exact tool name
         - "temp_.*"              # Skip tools starting with "temp_"
@@ -384,6 +388,11 @@ plugins:
       "url": "oci://ghcr.io/tuananh/myip-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"],
+        "allowed_paths": [
+          "/tmp",
+          "/var/log:/plugin/logs",
+          "/home/user/data"
+        ],
         "skip_tools": [
           "debug_tool",
           "temp_.*",
@@ -572,6 +581,252 @@ skip_tools:
 - All patterns are compiled into a single optimized `RegexSet` for O(1) tool name checking
 - Pattern compilation happens once at startup, not per tool evaluation
 - Large numbers of patterns have minimal runtime performance impact
+
+## Allowed Paths Configuration
+
+The `allowed_paths` field provides fine-grained control over filesystem access for plugins. It supports both simple paths and sophisticated host-to-plugin path mapping, enabling secure isolation while maintaining flexibility.
+
+### Path Format
+
+Paths can be specified in two formats:
+
+#### 1. Simple Path Format
+When the same path should be accessible to both the host and plugin:
+
+```yaml
+allowed_paths:
+  - "/tmp"
+  - "/home/user/data"
+  - "./relative/path"
+```
+
+#### 2. Mapped Path Format
+When you want to map a host filesystem path to a different path as seen by the plugin:
+
+**Unix/Linux/macOS** (using `:` as separator):
+```yaml
+allowed_paths:
+  - "/host/path:/plugin/path"
+  - "/var/log:/plugin/logs"
+  - "/home/user/data:/plugin/user/data"
+```
+
+**Windows** (using `;` as separator):
+```yaml
+allowed_paths:
+  - "C:\\host\\path;C:\\plugin\\path"
+  - "C:\\logs;C:\\plugin\\logs"
+```
+
+### Platform-Specific Separators
+
+The separator used for path mapping is platform-dependent:
+- **Unix/Linux/macOS**: Colon (`:`) - e.g., `"/host/path:/plugin/path"`
+- **Windows**: Semicolon (`;`) - e.g., `"C:\\host\\path;C:\\plugin\\path"`
+
+This ensures compatibility with Windows drive letters (which contain colons) and Unix absolute paths.
+
+### Path Mapping Examples
+
+#### Basic Mapping
+```yaml
+allowed_paths:
+  - "/tmp"                           # Plugin sees /tmp at /tmp
+  - "/var/log:/plugin/logs"          # Host /var/log appears as /plugin/logs to plugin
+  - "/home/user/data"                # Plugin sees /home/user/data at /home/user/data
+```
+
+#### Relative Paths
+```yaml
+allowed_paths:
+  - "./local/data"                   # Relative to current directory
+  - "../shared/files"                # Parent directory reference
+  - "./host/config:./plugin/config"  # Mapped relative paths
+```
+
+#### Windows Paths
+```yaml
+allowed_paths:
+  - "C:\\Users\\Public"              # Simple Windows path
+  - "C:\\app\\data;C:\\plugin\\data" # Mapped Windows path
+  - "\\\\server\\share"              # UNC network path
+  - "C:\\logs;D:\\plugin\\logs"      # Map between different drives
+```
+
+#### Home Directory Expansion
+```yaml
+allowed_paths:
+  - "~/Documents"                    # User home directory
+  - "~/host/config:~/plugin/config"  # Mapped home directories
+```
+
+#### Complex Scenarios
+```yaml
+allowed_paths:
+  # Root and system paths
+  - "/"                              # Root directory (use with caution!)
+  - "/usr/local/share:/plugin/share"
+  
+  # Application-specific paths
+  - "/opt/myapp/data:/plugin/data"
+  - "/etc/myapp/config:/plugin/config"
+  
+  # Paths with special characters
+  - "/path/with spaces"
+  - "/path-with-dashes"
+  - "/path_with_underscores"
+  - "/path.with.dots"
+  
+  # Deeply nested structures
+  - "/very/deeply/nested/path/structure"
+```
+
+### Whitespace Handling
+
+Whitespace around paths is automatically trimmed:
+
+```yaml
+allowed_paths:
+  - "  /tmp  "                       # Treated as "/tmp"
+  - "  /var/log  :  /plugin/logs  "  # Treated as "/var/log:/plugin/logs"
+```
+
+### Empty Plugin Path Behavior
+
+If the plugin path is empty or contains only whitespace after the separator, the host path is used for both:
+
+```yaml
+allowed_paths:
+  - "/tmp:"          # Equivalent to "/tmp" (plugin path defaults to host path)
+  - "/var/log:  "    # Equivalent to "/var/log" (whitespace-only plugin path)
+```
+
+### Multiple Colons/Semicolons
+
+Only the first separator is used to split the mapping. This allows paths to contain additional colons or semicolons:
+
+**Unix:**
+```yaml
+allowed_paths:
+  - "/host/path:/plugin/path:with:colons"  # Host: "/host/path", Plugin: "/plugin/path:with:colons"
+```
+
+**Windows:**
+```yaml
+allowed_paths:
+  - "C:\\host;C:\\plugin;data"  # Host: "C:\host", Plugin: "C:\plugin;data"
+```
+
+### Use Cases
+
+#### 1. Read-Only Configuration Access
+```yaml
+runtime_config:
+  allowed_paths:
+    - "/etc/myapp/config:/plugin/config"
+```
+Host configuration at `/etc/myapp/config` appears to the plugin at `/plugin/config`.
+
+#### 2. Isolated Data Directories
+```yaml
+runtime_config:
+  allowed_paths:
+    - "/var/lib/myapp/plugin1:/plugin/data"
+```
+Each plugin gets its own isolated data directory mapped to a standard location.
+
+#### 3. Multi-Environment Setup
+```yaml
+runtime_config:
+  allowed_paths:
+    - "/opt/production/data:/plugin/data"    # Production
+    # - "/opt/staging/data:/plugin/data"     # Staging (commented out)
+    # - "/opt/dev/data:/plugin/data"         # Development (commented out)
+```
+
+#### 4. Shared Resources
+```yaml
+runtime_config:
+  allowed_paths:
+    - "/tmp"                                  # Shared temp directory
+    - "/usr/local/share:/plugin/shared"       # Shared libraries/resources
+    - "/var/cache/myapp:/plugin/cache"        # Shared cache
+```
+
+#### 5. Cross-Platform Compatibility
+```yaml
+# Unix/Linux/macOS
+allowed_paths:
+  - "~/config:/plugin/config"
+  - "/var/log:/plugin/logs"
+
+# Windows equivalent
+allowed_paths:
+  - "C:\\Users\\username\\config;C:\\plugin\\config"
+  - "C:\\logs;C:\\plugin\\logs"
+```
+
+### Complete Example
+
+```yaml
+plugins:
+  file_processor:
+    url: "oci://ghcr.io/myorg/file-processor:latest"
+    runtime_config:
+      allowed_hosts:
+        - "api.example.com"
+      allowed_paths:
+        # Temporary workspace
+        - "/tmp"
+        
+        # Configuration (read-only in practice)
+        - "/etc/myapp/config:/plugin/config"
+        
+        # Input data (host path) -> Plugin working directory
+        - "/var/lib/myapp/input:/plugin/input"
+        
+        # Output directory
+        - "/var/lib/myapp/output:/plugin/output"
+        
+        # Logs (isolated per plugin)
+        - "/var/log/myapp/file-processor:/plugin/logs"
+        
+        # Shared cache directory
+        - "/var/cache/myapp:/plugin/cache"
+      env_vars:
+        PLUGIN_ENV: "production"
+        LOG_LEVEL: "info"
+      memory_limit: "1GB"
+```
+
+### Security Considerations
+
+1. **Principle of Least Privilege**: Only grant access to paths that the plugin absolutely needs.
+2. **Path Isolation**: Use path mapping to isolate plugins from each other's data.
+3. **Avoid Root Access**: Avoid granting access to `/` unless absolutely necessary.
+4. **Validate Paths**: Ensure paths exist and have appropriate permissions before configuring them.
+5. **Use Mapping for Isolation**: Map host paths to plugin-specific locations to prevent plugins from knowing the actual host filesystem structure.
+
+### Error Handling
+
+- **Invalid Format**: Paths are parsed at configuration load time; invalid formats will cause startup errors.
+- **Missing Separators**: If no separator is found, the entire string is treated as a simple path.
+- **Empty Paths**: Empty path strings are not allowed and will cause configuration errors.
+
+### Performance Notes
+
+- Path configuration is parsed once at startup, not during runtime operations.
+- Path mapping has minimal overhead during filesystem operations.
+- Large numbers of allowed paths have negligible performance impact.
+
+### Best Practices
+
+1. **Use Descriptive Mappings**: Map host paths to clear, consistent plugin paths (e.g., `/plugin/config`, `/plugin/data`).
+2. **Document Path Purpose**: Comment your path configurations to explain their purpose.
+3. **Group Related Paths**: Organize paths by function (config, data, logs, cache).
+4. **Version-Aware Paths**: Consider including version information in paths for easier upgrades.
+5. **Environment-Specific Paths**: Use different path configurations for different environments (dev, staging, prod).
+6. **Test Path Access**: Verify that plugins can actually access configured paths before deploying to production.
 
 ## Notes
 

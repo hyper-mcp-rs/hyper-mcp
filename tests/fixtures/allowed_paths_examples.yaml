@@ -1,0 +1,133 @@
+# Test configuration file demonstrating various allowed_paths functionality
+plugins:
+  # Plugin with single paths (no mapping)
+  single_paths_plugin:
+    url: "file:///path/to/single_plugin"
+    runtime_config:
+      allowed_paths:
+        - "/tmp"
+        - "/var/log"
+        - "/home/user/data"
+
+  # Plugin with mapped paths (host:plugin format)
+  mapped_paths_plugin:
+    url: "https://example.com/mapped_plugin"
+    runtime_config:
+      allowed_paths:
+        - "/host/tmp:/plugin/tmp"
+        - "/var/log:/plugin/logs"
+        - "/home/user/data:/plugin/user/data"
+
+  # Plugin with mixed single and mapped paths
+  mixed_paths_plugin:
+    url: "http://localhost:3000/mixed_plugin"
+    runtime_config:
+      allowed_paths:
+        - "/tmp"
+        - "/var/log:/plugin/logs"
+        - "/home/user"
+        - "/opt/app:/plugin/app"
+
+  # Plugin with relative paths
+  relative_paths_plugin:
+    url: "file:///path/to/relative_plugin"
+    runtime_config:
+      allowed_paths:
+        - "./local/data"
+        - "../shared/files"
+        - "relative/path"
+
+  # Plugin with mapped relative paths
+  mapped_relative_plugin:
+    url: "https://api.example.com/relative_plugin"
+    runtime_config:
+      allowed_paths:
+        - "./host/data:./plugin/data"
+        - "../shared:/plugin/shared"
+        - "local:remote"
+
+  # Plugin with paths containing spaces
+  paths_with_spaces_plugin:
+    url: "file:///path/to/spaces_plugin"
+    runtime_config:
+      allowed_paths:
+        - "/path/with spaces"
+        - "/host/path with spaces:/plugin/path with spaces"
+        - "/my documents"
+
+  # Plugin with paths containing special characters
+  special_chars_plugin:
+    url: "https://example.com/special_plugin"
+    runtime_config:
+      allowed_paths:
+        - "/path/with-dashes"
+        - "/path_with_underscores"
+        - "/path.with.dots"
+        - "/path/with-special:/plugin/with_underscores"
+
+  # Plugin with empty allowed_paths (allows nothing)
+  empty_paths_plugin:
+    url: "file:///path/to/empty_plugin"
+    runtime_config:
+      allowed_paths: []
+      allowed_hosts:
+        - "example.com"
+
+  # Plugin with no allowed_paths specified (defaults to None)
+  no_paths_plugin:
+    url: "https://example.com/no_paths_plugin"
+    runtime_config:
+      allowed_hosts:
+        - "localhost"
+      memory_limit: "512MB"
+
+  # Plugin with comprehensive runtime config including allowed_paths
+  full_config_plugin:
+    url: "https://secure.example.com/full_plugin"
+    runtime_config:
+      skip_tools:
+        - "admin_.*"
+        - ".*_dangerous"
+      allowed_hosts:
+        - "api.example.com"
+        - "cdn.example.com"
+      allowed_paths:
+        - "/tmp"
+        - "/var/log:/plugin/logs"
+        - "/home/user/data"
+        - "/opt/app:/plugin/app"
+      env_vars:
+        ENVIRONMENT: "production"
+        LOG_LEVEL: "info"
+        DATA_DIR: "/var/app/data"
+      memory_limit: "4GB"
+
+  # Plugin with deeply nested paths
+  nested_paths_plugin:
+    url: "file:///path/to/nested_plugin"
+    runtime_config:
+      allowed_paths:
+        - "/very/deeply/nested/path/structure"
+        - "/another/deep/path:/plugin/deep/path"
+        - "/a/b/c/d/e/f/g"
+
+  # Plugin testing path mapping from different directories
+  multi_mapping_plugin:
+    url: "https://example.com/multi_plugin"
+    runtime_config:
+      allowed_paths:
+        - "/usr/local/share:/plugin/shared"
+        - "/etc/config:/plugin/config"
+        - "/var/lib/data:/plugin/data"
+        - "/home/user/.config:/plugin/user/config"
+
+  # Plugin with root and user paths
+  root_user_paths_plugin:
+    url: "file:///path/to/root_user_plugin"
+    runtime_config:
+      allowed_paths:
+        - "/"
+        - "/root"
+        - "/home"
+        - "/usr"
+        - "/var:/plugin/var"

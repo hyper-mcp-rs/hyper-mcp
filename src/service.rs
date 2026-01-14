@@ -384,8 +384,8 @@ impl PluginService {
                 }
                 if let Some(paths) = &runtime_cfg.allowed_paths {
                     for path in paths {
-                        // path will be available in the plugin with exact same path
-                        manifest = manifest.with_allowed_path(path.clone(), path.clone());
+                        // host path will be available in the plugin at the plugin path
+                        manifest = manifest.with_allowed_path(path.host.to_string(), &path.plugin);
                     }
                 }
 

@@ -1,8 +1,9 @@
 use crate::cli::Cli;
 use anyhow::{Context, Result};
+use camino::Utf8PathBuf;
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexSet};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 use std::{collections::HashMap, convert::TryFrom, fmt, path::PathBuf, str::FromStr};
 use url::Url;
 
@@ -227,6 +228,51 @@ mod skip_serde {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct AllowedPath {
+    pub host: Utf8PathBuf,
+    pub plugin: Utf8PathBuf,
+}
+
+impl<'de> Deserialize<'de> for AllowedPath {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let mut path_iter = s
+            .splitn(2, if cfg!(windows) { ";" } else { ":" })
+            .map(str::trim);
+        match path_iter.next() {
+            Some(host) => Ok(AllowedPath {
+                host: Utf8PathBuf::from(host),
+                plugin: Utf8PathBuf::from(
+                    path_iter.next().filter(|p| !p.is_empty()).unwrap_or(host),
+                ),
+            }),
+            None => Err(de::Error::custom("Missing host path")),
+        }
+    }
+}
+
+impl Serialize for AllowedPath {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if self.plugin == self.host {
+            serializer.serialize_str(self.host.as_str())
+        } else {
+            serializer.serialize_str(&format!(
+                "{}{}{}",
+                self.host,
+                if cfg!(windows) { ";" } else { ":" },
+                self.plugin
+            ))
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct RuntimeConfig {
     // List of prompts to skip loading at runtime.
@@ -242,7 +288,7 @@ pub struct RuntimeConfig {
     #[serde(with = "skip_serde", default)]
     pub skip_tools: Option<RegexSet>,
     pub allowed_hosts: Option<Vec<String>>,
-    pub allowed_paths: Option<Vec<String>>,
+    pub allowed_paths: Option<Vec<AllowedPath>>,
     pub env_vars: Option<HashMap<String, String>>,
     pub memory_limit: Option<String>,
 }
@@ -620,7 +666,22 @@ mod tests {
         let runtime_config = test_plugin.runtime_config.as_ref().unwrap();
         assert_eq!(runtime_config.skip_tools.as_ref().unwrap().len(), 2);
         assert_eq!(runtime_config.allowed_hosts.as_ref().unwrap().len(), 2);
-        assert_eq!(runtime_config.allowed_paths.as_ref().unwrap().len(), 2);
+        assert_eq!(runtime_config.allowed_paths.as_ref().unwrap().len(), 3);
+
+        // Verify allowed_paths structure
+        let allowed_paths = runtime_config.allowed_paths.as_ref().unwrap();
+        assert_eq!(allowed_paths[0].host.as_str(), "/tmp");
+        assert_eq!(allowed_paths[0].plugin.as_str(), "/tmp");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(allowed_paths[1].plugin.as_str(), "/plugin/logs");
+        }
+
+        assert_eq!(allowed_paths[2].host.as_str(), "/home/user/data");
+        assert_eq!(allowed_paths[2].plugin.as_str(), "/home/user/data");
+
         assert_eq!(runtime_config.env_vars.as_ref().unwrap().len(), 2);
         assert_eq!(runtime_config.memory_limit.as_ref().unwrap(), "1GB");
 
@@ -2807,7 +2868,22 @@ allowed_hosts:
         assert!(full_skip_tools.is_match("system_critical"));
         assert!(!full_skip_tools.is_match("safe_tool"));
         assert_eq!(full_runtime.allowed_hosts.as_ref().unwrap().len(), 2);
-        assert_eq!(full_runtime.allowed_paths.as_ref().unwrap().len(), 2);
+        assert_eq!(full_runtime.allowed_paths.as_ref().unwrap().len(), 3);
+
+        // Verify allowed_paths structure
+        let full_allowed_paths = full_runtime.allowed_paths.as_ref().unwrap();
+        assert_eq!(full_allowed_paths[0].host.as_str(), "/tmp");
+        assert_eq!(full_allowed_paths[0].plugin.as_str(), "/tmp");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(full_allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(full_allowed_paths[1].plugin.as_str(), "/plugin/logs");
+        }
+
+        assert_eq!(full_allowed_paths[2].host.as_str(), "/home/user/data");
+        assert_eq!(full_allowed_paths[2].plugin.as_str(), "/home/user/data");
+
         assert_eq!(full_runtime.env_vars.as_ref().unwrap().len(), 2);
         assert_eq!(full_runtime.memory_limit.as_ref().unwrap(), "2GB");
     }
@@ -2930,5 +3006,817 @@ plugins:
 
         assert_eq!(config.disable_logging, deserialized.disable_logging);
         assert!(deserialized.disable_logging);
+    }
+
+    #[test]
+    fn test_allowed_path_single_path() {
+        // Test deserialization of a single path (same for host and plugin)
+        let json = r#""/tmp""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "/tmp");
+        assert_eq!(allowed_path.plugin.as_str(), "/tmp");
+    }
+
+    #[test]
+    fn test_allowed_path_mapped_paths_unix() {
+        // Test deserialization with host:plugin mapping on Unix
+        #[cfg(not(windows))]
+        {
+            let json = r#""/host/path:/plugin/path""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "/host/path");
+            assert_eq!(allowed_path.plugin.as_str(), "/plugin/path");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_mapped_paths_windows() {
+        // Test deserialization with host;plugin mapping on Windows
+        #[cfg(windows)]
+        {
+            let json = r#""C:\\host\\path;C:\\plugin\\path""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "C:\\host\\path");
+            assert_eq!(allowed_path.plugin.as_str(), "C:\\plugin\\path");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_with_whitespace() {
+        // Test that whitespace is trimmed around paths
+        #[cfg(not(windows))]
+        {
+            let json = r#""  /host/path  :  /plugin/path  ""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "/host/path");
+            assert_eq!(allowed_path.plugin.as_str(), "/plugin/path");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_empty_plugin_path() {
+        // Test that empty plugin path after separator uses host path
+        #[cfg(not(windows))]
+        {
+            let json = r#""/tmp:""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "/tmp");
+            assert_eq!(allowed_path.plugin.as_str(), "/tmp");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_serialization_single() {
+        // Test serialization of a single path
+        let allowed_path = AllowedPath {
+            host: Utf8PathBuf::from("/tmp"),
+            plugin: Utf8PathBuf::from("/tmp"),
+        };
+
+        let serialized = serde_json::to_string(&allowed_path).unwrap();
+        assert_eq!(serialized, r#""/tmp""#);
+    }
+
+    #[test]
+    fn test_allowed_path_serialization_mapped_unix() {
+        // Test serialization with different host and plugin paths on Unix
+        #[cfg(not(windows))]
+        {
+            let allowed_path = AllowedPath {
+                host: Utf8PathBuf::from("/host/path"),
+                plugin: Utf8PathBuf::from("/plugin/path"),
+            };
+
+            let serialized = serde_json::to_string(&allowed_path).unwrap();
+            assert_eq!(serialized, r#""/host/path:/plugin/path""#);
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_serialization_mapped_windows() {
+        // Test serialization with different host and plugin paths on Windows
+        #[cfg(windows)]
+        {
+            let allowed_path = AllowedPath {
+                host: Utf8PathBuf::from("C:\\host\\path"),
+                plugin: Utf8PathBuf::from("C:\\plugin\\path"),
+            };
+
+            let serialized = serde_json::to_string(&allowed_path).unwrap();
+            assert_eq!(serialized, r#""C:\host\path;C:\plugin\path""#);
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_roundtrip_single() {
+        // Test that serialization and deserialization round-trip correctly for single path
+        let original = AllowedPath {
+            host: Utf8PathBuf::from("/tmp"),
+            plugin: Utf8PathBuf::from("/tmp"),
+        };
+
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: AllowedPath = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(original.host, deserialized.host);
+        assert_eq!(original.plugin, deserialized.plugin);
+    }
+
+    #[test]
+    fn test_allowed_path_roundtrip_mapped() {
+        // Test that serialization and deserialization round-trip correctly for mapped paths
+        #[cfg(not(windows))]
+        {
+            let original = AllowedPath {
+                host: Utf8PathBuf::from("/host/path"),
+                plugin: Utf8PathBuf::from("/plugin/path"),
+            };
+
+            let serialized = serde_json::to_string(&original).unwrap();
+            let deserialized: AllowedPath = serde_json::from_str(&serialized).unwrap();
+
+            assert_eq!(original.host, deserialized.host);
+            assert_eq!(original.plugin, deserialized.plugin);
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_in_runtime_config_yaml() {
+        // Test allowed_paths in RuntimeConfig via YAML
+        let yaml = r#"
+allowed_paths:
+  - "/tmp"
+  - "/var/log:/plugin/logs"
+  - "/home/user/data"
+"#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let allowed_paths = runtime_config.allowed_paths.unwrap();
+
+        assert_eq!(allowed_paths.len(), 3);
+        assert_eq!(allowed_paths[0].host.as_str(), "/tmp");
+        assert_eq!(allowed_paths[0].plugin.as_str(), "/tmp");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(allowed_paths[1].plugin.as_str(), "/plugin/logs");
+        }
+
+        assert_eq!(allowed_paths[2].host.as_str(), "/home/user/data");
+        assert_eq!(allowed_paths[2].plugin.as_str(), "/home/user/data");
+    }
+
+    #[test]
+    fn test_allowed_path_in_runtime_config_json() {
+        // Test allowed_paths in RuntimeConfig via JSON
+        let json = r#"
+{
+  "allowed_paths": [
+    "/tmp",
+    "/var/log:/plugin/logs"
+  ]
+}
+"#;
+
+        let runtime_config: RuntimeConfig = serde_json::from_str(json).unwrap();
+        let allowed_paths = runtime_config.allowed_paths.unwrap();
+
+        assert_eq!(allowed_paths.len(), 2);
+        assert_eq!(allowed_paths[0].host.as_str(), "/tmp");
+        assert_eq!(allowed_paths[0].plugin.as_str(), "/tmp");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(allowed_paths[1].plugin.as_str(), "/plugin/logs");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_multiple_colons() {
+        // Test that only the first separator is used (for paths containing colons)
+        #[cfg(not(windows))]
+        {
+            let json = r#""/host/path:/plugin/path:with:colons""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "/host/path");
+            assert_eq!(allowed_path.plugin.as_str(), "/plugin/path:with:colons");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_relative_paths() {
+        // Test that relative paths work
+        let json = r#""./relative/path""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "./relative/path");
+        assert_eq!(allowed_path.plugin.as_str(), "./relative/path");
+    }
+
+    #[test]
+    fn test_allowed_path_relative_mapped() {
+        // Test relative paths with mapping
+        #[cfg(not(windows))]
+        {
+            let json = r#""./host/path:../plugin/path""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "./host/path");
+            assert_eq!(allowed_path.plugin.as_str(), "../plugin/path");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_complex_paths() {
+        // Test complex paths with special characters
+        #[cfg(not(windows))]
+        {
+            let json = r#""/path/with spaces:/plugin/path-with_underscores""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "/path/with spaces");
+            assert_eq!(
+                allowed_path.plugin.as_str(),
+                "/plugin/path-with_underscores"
+            );
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_yaml_list() {
+        // Test a list of allowed_paths in YAML with various formats
+        let yaml = r#"
+- "/tmp"
+- "/var/log:/plugin/logs"
+- "/home/user"
+- "./relative/path:../other/path"
+"#;
+
+        let allowed_paths: Vec<AllowedPath> = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(allowed_paths.len(), 4);
+
+        assert_eq!(allowed_paths[0].host.as_str(), "/tmp");
+        assert_eq!(allowed_paths[0].plugin.as_str(), "/tmp");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(allowed_paths[1].plugin.as_str(), "/plugin/logs");
+
+            assert_eq!(allowed_paths[3].host.as_str(), "./relative/path");
+            assert_eq!(allowed_paths[3].plugin.as_str(), "../other/path");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_windows_drive_letters() {
+        // Test Windows-style paths with drive letters
+        #[cfg(windows)]
+        {
+            let json = r#""C:\\Users\\test""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "C:\\Users\\test");
+            assert_eq!(allowed_path.plugin.as_str(), "C:\\Users\\test");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_windows_mapped_drives() {
+        // Test Windows-style mapped paths between different drives
+        #[cfg(windows)]
+        {
+            let json = r#""C:\\host\\path;D:\\plugin\\path""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "C:\\host\\path");
+            assert_eq!(allowed_path.plugin.as_str(), "D:\\plugin\\path");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_empty_after_whitespace_trim() {
+        // Test that whitespace-only plugin path after separator uses host path
+        #[cfg(not(windows))]
+        {
+            let json = r#""/tmp:   ""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "/tmp");
+            assert_eq!(allowed_path.plugin.as_str(), "/tmp");
+        }
+    }
+
+    #[test]
+    fn test_runtime_config_allowed_paths_serialization_roundtrip() {
+        // Test that RuntimeConfig with allowed_paths survives serialization roundtrip
+        #[cfg(not(windows))]
+        {
+            let original = RuntimeConfig {
+                skip_prompts: None,
+                skip_resource_templates: None,
+                skip_resources: None,
+                skip_tools: None,
+                allowed_hosts: None,
+                allowed_paths: Some(vec![
+                    AllowedPath {
+                        host: Utf8PathBuf::from("/tmp"),
+                        plugin: Utf8PathBuf::from("/tmp"),
+                    },
+                    AllowedPath {
+                        host: Utf8PathBuf::from("/var/log"),
+                        plugin: Utf8PathBuf::from("/plugin/logs"),
+                    },
+                ]),
+                env_vars: None,
+                memory_limit: None,
+            };
+
+            let serialized = serde_json::to_string(&original).unwrap();
+            let deserialized: RuntimeConfig = serde_json::from_str(&serialized).unwrap();
+
+            let original_paths = original.allowed_paths.unwrap();
+            let deserialized_paths = deserialized.allowed_paths.unwrap();
+
+            assert_eq!(original_paths.len(), deserialized_paths.len());
+            assert_eq!(original_paths[0].host, deserialized_paths[0].host);
+            assert_eq!(original_paths[0].plugin, deserialized_paths[0].plugin);
+            assert_eq!(original_paths[1].host, deserialized_paths[1].host);
+            assert_eq!(original_paths[1].plugin, deserialized_paths[1].plugin);
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_unc_paths_windows() {
+        // Test Windows UNC paths (\\server\share format)
+        #[cfg(windows)]
+        {
+            let json = r#""\\\\server\\share""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "\\\\server\\share");
+            assert_eq!(allowed_path.plugin.as_str(), "\\\\server\\share");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_unc_mapped_windows() {
+        // Test Windows UNC paths with mapping
+        #[cfg(windows)]
+        {
+            let json = r#""\\\\server\\share;C:\\local\\path""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "\\\\server\\share");
+            assert_eq!(allowed_path.plugin.as_str(), "C:\\local\\path");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_very_long_path() {
+        // Test very long paths (simulating deep directory structures)
+        let long_path = "/very/long/path/that/goes/on/and/on/through/many/directories/to/test/path/handling/with/extremely/deep/nesting/levels/in/the/filesystem/hierarchy";
+        let json = format!(r#""{}""#, long_path);
+        let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), long_path);
+        assert_eq!(allowed_path.plugin.as_str(), long_path);
+    }
+
+    #[test]
+    fn test_allowed_path_very_long_mapped() {
+        // Test very long mapped paths
+        #[cfg(not(windows))]
+        {
+            let long_host = "/very/long/host/path/with/many/directories/and/subdirectories";
+            let long_plugin = "/equally/long/plugin/path/with/different/directory/structure";
+            let json = format!(r#""{}:{}""#, long_host, long_plugin);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), long_host);
+            assert_eq!(allowed_path.plugin.as_str(), long_plugin);
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_root_directory() {
+        // Test single root directory
+        let json = r#""/""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "/");
+        assert_eq!(allowed_path.plugin.as_str(), "/");
+    }
+
+    #[test]
+    fn test_allowed_path_current_directory() {
+        // Test current directory notation
+        let json = r#"".""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), ".");
+        assert_eq!(allowed_path.plugin.as_str(), ".");
+    }
+
+    #[test]
+    fn test_allowed_path_parent_directory() {
+        // Test parent directory notation
+        let json = r#""..""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "..");
+        assert_eq!(allowed_path.plugin.as_str(), "..");
+    }
+
+    #[test]
+    fn test_allowed_path_tilde_home() {
+        // Test tilde (home directory) paths
+        let json = r#""~/Documents""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "~/Documents");
+        assert_eq!(allowed_path.plugin.as_str(), "~/Documents");
+    }
+
+    #[test]
+    fn test_allowed_path_tilde_mapped() {
+        // Test tilde paths with mapping
+        #[cfg(not(windows))]
+        {
+            let json = r#""~/host/path:~/plugin/path""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "~/host/path");
+            assert_eq!(allowed_path.plugin.as_str(), "~/plugin/path");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_unicode_characters() {
+        // Test paths with Unicode characters
+        let json = r#""/path/with/日本語/characters""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "/path/with/日本語/characters");
+        assert_eq!(allowed_path.plugin.as_str(), "/path/with/日本語/characters");
+    }
+
+    #[test]
+    fn test_allowed_path_unicode_mapped() {
+        // Test Unicode paths with mapping
+        #[cfg(not(windows))]
+        {
+            let json = r#""/café/münster:/plugin/データ""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "/café/münster");
+            assert_eq!(allowed_path.plugin.as_str(), "/plugin/データ");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_symlink_notation() {
+        // Test paths that might represent symlinks
+        let json = r#""/usr/local/bin""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "/usr/local/bin");
+        assert_eq!(allowed_path.plugin.as_str(), "/usr/local/bin");
+    }
+
+    #[test]
+    fn test_allowed_path_trailing_slash() {
+        // Test path with trailing slash
+        let json = r#""/path/with/trailing/""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "/path/with/trailing/");
+        assert_eq!(allowed_path.plugin.as_str(), "/path/with/trailing/");
+    }
+
+    #[test]
+    fn test_allowed_path_trailing_slash_mapped() {
+        // Test mapped paths with trailing slashes
+        #[cfg(not(windows))]
+        {
+            let json = r#""/host/path/:/plugin/path/""#;
+            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), "/host/path/");
+            assert_eq!(allowed_path.plugin.as_str(), "/plugin/path/");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_numeric_directories() {
+        // Test paths with numeric directory names
+        let json = r#""/var/log/2024/01/15""#;
+        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), "/var/log/2024/01/15");
+        assert_eq!(allowed_path.plugin.as_str(), "/var/log/2024/01/15");
+    }
+
+    #[test]
+    fn test_allowed_paths_examples_integration() {
+        let rt = Runtime::new().unwrap();
+
+        // Load the allowed_paths examples config
+        let path = Path::new("tests/fixtures/allowed_paths_examples.yaml");
+        let cli = Cli {
+            config_file: Some(path.to_path_buf()),
+            ..Default::default()
+        };
+
+        let config_result = rt.block_on(load_config(&cli));
+        assert!(
+            config_result.is_ok(),
+            "Failed to load allowed_paths examples config"
+        );
+
+        let config = config_result.unwrap();
+        assert_eq!(
+            config.plugins.len(),
+            13,
+            "Expected 13 plugins in the config"
+        );
+
+        // Test single_paths_plugin
+        let single_plugin = &config.plugins[&PluginName("single_paths_plugin".to_string())];
+        let single_paths = single_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(single_paths.len(), 3);
+        assert_eq!(single_paths[0].host.as_str(), "/tmp");
+        assert_eq!(single_paths[0].plugin.as_str(), "/tmp");
+        assert_eq!(single_paths[1].host.as_str(), "/var/log");
+        assert_eq!(single_paths[1].plugin.as_str(), "/var/log");
+        assert_eq!(single_paths[2].host.as_str(), "/home/user/data");
+        assert_eq!(single_paths[2].plugin.as_str(), "/home/user/data");
+
+        // Test mapped_paths_plugin
+        let mapped_plugin = &config.plugins[&PluginName("mapped_paths_plugin".to_string())];
+        let mapped_paths = mapped_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(mapped_paths.len(), 3);
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(mapped_paths[0].host.as_str(), "/host/tmp");
+            assert_eq!(mapped_paths[0].plugin.as_str(), "/plugin/tmp");
+            assert_eq!(mapped_paths[1].host.as_str(), "/var/log");
+            assert_eq!(mapped_paths[1].plugin.as_str(), "/plugin/logs");
+            assert_eq!(mapped_paths[2].host.as_str(), "/home/user/data");
+            assert_eq!(mapped_paths[2].plugin.as_str(), "/plugin/user/data");
+        }
+
+        // Test mixed_paths_plugin
+        let mixed_plugin = &config.plugins[&PluginName("mixed_paths_plugin".to_string())];
+        let mixed_paths = mixed_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(mixed_paths.len(), 4);
+        assert_eq!(mixed_paths[0].host.as_str(), "/tmp");
+        assert_eq!(mixed_paths[0].plugin.as_str(), "/tmp");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(mixed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(mixed_paths[1].plugin.as_str(), "/plugin/logs");
+            assert_eq!(mixed_paths[3].host.as_str(), "/opt/app");
+            assert_eq!(mixed_paths[3].plugin.as_str(), "/plugin/app");
+        }
+
+        assert_eq!(mixed_paths[2].host.as_str(), "/home/user");
+        assert_eq!(mixed_paths[2].plugin.as_str(), "/home/user");
+
+        // Test relative_paths_plugin
+        let relative_plugin = &config.plugins[&PluginName("relative_paths_plugin".to_string())];
+        let relative_paths = relative_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(relative_paths.len(), 3);
+        assert_eq!(relative_paths[0].host.as_str(), "./local/data");
+        assert_eq!(relative_paths[0].plugin.as_str(), "./local/data");
+        assert_eq!(relative_paths[1].host.as_str(), "../shared/files");
+        assert_eq!(relative_paths[1].plugin.as_str(), "../shared/files");
+        assert_eq!(relative_paths[2].host.as_str(), "relative/path");
+        assert_eq!(relative_paths[2].plugin.as_str(), "relative/path");
+
+        // Test mapped_relative_plugin
+        let mapped_relative = &config.plugins[&PluginName("mapped_relative_plugin".to_string())];
+        let mapped_rel_paths = mapped_relative
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(mapped_rel_paths.len(), 3);
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(mapped_rel_paths[0].host.as_str(), "./host/data");
+            assert_eq!(mapped_rel_paths[0].plugin.as_str(), "./plugin/data");
+            assert_eq!(mapped_rel_paths[1].host.as_str(), "../shared");
+            assert_eq!(mapped_rel_paths[1].plugin.as_str(), "/plugin/shared");
+            assert_eq!(mapped_rel_paths[2].host.as_str(), "local");
+            assert_eq!(mapped_rel_paths[2].plugin.as_str(), "remote");
+        }
+
+        // Test paths_with_spaces_plugin
+        let spaces_plugin = &config.plugins[&PluginName("paths_with_spaces_plugin".to_string())];
+        let spaces_paths = spaces_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(spaces_paths.len(), 3);
+        assert_eq!(spaces_paths[0].host.as_str(), "/path/with spaces");
+        assert_eq!(spaces_paths[0].plugin.as_str(), "/path/with spaces");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(spaces_paths[1].host.as_str(), "/host/path with spaces");
+            assert_eq!(spaces_paths[1].plugin.as_str(), "/plugin/path with spaces");
+        }
+
+        assert_eq!(spaces_paths[2].host.as_str(), "/my documents");
+        assert_eq!(spaces_paths[2].plugin.as_str(), "/my documents");
+
+        // Test special_chars_plugin
+        let special_plugin = &config.plugins[&PluginName("special_chars_plugin".to_string())];
+        let special_paths = special_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(special_paths.len(), 4);
+        assert_eq!(special_paths[0].host.as_str(), "/path/with-dashes");
+        assert_eq!(special_paths[0].plugin.as_str(), "/path/with-dashes");
+        assert_eq!(special_paths[1].host.as_str(), "/path_with_underscores");
+        assert_eq!(special_paths[1].plugin.as_str(), "/path_with_underscores");
+        assert_eq!(special_paths[2].host.as_str(), "/path.with.dots");
+        assert_eq!(special_paths[2].plugin.as_str(), "/path.with.dots");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(special_paths[3].host.as_str(), "/path/with-special");
+            assert_eq!(special_paths[3].plugin.as_str(), "/plugin/with_underscores");
+        }
+
+        // Test empty_paths_plugin
+        let empty_plugin = &config.plugins[&PluginName("empty_paths_plugin".to_string())];
+        let empty_paths = empty_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(empty_paths.len(), 0);
+
+        // Test no_paths_plugin
+        let no_paths_plugin = &config.plugins[&PluginName("no_paths_plugin".to_string())];
+        assert!(
+            no_paths_plugin
+                .runtime_config
+                .as_ref()
+                .unwrap()
+                .allowed_paths
+                .is_none()
+        );
+
+        // Test full_config_plugin has all components
+        let full_plugin = &config.plugins[&PluginName("full_config_plugin".to_string())];
+        let full_runtime = full_plugin.runtime_config.as_ref().unwrap();
+        let full_skip_tools = full_runtime.skip_tools.as_ref().unwrap();
+        assert!(full_skip_tools.is_match("admin_tool"));
+        assert!(full_skip_tools.is_match("tool_dangerous"));
+        assert!(!full_skip_tools.is_match("safe_tool"));
+        assert_eq!(full_runtime.allowed_hosts.as_ref().unwrap().len(), 2);
+        assert_eq!(full_runtime.allowed_paths.as_ref().unwrap().len(), 4);
+
+        let full_paths = full_runtime.allowed_paths.as_ref().unwrap();
+        assert_eq!(full_paths[0].host.as_str(), "/tmp");
+        assert_eq!(full_paths[0].plugin.as_str(), "/tmp");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(full_paths[1].host.as_str(), "/var/log");
+            assert_eq!(full_paths[1].plugin.as_str(), "/plugin/logs");
+            assert_eq!(full_paths[3].host.as_str(), "/opt/app");
+            assert_eq!(full_paths[3].plugin.as_str(), "/plugin/app");
+        }
+
+        assert_eq!(full_paths[2].host.as_str(), "/home/user/data");
+        assert_eq!(full_paths[2].plugin.as_str(), "/home/user/data");
+        assert_eq!(full_runtime.env_vars.as_ref().unwrap().len(), 3);
+        assert_eq!(full_runtime.memory_limit.as_ref().unwrap(), "4GB");
+
+        // Test nested_paths_plugin
+        let nested_plugin = &config.plugins[&PluginName("nested_paths_plugin".to_string())];
+        let nested_paths = nested_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(nested_paths.len(), 3);
+        assert_eq!(
+            nested_paths[0].host.as_str(),
+            "/very/deeply/nested/path/structure"
+        );
+        assert_eq!(
+            nested_paths[0].plugin.as_str(),
+            "/very/deeply/nested/path/structure"
+        );
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(nested_paths[1].host.as_str(), "/another/deep/path");
+            assert_eq!(nested_paths[1].plugin.as_str(), "/plugin/deep/path");
+        }
+
+        assert_eq!(nested_paths[2].host.as_str(), "/a/b/c/d/e/f/g");
+        assert_eq!(nested_paths[2].plugin.as_str(), "/a/b/c/d/e/f/g");
+
+        // Test multi_mapping_plugin
+        let multi_plugin = &config.plugins[&PluginName("multi_mapping_plugin".to_string())];
+        let multi_paths = multi_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(multi_paths.len(), 4);
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(multi_paths[0].host.as_str(), "/usr/local/share");
+            assert_eq!(multi_paths[0].plugin.as_str(), "/plugin/shared");
+            assert_eq!(multi_paths[1].host.as_str(), "/etc/config");
+            assert_eq!(multi_paths[1].plugin.as_str(), "/plugin/config");
+            assert_eq!(multi_paths[2].host.as_str(), "/var/lib/data");
+            assert_eq!(multi_paths[2].plugin.as_str(), "/plugin/data");
+            assert_eq!(multi_paths[3].host.as_str(), "/home/user/.config");
+            assert_eq!(multi_paths[3].plugin.as_str(), "/plugin/user/config");
+        }
+
+        // Test root_user_paths_plugin
+        let root_plugin = &config.plugins[&PluginName("root_user_paths_plugin".to_string())];
+        let root_paths = root_plugin
+            .runtime_config
+            .as_ref()
+            .unwrap()
+            .allowed_paths
+            .as_ref()
+            .unwrap();
+        assert_eq!(root_paths.len(), 5);
+        assert_eq!(root_paths[0].host.as_str(), "/");
+        assert_eq!(root_paths[0].plugin.as_str(), "/");
+        assert_eq!(root_paths[1].host.as_str(), "/root");
+        assert_eq!(root_paths[1].plugin.as_str(), "/root");
+        assert_eq!(root_paths[2].host.as_str(), "/home");
+        assert_eq!(root_paths[2].plugin.as_str(), "/home");
+        assert_eq!(root_paths[3].host.as_str(), "/usr");
+        assert_eq!(root_paths[3].plugin.as_str(), "/usr");
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(root_paths[4].host.as_str(), "/var");
+            assert_eq!(root_paths[4].plugin.as_str(), "/plugin/var");
+        }
     }
 }

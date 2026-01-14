@@ -14,46 +14,46 @@ plugins:
     url: "https://example.com/wildcard_plugin"
     runtime_config:
       skip_tools:
-        - "temp_.*"       # Skip any tool starting with "temp_"
-        - ".*_backup"     # Skip any tool ending with "_backup"
-        - "debug.*"       # Skip any tool starting with "debug"
+        - "temp_.*" # Skip any tool starting with "temp_"
+        - ".*_backup" # Skip any tool ending with "_backup"
+        - "debug.*" # Skip any tool starting with "debug"
 
   # Plugin with complex regex patterns
   regex_plugin:
     url: "http://localhost:3000/regex_plugin"
     runtime_config:
       skip_tools:
-        - "tool_[0-9]+"           # Skip tools like "tool_1", "tool_42"
+        - "tool_[0-9]+" # Skip tools like "tool_1", "tool_42"
         - "test_(unit|integration)" # Skip "test_unit" and "test_integration"
-        - "[a-z]+_helper"         # Skip lowercase word followed by "_helper"
+        - "[a-z]+_helper" # Skip lowercase word followed by "_helper"
 
   # Plugin with anchored patterns (already have anchors)
   anchored_plugin:
     url: "file:///path/to/anchored_plugin"
     runtime_config:
       skip_tools:
-        - "^system_.*"    # Explicit start anchor
-        - ".*_internal$"  # Explicit end anchor
-        - "^exact_only$"  # Fully anchored
+        - "^system_.*" # Explicit start anchor
+        - ".*_internal$" # Explicit end anchor
+        - "^exact_only$" # Fully anchored
 
   # Plugin with case-sensitive patterns
   case_sensitive_plugin:
     url: "https://api.example.com/case_plugin"
     runtime_config:
       skip_tools:
-        - "Tool"          # Only matches "Tool", not "tool" or "TOOL"
-        - "DEBUG_.*"      # Only matches uppercase DEBUG prefix
-        - "CamelCase.*"   # Matches tools starting with "CamelCase"
+        - "Tool" # Only matches "Tool", not "tool" or "TOOL"
+        - "DEBUG_.*" # Only matches uppercase DEBUG prefix
+        - "CamelCase.*" # Matches tools starting with "CamelCase"
 
   # Plugin with special regex characters escaped
   special_chars_plugin:
     url: "file:///path/to/special_plugin"
     runtime_config:
       skip_tools:
-        - "file\\.exe"    # Matches "file.exe" literally
-        - "script\\?"     # Matches "script?" literally
-        - "temp\\*data"   # Matches "temp*data" literally
-        - "path\\\\tool"  # Matches "path\tool" literally
+        - "file\\.exe" # Matches "file.exe" literally
+        - "script\\?" # Matches "script?" literally
+        - "temp\\*data" # Matches "temp*data" literally
+        - "path\\\\tool" # Matches "path\tool" literally
 
   # Plugin with empty skip_tools (skip nothing)
   empty_skip_plugin:
@@ -84,7 +84,8 @@ plugins:
         - "cdn.example.com"
       allowed_paths:
         - "/tmp"
-        - "/var/app/data"
+        - "/var/log:/plugin/logs"
+        - "/home/user/data"
       env_vars:
         ENVIRONMENT: "test"
         LOG_LEVEL: "debug"
@@ -95,8 +96,8 @@ plugins:
     url: "file:///path/to/common_plugin"
     runtime_config:
       skip_tools:
-        - ".*_test"       # Skip all test tools
-        - "dev_.*"        # Skip all development tools
-        - "mock_.*"       # Skip all mock tools
-        - "stub_.*"       # Skip all stub tools
+        - ".*_test" # Skip all test tools
+        - "dev_.*" # Skip all development tools
+        - "mock_.*" # Skip all mock tools
+        - "stub_.*" # Skip all stub tools
         - ".*_deprecated" # Skip all deprecated tools
