@@ -585,6 +585,7 @@ impl ServerHandler for PluginService {
         let request = CallToolRequestParam {
             name: std::borrow::Cow::Owned(tool_name.clone()),
             arguments: request.arguments,
+            task: request.task,
         };
 
         let Some(plugins) = self.plugins.get() else {
@@ -1667,6 +1668,7 @@ plugins:
         let request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("invalid_tool_name"),
             arguments: None,
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -1685,6 +1687,7 @@ plugins:
         let request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed(""),
             arguments: None,
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -1704,6 +1707,7 @@ plugins:
         let request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("nonexistent_plugin-some_tool"),
             arguments: None,
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -1765,6 +1769,7 @@ plugins:
                 );
                 map
             }),
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -1796,6 +1801,7 @@ plugins:
                 );
                 map
             }),
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -1862,6 +1868,7 @@ plugins:
                 );
                 map
             }),
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -2006,6 +2013,7 @@ plugins:
                 );
                 map
             }),
+            task: None,
         };
 
         // Cancel the token before executing call_tool to force cancellation path
@@ -2184,6 +2192,7 @@ plugins:
         let add_tool_request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(serde_json::Map::new()),
+            task: None,
         };
 
         let result = server
@@ -2254,6 +2263,7 @@ plugins:
             let add_tool_request = CallToolRequestParam {
                 name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
                 arguments: Some(serde_json::Map::new()),
+                task: None,
             };
 
             let result = server.service().call_tool(add_tool_request, ctx).await;
@@ -2328,6 +2338,7 @@ plugins:
         let add_tool_request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(serde_json::Map::new()),
+            task: None,
         };
 
         let result = server.service().call_tool(add_tool_request, ctx).await;
@@ -2338,6 +2349,7 @@ plugins:
         let tool_request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-tool_1"),
             arguments: Some(serde_json::Map::new()),
+            task: None,
         };
 
         let result = server.service().call_tool(tool_request, ctx2).await;
@@ -2386,6 +2398,7 @@ plugins:
         let add_tool_request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(serde_json::Map::new()),
+            task: None,
         };
 
         let result = server.service().call_tool(add_tool_request, ctx).await;
@@ -2442,6 +2455,7 @@ plugins:
             let add_tool_request = CallToolRequestParam {
                 name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
                 arguments: Some(serde_json::Map::new()),
+                task: None,
             };
 
             let result = server.service().call_tool(add_tool_request, ctx).await;
@@ -2497,6 +2511,7 @@ plugins:
         let invalid_tool_request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-tool_5"),
             arguments: Some(serde_json::Map::new()),
+            task: None,
         };
 
         let result = server.service().call_tool(invalid_tool_request, ctx).await;
@@ -2557,6 +2572,7 @@ plugins:
         let add_tool_request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(args),
+            task: None,
         };
 
         let result = server.service().call_tool(add_tool_request, ctx).await;
@@ -2622,6 +2638,7 @@ plugins:
         let add_tool_request = CallToolRequestParam {
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(serde_json::Map::new()),
+            task: None,
         };
         let _ = server.service().call_tool(add_tool_request, ctx).await;
 
@@ -2683,6 +2700,7 @@ plugins:
             let add_tool_request = CallToolRequestParam {
                 name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
                 arguments: Some(serde_json::Map::new()),
+                task: None,
             };
             let _ = server.service().call_tool(add_tool_request, ctx).await;
         }
@@ -3042,6 +3060,7 @@ plugins:
         let request = CallToolRequestParam {
             name: std::borrow::Cow::Owned("rstime-get_time".to_string()),
             arguments: None,
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -3116,6 +3135,7 @@ plugins:
         let request = CallToolRequestParam {
             name: std::borrow::Cow::Owned("rstime-get_time".to_string()),
             arguments: Some(args),
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -3177,6 +3197,7 @@ plugins:
         let request = CallToolRequestParam {
             name: std::borrow::Cow::Owned("rstime-parse_time".to_string()),
             arguments: Some(args),
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
@@ -3251,6 +3272,7 @@ plugins:
         let request = CallToolRequestParam {
             name: std::borrow::Cow::Owned("rstime-parse_time".to_string()),
             arguments: Some(args),
+            task: None,
         };
 
         let ctx = create_test_ctx(&server);
