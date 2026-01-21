@@ -2,7 +2,7 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{convert::TryFrom, fmt, str::FromStr};
+use std::{collections::HashSet, convert::TryFrom, fmt, str::FromStr};
 use url::Url;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -19,8 +19,54 @@ impl fmt::Display for PluginNameParseError {
 
 impl std::error::Error for PluginNameParseError {}
 
+#[derive(Clone, Debug)]
+pub struct PluginNameReservedError;
+
+impl fmt::Display for PluginNameReservedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Plugin name is reserved")
+    }
+}
+
+impl std::error::Error for PluginNameReservedError {}
+
+#[derive(Clone, Debug)]
+pub enum PluginNameError {
+    ParseError(PluginNameParseError),
+    ReservedError(PluginNameReservedError),
+}
+
+impl fmt::Display for PluginNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PluginNameError::ParseError(e) => write!(f, "{}", e),
+            PluginNameError::ReservedError(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for PluginNameError {}
+
+impl From<PluginNameParseError> for PluginNameError {
+    fn from(err: PluginNameParseError) -> Self {
+        PluginNameError::ParseError(err)
+    }
+}
+
+impl From<PluginNameReservedError> for PluginNameError {
+    fn from(err: PluginNameReservedError) -> Self {
+        PluginNameError::ReservedError(err)
+    }
+}
+
 static PLUGIN_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^[A-Za-z0-9]+(?:[_][A-Za-z0-9]+)*$").expect("Failed to compile plugin name regex")
+});
+
+static RESERVED_PLUGIN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    let mut set = HashSet::new();
+    set.insert("hyper_mcp");
+    set
 });
 
 impl PluginName {
@@ -41,19 +87,21 @@ impl<'de> Deserialize<'de> for PluginName {
 }
 
 impl TryFrom<&str> for PluginName {
-    type Error = PluginNameParseError;
+    type Error = PluginNameError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        if PLUGIN_NAME_REGEX.is_match(value) {
+        if RESERVED_PLUGIN_NAMES.contains(value) {
+            Err(PluginNameReservedError.into())
+        } else if PLUGIN_NAME_REGEX.is_match(value) {
             Ok(PluginName(value.to_owned()))
         } else {
-            Err(PluginNameParseError)
+            Err(PluginNameParseError.into())
         }
     }
 }
 
 impl TryFrom<String> for PluginName {
-    type Error = PluginNameParseError;
+    type Error = PluginNameError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         PluginName::try_from(value.as_str())
@@ -61,7 +109,7 @@ impl TryFrom<String> for PluginName {
 }
 
 impl TryFrom<&String> for PluginName {
-    type Error = PluginNameParseError;
+    type Error = PluginNameError;
 
     fn try_from(value: &String) -> Result<Self, Self::Error> {
         PluginName::try_from(value.as_str())
@@ -69,7 +117,7 @@ impl TryFrom<&String> for PluginName {
 }
 
 impl FromStr for PluginName {
-    type Err = PluginNameParseError;
+    type Err = PluginNameError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         PluginName::try_from(s)
@@ -93,8 +141,8 @@ impl fmt::Display for NamespacedNameParseError {
 
 impl std::error::Error for NamespacedNameParseError {}
 
-impl From<PluginNameParseError> for NamespacedNameParseError {
-    fn from(_: PluginNameParseError) -> Self {
+impl From<PluginNameError> for NamespacedNameParseError {
+    fn from(_: PluginNameError) -> Self {
         NamespacedNameParseError
     }
 }
@@ -248,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_tool_name_parse_error_from_plugin_name_error() {
-        let plugin_error = PluginNameParseError;
+        let plugin_error = PluginNameError::ParseError(PluginNameParseError);
         let tool_error: NamespacedNameParseError = plugin_error.into();
         assert_eq!(format!("{tool_error}"), "Failed to parse name");
     }
@@ -289,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_plugin_name_error_conversion() {
-        let plugin_error = PluginNameParseError;
+        let plugin_error = PluginNameError::ParseError(PluginNameParseError);
         let tool_error: NamespacedNameParseError = plugin_error.into();
 
         // Test that the error implements standard error traits
@@ -803,6 +851,105 @@ mod tests {
         // Deserialize
         let deserialized: PluginName = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized, plugin_name);
+    }
+
+    #[test]
+    fn test_plugin_name_reserved_hyper_mcp() {
+        let result = PluginName::try_from("hyper_mcp");
+        assert!(result.is_err(), "Should reject reserved name 'hyper_mcp'");
+
+        match result {
+            Err(PluginNameError::ReservedError(_)) => {
+                // Expected error type
+            }
+            _ => panic!("Expected PluginNameError::ReservedError"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_name_reserved_error_display() {
+        let result = PluginName::try_from("hyper_mcp");
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let error_msg = format!("{}", err);
+        assert_eq!(error_msg, "Plugin name is reserved");
+    }
+
+    #[test]
+    fn test_plugin_name_reserved_vs_similar() {
+        // Reserved name should be rejected
+        assert!(PluginName::try_from("hyper_mcp").is_err());
+
+        // Similar but not reserved names should be accepted
+        assert!(PluginName::try_from("hyper").is_ok());
+        assert!(PluginName::try_from("mcp").is_ok());
+        assert!(PluginName::try_from("hyper_mcp_plugin").is_ok());
+        assert!(PluginName::try_from("my_hyper_mcp").is_ok());
+        assert!(PluginName::try_from("HYPER_MCP").is_ok()); // case sensitive
+    }
+
+    #[test]
+    fn test_plugin_name_reserved_from_str() {
+        // Test that FromStr also respects reserved names
+        let result = PluginName::from_str("hyper_mcp");
+        assert!(result.is_err());
+
+        match result {
+            Err(PluginNameError::ReservedError(_)) => {
+                // Expected error type
+            }
+            _ => panic!("Expected PluginNameError::ReservedError from FromStr"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_name_reserved_try_from_string() {
+        // Test TryFrom<String>
+        let name = String::from("hyper_mcp");
+        let result = PluginName::try_from(name);
+        assert!(result.is_err());
+
+        match result {
+            Err(PluginNameError::ReservedError(_)) => {
+                // Expected error type
+            }
+            _ => panic!("Expected PluginNameError::ReservedError from TryFrom<String>"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_name_reserved_deserialize() {
+        // Test that deserialization also respects reserved names
+        let json = r#""hyper_mcp""#;
+        let result: Result<PluginName, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "Deserialization should fail for reserved names"
+        );
+    }
+
+    #[test]
+    fn test_plugin_name_error_variants() {
+        // Test ParseError variant
+        let parse_error = PluginName::try_from("invalid-name");
+        assert!(parse_error.is_err());
+        match parse_error {
+            Err(PluginNameError::ParseError(_)) => {
+                // Expected
+            }
+            _ => panic!("Expected ParseError for invalid format"),
+        }
+
+        // Test ReservedError variant
+        let reserved_error = PluginName::try_from("hyper_mcp");
+        assert!(reserved_error.is_err());
+        match reserved_error {
+            Err(PluginNameError::ReservedError(_)) => {
+                // Expected
+            }
+            _ => panic!("Expected ReservedError for reserved name"),
+        }
     }
 
     #[test]
