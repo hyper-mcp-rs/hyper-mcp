@@ -1,4 +1,5 @@
-use crate::config::{OciConfig, PluginName};
+use crate::config::OciConfig;
+use crate::naming::PluginName;
 use anyhow::{Result, anyhow};
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use flate2::read::GzDecoder;
@@ -93,7 +94,7 @@ async fn setup_trust_repository(config: &OciConfig) -> Result<Box<dyn TrustRoot>
         // Use Sigstore TUF data from the official repository
         tracing::info!("Using Sigstore TUF data for verification");
         match SigstoreTrustRoot::new(None).await {
-            Ok(repo) => return Ok(Box::new(repo)),
+            Ok(repo) => return Ok(Box::new(repo) as Box<dyn TrustRoot>),
             Err(e) => {
                 tracing::error!("Failed to initialize TUF trust repository: {e}");
                 if !config.insecure_skip_signature {
@@ -107,7 +108,7 @@ async fn setup_trust_repository(config: &OciConfig) -> Result<Box<dyn TrustRoot>
     }
 
     // Create a manual trust repository
-    let mut data = ManualTrustRoot::default();
+    let mut data: ManualTrustRoot<'static> = ManualTrustRoot::default();
 
     // Add Rekor public keys if provided
     if let Some(rekor_keys_path) = &config.rekor_pub_keys {
@@ -152,7 +153,7 @@ async fn setup_trust_repository(config: &OciConfig) -> Result<Box<dyn TrustRoot>
         }
     }
 
-    Ok(Box::new(data))
+    Ok(Box::new(data) as Box<dyn TrustRoot>)
 }
 
 async fn verify_image_signature(config: &OciConfig, image_reference: &str) -> Result<bool> {

@@ -1,4 +1,4 @@
-use crate::config::PluginName;
+use crate::naming::PluginName;
 use async_trait::async_trait;
 use rmcp::{
     ErrorData as McpError,

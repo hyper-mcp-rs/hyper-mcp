@@ -1,7 +1,8 @@
 use crate::{
-    config::{Config, PluginName},
+    config::Config,
     naming::{
-        create_namespaced_name, create_namespaced_uri, parse_namespaced_name, parse_namespaced_uri,
+        PluginName, create_namespaced_name, create_namespaced_uri, parse_namespaced_name,
+        parse_namespaced_uri,
     },
     plugin::{Plugin, PluginV1, PluginV2},
     wasm,
