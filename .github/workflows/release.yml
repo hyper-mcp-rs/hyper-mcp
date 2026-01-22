@@ -51,24 +51,6 @@ jobs:
           docker push $hyper_mcp_image_arch
           cosign sign --yes $hyper_mcp_image_arch
 
-      - name: Build and push plugin images (on amd64 only)
-        if: matrix.arch == 'amd64'
-        run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          for plugin in examples/plugins/v{1,2}/*/; do
-            plugin_name=$(basename $plugin)
-            plugin_base_image="ghcr.io/${{ github.repository_owner }}/${plugin_name}-plugin"
-
-            echo "Building and tagging plugin: $plugin_name as $plugin_base_image:$TAG and $plugin_base_image:latest"
-            docker build -t $plugin_base_image:$TAG -t $plugin_base_image:latest $plugin
-
-            docker push $plugin_base_image:$TAG
-            docker push $plugin_base_image:latest
-
-            cosign sign --yes $plugin_base_image:$TAG
-            cosign sign --yes $plugin_base_image:latest
-          done
-
   create-multiarch-manifests:
     needs: build-oci-images
     runs-on: ubuntu-latest
@@ -182,7 +164,6 @@ jobs:
             Included:
             - hyper-mcp binaries for Linux & macOS
             - hyper-mcp container image: `ghcr.io/${{ github.repository_owner }}/hyper-mcp:${{ github.ref_name }}`
-            - Plugin images: `ghcr.io/${{ github.repository_owner }}/<plugin-name>-plugin:${{ github.ref_name }}`
 
             All container images are signed with Cosign. Verify with:
 

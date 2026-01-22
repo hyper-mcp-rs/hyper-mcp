@@ -53,22 +53,6 @@ jobs:
 
           cosign sign --yes $ghcr_image
 
-      # we dont need to build multi-arch plugin images as they are wasm32-wasip1
-      # so we can just build amd64 and push it to the registry
-      - name: Build and push plugin images
-        if: matrix.arch == 'amd64'
-        run: |
-          for plugin in examples/plugins/v{1,2}/*/; do
-            plugin_name=$(basename $plugin)
-            echo "Building plugin: $plugin_name"
-
-            image_name="ghcr.io/${{ github.repository_owner }}/${plugin_name}-plugin:nightly"
-            docker build -t $image_name $plugin
-            docker push $image_name
-
-            cosign sign --yes $image_name
-          done
-
   # do this before we build nightly binaries
   prepare-nightly-release:
     runs-on: ubuntu-latest
@@ -188,7 +172,6 @@ jobs:
             This release includes:
             - hyper-mcp binaries for Linux & macOS
             - hyper-mcp container image: `ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly`
-            - Plugin images: `ghcr.io/${{ github.repository_owner }}/<plugin-name>-plugin:nightly`
 
             All container images are signed with Cosign. Verify the image like this:
             ```bash
