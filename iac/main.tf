@@ -31,15 +31,15 @@ resource "google_secret_manager_secret_version" "hyper-mcp-config-version" {
   "plugins": [
     {
       "name": "time",
-      "path": "oci://ghcr.io/tuananh/time-plugin:latest"
+      "path": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
     },
     {
       "name": "qr-code",
-      "path": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
+      "path": "oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest"
     },
     {
       "name": "meme-generator",
-      "path": "oci://ghcr.io/tuananh/meme-generator-plugin:latest"
+      "path": "oci://ghcr.io/hyper-mcp-rs/meme-generator-plugin:latest"
     }
   ]
 }
@@ -61,7 +61,7 @@ resource "google_cloud_run_service" "my-app" {
     spec {
       service_account_name = google_service_account.my-app.email
       containers {
-        image = "tuananh/hyper-mcp:nightly"
+        image = "hyper-mcp-rs/hyper-mcp:nightly"
         args  = ["--transport", "streamable-http", "--bind-address", "0.0.0.0:3001", "--config-file", "/app/config.json"]
         resources {
           limits = {

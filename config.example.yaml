@@ -1,13 +1,13 @@
 ---
 plugins:
   time:
-    url: oci://ghcr.io/tuananh/time-plugin:latest
+    url: oci://ghcr.io/hyper-mcp-rs/time-plugin:latest
   qr-code:
-    url: oci://ghcr.io/tuananh/qrcode-plugin:latest
+    url: oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest
   hash:
-    url: oci://ghcr.io/tuananh/hash-plugin:latest
+    url: oci://ghcr.io/hyper-mcp-rs/hash-plugin:latest
   myip:
-    url: oci://ghcr.io/tuananh/myip-plugin:latest
+    url: oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest
     runtime_config:
       allowed_hosts:
         - "1.1.1.1"
@@ -15,7 +15,7 @@ plugins:
         - "debug_.*" # Skip all debug tools
         - ".*_test" # Skip all test tools
   fetch:
-    url: oci://ghcr.io/tuananh/fetch-plugin:latest
+    url: oci://ghcr.io/hyper-mcp-rs/fetch-plugin:latest
     runtime_config:
       allowed_hosts:
         - "*"

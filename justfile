@@ -24,7 +24,7 @@ renovate:
         -e RENOVATE_TOKEN=$(gh auth token) \
         -e LOG_LEVEL=info \
         -v "$(pwd)/.github/renovate.json5:/usr/src/app/config.json" \
-        renovate/renovate tuananh/hyper-mcp
+        renovate/renovate hyper-mcp-rs/hyper-mcp
 
 install:
     sudo install -Dm755 target/debug/hyper-mcp /usr/local/bin/hyper-mcp

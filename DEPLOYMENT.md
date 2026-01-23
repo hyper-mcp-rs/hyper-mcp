@@ -8,7 +8,7 @@ Assume you have Docker installed.
 Pull the image
 
 ```sh
-docker pull ghcr.io/tuananh/hyper-mcp:latest
+docker pull ghcr.io/hyper-mcp-rs/hyper-mcp:latest
 ```
 
 Create a sample config file like this, assume at `/home/ubuntu/config.json`
@@ -17,10 +17,10 @@ Create a sample config file like this, assume at `/home/ubuntu/config.json`
 {
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/tuananh/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
     },
     "qr_code": {
-      "url": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest"
     }
   }
 }
@@ -39,7 +39,7 @@ docker run -d \
     -p 3001:3001 \
     -v /home/ubuntu/config.json:/app/config.json \
     -v ~/.local/share/keyrings:/home/appuser/.local/share/keyrings:ro \
-    ghcr.io/tuananh/hyper-mcp \
+    ghcr.io/hyper-mcp-rs/hyper-mcp \
     --transport sse \
     --bind-address 0.0.0.0:3001 \
     --config-file /app/config.json
@@ -56,7 +56,7 @@ docker run -d \
     -p 3001:3001 \
     -v /home/ubuntu/config.json:/app/config.json \
     --secret registry_auth \
-    ghcr.io/tuananh/hyper-mcp \
+    ghcr.io/hyper-mcp-rs/hyper-mcp \
     --transport sse \
     --bind-address 0.0.0.0:3001 \
     --config-file /app/config.json
@@ -70,7 +70,7 @@ docker run -d \
     -v /home/ubuntu/config.json:/app/config.json \
     -e REGISTRY_USER="username" \
     -e REGISTRY_PASS="password" \
-    ghcr.io/tuananh/hyper-mcp \
+    ghcr.io/hyper-mcp-rs/hyper-mcp \
     --transport sse \
     --bind-address 0.0.0.0:3001 \
     --config-file /app/config.json
@@ -83,7 +83,7 @@ docker run -d \
     --name hyper-mcp \
     -p 3001:3001 \
     -v /home/ubuntu/config.json:/app/config.json \
-    ghcr.io/tuananh/hyper-mcp \
+    ghcr.io/hyper-mcp-rs/hyper-mcp \
     --transport sse \
     --bind-address 0.0.0.0:3001 \
     --config-file /app/config.json
@@ -116,10 +116,10 @@ The config file will be automatically created and managed by Terraform. Here's a
 {
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/tuananh/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
     },
     "qr_code": {
-      "url": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest"
     }
   }
 }
@@ -138,7 +138,7 @@ For production deployments with authentication, update the config to use Secret 
   },
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/tuananh/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
     },
     "private_plugin": {
       "url": "https://private.registry.example.com/secure-plugin:latest",

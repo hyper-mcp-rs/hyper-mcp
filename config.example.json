@@ -1,23 +1,23 @@
 {
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/tuananh/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
     },
     "qr-code": {
-      "url": "oci://ghcr.io/tuananh/qrcode-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest"
     },
     "hash": {
-      "url": "oci://ghcr.io/tuananh/hash-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/hash-plugin:latest"
     },
     "myip": {
-      "url": "oci://ghcr.io/tuananh/myip-plugin:latest",
+      "url": "oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"],
         "skip_tools": ["debug_.*", ".*_test"]
       }
     },
     "fetch": {
-      "url": "oci://ghcr.io/tuananh/fetch-plugin:latest",
+      "url": "oci://ghcr.io/hyper-mcp-rs/fetch-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["*"],
         "skip_tools": ["temp_.*", "mock_.*", "tool_[0-9]+"]

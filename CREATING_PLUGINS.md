@@ -6,7 +6,7 @@
 >
 > **[👉 Start with the Plugin Templates](./templates/plugins/README.md)**
 
-Check out our [example plugins](https://github.com/tuananh/hyper-mcp/tree/main/examples/plugins/v2) for insight.
+Check out our [example plugins](https://github.com/hyper-mcp-rs/hyper-mcp/tree/main/examples/plugins/v2) for insight.
 
 > Note: Prior versions of hyper-mcp used a different plugin interface (v1). While this plugin interface is still supported, new plugins should use the v2 interface.
 
@@ -89,6 +89,6 @@ docker push your-registry/plugin-name
 
 - **[📖 Plugin Templates Documentation](./templates/plugins/README.md)** - Comprehensive guide to using templates
 - **[🚀 Rust Plugin Template](./templates/plugins/rust/README.md)** - Complete Rust plugin setup and development guide
-- **[📚 Example Plugins](https://github.com/tuananh/hyper-mcp/tree/main/examples/plugins)** - Working examples to learn from
+- **[📚 Example Plugins](https://github.com/hyper-mcp-rs/hyper-mcp/tree/main/examples/plugins)** - Working examples to learn from
 - **[🔗 MCP Protocol Specification](https://spec.modelcontextprotocol.io/)** - Protocol details and specifications
 - **[⚙️ Extism Documentation](https://docs.extism.org/)** - Plugin runtime and PDK documentation

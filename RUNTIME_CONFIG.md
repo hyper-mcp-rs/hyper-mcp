@@ -334,9 +334,9 @@ auths:
 
 plugins:
   time:
-    url: oci://ghcr.io/tuananh/time-plugin:latest
+    url: oci://ghcr.io/hyper-mcp-rs/time-plugin:latest
   myip:
-    url: oci://ghcr.io/tuananh/myip-plugin:latest
+    url: oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest
     runtime_config:
       allowed_hosts:
         - "1.1.1.1"
@@ -382,10 +382,10 @@ plugins:
   },
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/tuananh/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
     },
     "myip": {
-      "url": "oci://ghcr.io/tuananh/myip-plugin:latest",
+      "url": "oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"],
         "allowed_paths": [

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:3001";
 
 #[derive(Parser, Clone)]
-#[command(author = "Tuan Anh Tran <me@tuananh.org>", version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
+#[command(author = "Joseph Wortmann <joseph.wortmann@gmail.com>", version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
 pub struct Cli {
     #[arg(short, long, value_name = "FILE")]
     pub config_file: Option<PathBuf>,

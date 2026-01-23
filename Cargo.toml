@@ -2,15 +2,15 @@
 name = "hyper-mcp"
 version = "0.1.8"
 edition = "2024"
-authors = ["Tuan Anh Tran <me@tuananh.org>"]
+authors = ["Tuan Anh Tran <me@tuananh.org>", "Joseph Wortmann <joseph.wortmann@gmail.com>"]
 description = " A fast, secure MCP server that extends its capabilities through WebAssembly plugins"
 keywords = ["rust", "ai", "mcp", "cli"]
 categories = ["command-line-utilities"]
 readme = "README.md"
 license = "Apache-2.0"
-repository = "https://github.com/tuananh/hyper-mcp"
-homepage = "https://github.com/tuananh/hyper-mcp"
-documentation = "https://github.com/tuananh/hyper-mcp"
+repository = "https://github.com/hyper-mcp-rs/hyper-mcp"
+homepage = "https://github.com/hyper-mcp-rs/hyper-mcp"
+documentation = "https://github.com/hyper-mcp-rs/hyper-mcp"
 
 [dependencies]
 anyhow = "1.0"

@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
-  "name": "io.github.tuananh/hyper-mcp",
+  "name": "io.github.hyper-mcp-rs/hyper-mcp",
   "description": "📦️ A fast, secure MCP server that extends its capabilities through WebAssembly plugins",
   "status": "active",
   "repository": {
-    "url": "https://github.com/tuananh/hyper-mcp",
+    "url": "https://github.com/hyper-mcp-rs/hyper-mcp",
     "source": "github"
   },
   "version": "1.0.0",
@@ -12,7 +12,7 @@
     {
       "registry_type": "oci",
       "registry_base_url": "https://docker.io",
-      "identifier": "tuananh/hyper-mcp",
+      "identifier": "hyper-mcp-rs/hyper-mcp",
       "version": "v0.1.6",
       "transport": {
         "type": "stdio"

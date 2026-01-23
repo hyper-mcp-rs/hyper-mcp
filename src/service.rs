@@ -701,7 +701,7 @@ impl ServerHandler for PluginService {
                 name: "hyper-mcp".to_string(),
                 title: Some("Hyper MCP".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                website_url: Some("https://github.com/tuananh/hyper-mcp".to_string()),
+                website_url: Some("https://github.com/hyper-mcp-rs/hyper-mcp".to_string()),
 
                 ..Default::default()
             },
@@ -1147,7 +1147,9 @@ mod tests {
     }
 
     fn create_test_cli() -> Cli {
-        crate::cli::Cli::default()
+        let mut cli = crate::cli::Cli::default();
+        cli.insecure_skip_signature = Some(true);
+        cli
     }
 
     fn create_test_ctx(
@@ -1198,46 +1200,31 @@ mod tests {
         .expect("Failed to create test pair")
     }
 
-    fn get_test_wasm_path() -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("examples");
-        path.push("plugins");
-        path.push("v1");
-        path.push("time");
-        path.push("time.wasm");
-        path
+    fn get_test_wasm_url() -> &'static str {
+        "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
     }
 
     fn test_wasm_exists() -> bool {
-        get_test_wasm_path().exists()
+        // Always return true for OCI URLs - they will be fetched at runtime
+        true
     }
 
-    fn get_tool_list_changed_wasm_path() -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("examples");
-        path.push("plugins");
-        path.push("v1");
-        path.push("tool-list-changed");
-        path.push("tool_list_changed.wasm");
-        path
+    fn get_tool_list_changed_wasm_url() -> &'static str {
+        "oci://ghcr.io/hyper-mcp-rs/tool-list-changed-plugin:latest"
     }
 
     fn test_tool_list_changed_wasm_exists() -> bool {
-        get_tool_list_changed_wasm_path().exists()
+        // Always return true for OCI URLs - they will be fetched at runtime
+        true
     }
 
-    fn get_rstime_wasm_path() -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("examples");
-        path.push("plugins");
-        path.push("v2");
-        path.push("rstime");
-        path.push("rstime.wasm");
-        path
+    fn get_rstime_wasm_url() -> &'static str {
+        "oci://ghcr.io/hyper-mcp-rs/rstime-plugin:latest"
     }
 
     fn test_rstime_wasm_exists() -> bool {
-        get_rstime_wasm_path().exists()
+        // Always return true for OCI URLs - they will be fetched at runtime
+        true
     }
 
     // Helper function to create a dummy request context for compilation
@@ -1269,9 +1256,9 @@ plugins: {}
 
     #[tokio::test]
     async fn test_plugin_service_creation_with_file_plugin() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -1279,13 +1266,13 @@ plugins: {}
             r#"
 plugins:
   time_plugin:
-    url: "file://{}"
+    url: "{}"
     runtime_config:
       memory_limit: "1MB"
       env_vars:
         TEST_MODE: "true"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -1326,9 +1313,9 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_creation_with_invalid_memory_limit() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -1336,11 +1323,11 @@ plugins:
             r#"
 plugins:
   time_plugin:
-    url: "file://{}"
+    url: "{}"
     runtime_config:
       memory_limit: "invalid_size"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -1379,7 +1366,7 @@ plugins:
         assert!(!info.server_info.version.is_empty());
         assert_eq!(
             info.server_info.website_url,
-            Some("https://github.com/tuananh/hyper-mcp".to_string())
+            Some("https://github.com/hyper-mcp-rs/hyper-mcp".to_string())
         );
 
         // With both flags false, both completions and logging should be enabled
@@ -1445,9 +1432,9 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_list_tools_with_plugin() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -1455,9 +1442,9 @@ plugins:
             r#"
 plugins:
   time_plugin:
-    url: "file://{}"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -1561,9 +1548,9 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_list_tools_with_skip_tools() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -1571,12 +1558,12 @@ plugins:
             r#"
 plugins:
   time_plugin:
-    url: "file://{}"
+    url: "{}"
     runtime_config:
       skip_tools:
         - "time"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -1729,9 +1716,9 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_call_tool_with_plugin() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -1739,9 +1726,9 @@ plugins:
             r#"
 plugins:
   time_plugin:
-    url: "file://{}"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -1825,9 +1812,9 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_call_tool_with_skipped_tool() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -1835,12 +1822,12 @@ plugins:
             r#"
 plugins:
   time_plugin:
-    url: "file://{}"
+    url: "{}"
     runtime_config:
       skip_tools:
         - "time"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -1924,9 +1911,9 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_multiple_plugins() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -1934,16 +1921,11 @@ plugins:
             r#"
 plugins:
   time_plugin_1:
-    url: "file://{}"
-    runtime_config:
-      memory_limit: "1MB"
+    url: "{}"
   time_plugin_2:
-    url: "file://{}"
-    runtime_config:
-      memory_limit: "2MB"
+    url: "{}"
 "#,
-            wasm_path.display(),
-            wasm_path.display()
+            wasm_url, wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -1963,9 +1945,9 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_call_tool_with_cancellation() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -1973,12 +1955,9 @@ plugins:
             r#"
 plugins:
   time_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.to_string_lossy()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2036,9 +2015,9 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_list_tools_with_cancellation() {
-        let wasm_path = get_test_wasm_path();
+        let wasm_url = get_test_wasm_url();
         if !test_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -2046,12 +2025,9 @@ plugins:
             r#"
 plugins:
   time_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2100,9 +2076,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_basic() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2110,12 +2086,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2153,9 +2126,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_triggers_on_add() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2163,12 +2136,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2229,9 +2199,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_multiple_additions() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2239,12 +2209,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2305,9 +2272,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_tool_callable_after_add() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2315,12 +2282,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2365,9 +2329,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_response_format() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2375,12 +2339,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2421,9 +2382,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_sequential_tool_numbers() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2431,12 +2392,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2478,9 +2436,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_invalid_tool_call() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2488,12 +2446,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2533,9 +2488,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_add_tool_failure_propagates() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2543,12 +2498,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2588,9 +2540,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_new_tools_appear_in_list() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2598,12 +2550,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2666,9 +2615,9 @@ plugins:
 
     #[tokio::test]
     async fn test_notify_tool_list_changed_tool_descriptions() {
-        let wasm_path = get_tool_list_changed_wasm_path();
+        let wasm_url = get_tool_list_changed_wasm_url();
         if !test_tool_list_changed_wasm_exists() {
-            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            println!("Skipping test - tool-list-changed WASM not available at {wasm_url}");
             return;
         }
 
@@ -2676,12 +2625,9 @@ plugins:
             r#"
 plugins:
   tool_list_changed_plugin:
-    url: "file://{}"
-    runtime_config:
-      max_memory_mb: 10
-      max_execution_time_ms: 5000
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2747,9 +2693,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_list_tools() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -2757,12 +2703,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
-    runtime_config:
-      allowed_hosts:
-        - "www.timezoneconverter.com"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2821,9 +2764,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_list_prompts() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -2831,12 +2774,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
-    runtime_config:
-      allowed_hosts:
-        - "www.timezoneconverter.com"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2896,9 +2836,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_list_resource_templates() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -2906,12 +2846,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
-    runtime_config:
-      allowed_hosts:
-        - "www.timezoneconverter.com"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -2978,9 +2915,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_list_resources() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -2988,12 +2925,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
-    runtime_config:
-      allowed_hosts:
-        - "www.timezoneconverter.com"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3031,9 +2965,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_call_get_time_tool() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3041,9 +2975,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3100,9 +3034,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_call_get_time_with_timezone() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3110,9 +3044,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3162,9 +3096,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_call_parse_time_tool() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3172,9 +3106,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3237,9 +3171,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_call_parse_time_invalid() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3247,9 +3181,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3297,9 +3231,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_get_prompt() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3307,9 +3241,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3345,9 +3279,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_get_prompt_with_timezone() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3355,9 +3289,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3413,9 +3347,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_read_resource() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3423,12 +3357,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
-    runtime_config:
-      allowed_hosts:
-        - "www.timezoneconverter.com"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3482,9 +3413,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_complete_prompt_timezone() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3492,12 +3423,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
-    runtime_config:
-      allowed_hosts:
-        - "www.timezoneconverter.com"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
@@ -3569,9 +3497,9 @@ plugins:
 
     #[tokio::test]
     async fn test_rstime_complete_resource_template_timezone() {
-        let wasm_path = get_rstime_wasm_path();
+        let wasm_url = get_rstime_wasm_url();
         if !test_rstime_wasm_exists() {
-            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            println!("Skipping test - WASM not available at {wasm_url}");
             return;
         }
 
@@ -3579,12 +3507,9 @@ plugins:
             r#"
 plugins:
   rstime:
-    url: "file://{}"
-    runtime_config:
-      allowed_hosts:
-        - "www.timezoneconverter.com"
+    url: "{}"
 "#,
-            wasm_path.display()
+            wasm_url
         );
 
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
