@@ -1147,9 +1147,7 @@ mod tests {
     }
 
     fn create_test_cli() -> Cli {
-        let mut cli = crate::cli::Cli::default();
-        cli.insecure_skip_signature = Some(true);
-        cli
+        crate::cli::Cli::default()
     }
 
     fn create_test_ctx(
