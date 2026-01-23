@@ -59,6 +59,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Show digest GHCR resolves for latest
+        run: docker buildx imagetools inspect ghcr.io/hyper-mcp-rs/time-plugin:latest
+
       - name: Run tests
         run: cargo test --workspace --all-features
 
