@@ -1,10 +1,22 @@
 use clap::Parser;
+use git_version::git_version;
 use std::path::PathBuf;
 
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:3001";
 
+// Get version from git describe, fallback to Cargo.toml version
+const VERSION: &str = git_version!(
+    args = ["--tags", "--always", "--dirty=-modified"],
+    fallback = env!("CARGO_PKG_VERSION")
+);
+
 #[derive(Parser, Clone)]
-#[command(author = "Joseph Wortmann <joseph.wortmann@gmail.com>", version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
+#[command(
+    author = "Joseph Wortmann <joseph.wortmann@gmail.com>",
+    version = VERSION,
+    about,
+    long_about = None
+)]
 pub struct Cli {
     #[arg(short, long, value_name = "FILE")]
     pub config_file: Option<PathBuf>,
