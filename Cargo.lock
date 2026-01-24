@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "hyper-mcp"
-version = "0.1.8"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
