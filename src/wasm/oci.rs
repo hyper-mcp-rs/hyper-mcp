@@ -52,7 +52,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
 
     let mut hasher = Sha256::new();
     hasher.update(image_reference);
-    let short_hash = &hex::encode(hasher.finalize())[..7];
+    let hash = hex::encode(hasher.finalize());
 
     let cache_dir = dirs::cache_dir()
         .map(|mut path| {
@@ -62,7 +62,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
         .context("Unable to determine cache dir")?;
     std::fs::create_dir_all(&cache_dir)?;
 
-    let local_output_path = cache_dir.join(format!("{short_hash}.wasm"));
+    let local_output_path = cache_dir.join(format!("{hash}.wasm"));
     let local_output_path_str = local_output_path
         .to_str()
         .ok_or_else(|| anyhow!("Non-utf8 cache path: {local_output_path:?}"))?;
