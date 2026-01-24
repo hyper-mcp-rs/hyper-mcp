@@ -163,7 +163,7 @@ jobs:
             "${IMAGE}@${AMD64_DIGEST}" \
             "${IMAGE}@${ARM64_DIGEST}"
 
-          NIGHTLY_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:nightly" --format '{{.Digest}}')"
+          NIGHTLY_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:nightly" | grep -E '^Digest:' | awk '{print $2}')"
           echo "nightly_digest=${NIGHTLY_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Resolved ${IMAGE}:nightly -> ${NIGHTLY_DIGEST}"
 
