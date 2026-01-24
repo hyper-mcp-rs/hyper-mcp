@@ -266,6 +266,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: nightly-*
           path: dist
 
       - name: Flatten artifacts
