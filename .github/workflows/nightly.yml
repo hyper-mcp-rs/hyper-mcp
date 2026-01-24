@@ -9,20 +9,52 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # 0) Move/force the "nightly" tag to main and delete the prior GH release.
+  prepare-nightly-release:
+    name: Prepare nightly tag + delete prior release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set nightly tag to latest main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git tag -f nightly origin/main
+          git push -f origin nightly
+
+      - name: Delete existing nightly release (if any)
+        shell: bash
+        run: gh release delete nightly --yes || true
+
+  # 1) Build & push per-arch nightly images, sign each by digest, export digests for manifest job.
   build-oci-images:
+    name: Build OCI nightly image (${{ matrix.arch }})
     environment: staging
+    needs: prepare-nightly-release
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
             arch: amd64
+            platform: linux/amd64
           - os: ubuntu-24.04-arm
             arch: arm64
+            platform: linux/arm64
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
+      contents: read
       packages: write
-      id-token: write # needed for keyless signing
+      id-token: write # keyless cosign
+    outputs:
+      digest_amd64: ${{ steps.meta.outputs.digest_amd64 }}
+      digest_arm64: ${{ steps.meta.outputs.digest_arm64 }}
 
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -36,70 +68,132 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push hyper-mcp
+      - name: Build & push (by platform) with BuildKit cache
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: ${{ matrix.platform }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly-${{ matrix.arch }}
+          cache-from: type=gha,scope=hyper-mcp-nightly-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=hyper-mcp-nightly-${{ matrix.arch }}
+
+      - name: Resolve and sign arch image by digest
+        id: meta
+        shell: bash
         run: |
-          echo "Building hyper-mcp image"
-          ghcr_image="ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly-${{ matrix.arch }}"
-          docker build -t $ghcr_image .
+          set -euo pipefail
 
-          docker push $ghcr_image
+          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+          ARCH="${{ matrix.arch }}"
+          DIGEST="${{ steps.build.outputs.digest }}"
 
-          cosign sign --yes $ghcr_image
+          REF="${IMAGE}@${DIGEST}"
+          echo "Signing arch nightly image by digest: ${REF}"
+          cosign sign --yes "${REF}"
 
-  # do this before we build nightly binaries
-  prepare-nightly-release:
+          if [[ "${ARCH}" == "amd64" ]]; then
+            echo "digest_amd64=${DIGEST}" >> "$GITHUB_OUTPUT"
+          elif [[ "${ARCH}" == "arm64" ]]; then
+            echo "digest_arm64=${DIGEST}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unknown arch: ${ARCH}" >&2
+            exit 1
+          fi
+
+          echo "Built ${IMAGE}:nightly-${ARCH} -> ${DIGEST}"
+
+  # 2) Create multi-arch nightly manifest (tag=nightly), sign manifest by digest, export digest for release notes.
+  create-multiarch-manifests:
+    name: Create & sign multi-arch nightly manifest
+    needs: build-oci-images
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      nightly_digest: ${{ steps.digest.outputs.nightly_digest }}
+
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
 
-      - name: Set nightly tag to latest main
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create, push, and sign nightly manifest by digest
+        id: digest
+        shell: bash
         run: |
-          git fetch origin main
-          git tag -f nightly origin/main
-          git push -f origin nightly
+          set -euo pipefail
 
-      - name: Delete existing nightly release
-        run: gh release delete nightly --yes || true
+          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+          AMD64_DIGEST="${{ needs.build-oci-images.outputs.digest_amd64 }}"
+          ARM64_DIGEST="${{ needs.build-oci-images.outputs.digest_arm64 }}"
 
+          if [[ -z "${AMD64_DIGEST}" || -z "${ARM64_DIGEST}" ]]; then
+            echo "Missing per-arch digests from build job." >&2
+            exit 1
+          fi
+
+          echo "Creating multi-arch manifest: ${IMAGE}:nightly"
+          docker buildx imagetools create \
+            -t "${IMAGE}:nightly" \
+            "${IMAGE}@${AMD64_DIGEST}" \
+            "${IMAGE}@${ARM64_DIGEST}"
+
+          NIGHTLY_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:nightly" --format '{{.Digest}}')"
+          echo "nightly_digest=${NIGHTLY_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Resolved ${IMAGE}:nightly -> ${NIGHTLY_DIGEST}"
+
+          echo "Signing nightly multi-arch manifest by digest: ${IMAGE}@${NIGHTLY_DIGEST}"
+          cosign sign --yes "${IMAGE}@${NIGHTLY_DIGEST}"
+
+  # 3) Build binaries (matrix), upload as artifacts.
   build-nightly-binaries:
+    name: Build nightly binaries (${{ matrix.target }})
     environment: staging
     needs: prepare-nightly-release
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
-            arch: x86_64
             target: x86_64-unknown-linux-gnu
             ext: ""
           - os: ubuntu-24.04-arm
-            arch: aarch64
             target: aarch64-unknown-linux-gnu
             ext: ""
           - os: macos-latest
-            arch: aarch64
             target: aarch64-apple-darwin
             ext: ""
           - os: windows-latest
-            arch: x86_64
             target: x86_64-pc-windows-msvc
             ext: ".exe"
-
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
-      packages: write
-
+      contents: read
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -110,50 +204,112 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - run: cargo install cargo-auditable
+      - name: Install cargo-auditable
+        run: cargo install cargo-auditable
 
-      - name: Install compilation targets
+      - name: Install compilation target
         run: rustup target add ${{ matrix.target }}
 
       - name: Build
         run: cargo auditable build --target ${{ matrix.target }} --release
 
-      - name: Install zip (Windows only)
-        if: runner.os == 'Windows'
-        run: choco install zip -y
-
-      - name: Create archives and checksums
+      - name: Package
         shell: bash
         run: |
-          mkdir -p dist/${{ matrix.target }}
+          set -euo pipefail
+          mkdir -p dist
 
-          bin_name="hyper-mcp${{ matrix.ext }}"
-          cp target/${{ matrix.target }}/release/$bin_name dist/${{ matrix.target }}/
+          bin="hyper-mcp${{ matrix.ext }}"
+          src="target/${{ matrix.target }}/release/${bin}"
 
-          cd dist/${{ matrix.target }}
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            zip ../hyper-mcp-${{ matrix.target }}.zip $bin_name
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            # Use PowerShell's Compress-Archive? We'll keep it simple with tar if available;
+            # but Windows runners have bsdtar via Git. Use zip for compatibility.
+            7z a "dist/hyper-mcp-${{ matrix.target }}.zip" "${src}"
+            pkg="dist/hyper-mcp-${{ matrix.target }}.zip"
           else
-            tar -czf ../hyper-mcp-${{ matrix.target }}.tar.gz $bin_name
+            tar -czf "dist/hyper-mcp-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" "${bin}"
+            pkg="dist/hyper-mcp-${{ matrix.target }}.tar.gz"
           fi
-          cd ..
 
-          {
-            if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-              file="hyper-mcp-${{ matrix.target }}.zip"
-            else
-              file="hyper-mcp-${{ matrix.target }}.tar.gz"
-            fi
-            echo "$file:"
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum $file
-            else
-              shasum -a 256 $file
-            fi
-          } > checksums-${{ matrix.target }}.txt
+          # checksums
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${pkg}" > "dist/checksums-${{ matrix.target }}.txt"
+          else
+            shasum -a 256 "${pkg}" > "dist/checksums-${{ matrix.target }}.txt"
+          fi
 
-      - name: Create new nightly release
-        id: create_release
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.target }}
+          path: |
+            dist/hyper-mcp-${{ matrix.target }}.tar.gz
+            dist/hyper-mcp-${{ matrix.target }}.zip
+            dist/checksums-${{ matrix.target }}.txt
+          if-no-files-found: ignore
+
+  # 4) Create the GitHub nightly release once, attach all artifacts, and include the immutable nightly digest.
+  publish-nightly-release:
+    name: Publish nightly GitHub Release
+    needs:
+      - build-nightly-binaries
+      - create-multiarch-manifests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find dist -type f -maxdepth 3 -print -exec cp {} out/ \;
+
+      - name: Write release notes (with immutable digest)
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+          NIGHTLY_DIGEST="${{ needs.create-multiarch-manifests.outputs.nightly_digest }}"
+          SHA="${GITHUB_SHA}"
+
+          cat > release-body.md <<EOF
+          Nightly build from \`main\`.
+
+          Commit:
+          - \`${SHA}\`
+
+          Container image (tag):
+          - \`${IMAGE}:nightly\`
+
+          ✅ Multi-arch digest (immutable, recommended for pinning):
+          - \`${IMAGE}@${NIGHTLY_DIGEST}\`
+
+          All container images are signed with Cosign. Verify the **immutable digest** with:
+
+          \`\`\`bash
+          cosign verify \
+            --certificate-identity "https://github.com/hyper-mcp-rs/hyper-mcp/.github/workflows/nightly.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            ${IMAGE}@${NIGHTLY_DIGEST}
+          \`\`\`
+          EOF
+
+          echo "body_path=release-body.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create nightly release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: nightly
@@ -162,54 +318,6 @@ jobs:
           prerelease: true
           generate_release_notes: true
           preserve_order: true
+          body_path: ${{ steps.notes.outputs.body_path }}
           files: |
-            dist/hyper-mcp-${{ matrix.target }}.tar.gz
-            dist/hyper-mcp-${{ matrix.target }}.zip
-            dist/checksums-${{ matrix.target }}.txt
-          body: |
-            Nightly build from `main` branch.
-
-            This release includes:
-            - hyper-mcp binaries for Linux & macOS
-            - hyper-mcp container image: `ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly`
-
-            All container images are signed with Cosign. Verify the image like this:
-            ```bash
-            cosign verify \
-              --certificate-identity "https://github.com/hyper-mcp-rs/hyper-mcp/.github/workflows/nightly.yml@refs/heads/main" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              ghcr.io/hyper-mcp-rs/hyper-mcp:nightly
-            ```
-
-  create-multiarch-manifests:
-    needs: build-oci-images
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      id-token: write # needed for keyless signing
-    steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push multi-arch nightly tags
-        run: |
-          # Main image
-          docker buildx imagetools create \
-            -t ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly \
-            ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly-amd64 \
-            ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly-arm64
-
-          cosign sign --yes ghcr.io/${{ github.repository_owner }}/hyper-mcp:nightly
+            out/*

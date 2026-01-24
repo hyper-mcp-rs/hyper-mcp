@@ -1,4 +1,5 @@
-FROM --platform=$BUILDPLATFORM rust:1.92 AS builder
+# ------ Builder Stage --------------
+FROM --platform=$TARGETPLATFORM rust:1.92 AS builder
 WORKDIR /app
 RUN cargo install cargo-auditable
 
@@ -7,7 +8,12 @@ RUN cargo fetch
 COPY src ./src
 RUN cargo auditable build --release --locked
 
-FROM debian:13-slim
+# ------- Cosign Stage ---------------
+
+FROM --platform=$TARGETPLATFORM ghcr.io/sigstore/cosign/cosign:v2.4.3 AS cosign
+
+# ------- Production Stage -----------
+FROM --platform=$TARGETPLATFORM debian:13-slim
 
 LABEL org.opencontainers.image.authors="joseph.wortmann@gmail.com" \
     org.opencontainers.image.url="https://github.com/hyper-mcp-rs/hyper-mcp" \
@@ -16,6 +22,8 @@ LABEL org.opencontainers.image.authors="joseph.wortmann@gmail.com" \
     io.modelcontextprotocol.server.name="io.github.hyper-mcp-rs/hyper-mcp"
 
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
 
 WORKDIR /app
 COPY --from=builder /app/target/release/hyper-mcp /usr/local/bin/hyper-mcp

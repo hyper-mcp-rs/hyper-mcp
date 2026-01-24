@@ -9,25 +9,35 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # 1) Build & push per-arch images, sign each by digest
   build-oci-images:
+    name: Build OCI image (${{ matrix.arch }})
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04 # For amd64, consistent with nightly
+          - os: ubuntu-24.04
             arch: amd64
-          - os: ubuntu-24.04-arm # For arm64
+            platform: linux/amd64
+          - os: ubuntu-24.04-arm
             arch: arm64
+            platform: linux/arm64
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
+      contents: read
       packages: write
       id-token: write # needed for keyless signing
+
+    outputs:
+      digest_amd64: ${{ steps.meta.outputs.digest_amd64 }}
+      digest_arm64: ${{ steps.meta.outputs.digest_arm64 }}
 
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
           submodules: true
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
@@ -41,25 +51,61 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # tag images with both git tag & latest
-      - name: Build and push hyper-mcp arch specific image
-        run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          hyper_mcp_image_arch="ghcr.io/${{ github.repository_owner }}/hyper-mcp:$TAG-${{ matrix.arch }}"
-          echo "Building and tagging arch specific image: $hyper_mcp_image_arch for ${{ matrix.arch }}"
-          docker build -t $hyper_mcp_image_arch .
-          docker push $hyper_mcp_image_arch
-          cosign sign --yes $hyper_mcp_image_arch
+      - name: Build & push (by platform) with BuildKit cache
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: ${{ matrix.platform }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/hyper-mcp:${{ github.ref_name }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=hyper-mcp-release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=hyper-mcp-release-${{ matrix.arch }}
 
+      - name: Resolve and sign arch image by digest
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+          ARCH="${{ matrix.arch }}"
+          DIGEST="${{ steps.build.outputs.digest }}"
+
+          REF="${IMAGE}@${DIGEST}"
+          echo "Signing arch image by digest: ${REF}"
+          cosign sign --yes "${REF}"
+
+          if [[ "${ARCH}" == "amd64" ]]; then
+            echo "digest_amd64=${DIGEST}" >> "$GITHUB_OUTPUT"
+          elif [[ "${ARCH}" == "arm64" ]]; then
+            echo "digest_arm64=${DIGEST}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unknown arch: ${ARCH}" >&2
+            exit 1
+          fi
+
+          echo "Built ${IMAGE}:${{ github.ref_name }}-${ARCH} -> ${DIGEST}"
+
+  # 2) Create multi-arch manifests, sign manifests by digest, export digests for the GH release body
   create-multiarch-manifests:
+    name: Create & sign multi-arch manifests
     needs: build-oci-images
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write # needed for keyless signing
+      id-token: write
+
+    outputs:
+      tag_digest: ${{ steps.digest.outputs.tag_digest }}
+      latest_digest: ${{ steps.digest.outputs.latest_digest }}
+
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -74,43 +120,80 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create and push multi-arch manifest for hyper-mcp
+      - name: Create, push, and sign manifests by digest
+        id: digest
+        shell: bash
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          hyper_mcp_base_image="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+          set -euo pipefail
 
-          echo "Creating multi-arch manifest for $hyper_mcp_base_image:$TAG"
+          TAG="${GITHUB_REF#refs/tags/}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+
+          AMD64_DIGEST="${{ needs.build-oci-images.outputs.digest_amd64 }}"
+          ARM64_DIGEST="${{ needs.build-oci-images.outputs.digest_arm64 }}"
+
+          if [[ -z "${AMD64_DIGEST}" || -z "${ARM64_DIGEST}" ]]; then
+            echo "Missing per-arch digests from build job." >&2
+            exit 1
+          fi
+
+          # ---------------- Tag manifest ----------------
+          echo "Creating multi-arch manifest: ${IMAGE}:${TAG}"
           docker buildx imagetools create \
-            -t $hyper_mcp_base_image:$TAG \
-            $hyper_mcp_base_image:$TAG-amd64 \
-            $hyper_mcp_base_image:$TAG-arm64
-          cosign sign --yes $hyper_mcp_base_image:$TAG
+            -t "${IMAGE}:${TAG}" \
+            "${IMAGE}@${AMD64_DIGEST}" \
+            "${IMAGE}@${ARM64_DIGEST}"
 
-          echo "Creating multi-arch manifest for $hyper_mcp_base_image:latest"
+          TAG_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{.Digest}}')"
+          echo "tag_digest=${TAG_DIGEST}" >> "$GITHUB_OUTPUT"
+
+          echo "Signing tag manifest by digest: ${IMAGE}@${TAG_DIGEST}"
+          cosign sign --yes "${IMAGE}@${TAG_DIGEST}"
+
+          # ---------------- Latest manifest ----------------
+          echo "Creating multi-arch manifest: ${IMAGE}:latest"
           docker buildx imagetools create \
-            -t $hyper_mcp_base_image:latest \
-            $hyper_mcp_base_image:$TAG-amd64 \
-            $hyper_mcp_base_image:$TAG-arm64
-          cosign sign --yes $hyper_mcp_base_image:latest
+            -t "${IMAGE}:latest" \
+            "${IMAGE}@${AMD64_DIGEST}" \
+            "${IMAGE}@${ARM64_DIGEST}"
 
-  build-binaries:
+          LATEST_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:latest" --format '{{.Digest}}')"
+          echo "latest_digest=${LATEST_DIGEST}" >> "$GITHUB_OUTPUT"
+
+          echo "Signing latest manifest by digest: ${IMAGE}@${LATEST_DIGEST}"
+          cosign sign --yes "${IMAGE}@${LATEST_DIGEST}"
+
+          echo "Resolved ${IMAGE}:${TAG}    -> ${TAG_DIGEST}"
+          echo "Resolved ${IMAGE}:latest  -> ${LATEST_DIGEST}"
+
+  # 3) Build release binaries (matrix), upload as artifacts (no GH release here)
+  build-release-binaries:
+    name: Build release binaries (${{ matrix.target }})
+    needs: create-multiarch-manifests
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            arch: x86_64
             target: x86_64-unknown-linux-gnu
+            ext: ""
+            pkg: tar
           - os: ubuntu-24.04-arm
-            arch: aarch64
             target: aarch64-unknown-linux-gnu
+            ext: ""
+            pkg: tar
           - os: macos-latest
-            arch: aarch64
             target: aarch64-apple-darwin
+            ext: ""
+            pkg: tar
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: ".exe"
+            pkg: zip
 
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
-      packages: write
+      contents: read
 
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -122,7 +205,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - run: cargo install cargo-auditable
+      - name: Install cargo-auditable
+        run: cargo install cargo-auditable
 
       - name: Install target
         run: rustup target add ${{ matrix.target }}
@@ -130,21 +214,101 @@ jobs:
       - name: Build
         run: cargo auditable build --target ${{ matrix.target }} --release
 
-      - name: Create archives and checksums
+      - name: Package + checksums
+        shell: bash
         run: |
-          mkdir -p dist/${{ matrix.target }}
-          cp target/${{ matrix.target }}/release/hyper-mcp dist/${{ matrix.target }}/
-          cd dist/${{ matrix.target }} && tar -czf ../hyper-mcp-${{ matrix.target }}.tar.gz hyper-mcp
-          cd ..
+          set -euo pipefail
+          mkdir -p dist
 
-          {
-            echo "hyper-mcp-${{ matrix.target }}.tar.gz:"
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum hyper-mcp-${{ matrix.target }}.tar.gz
-            else
-              shasum -a 256 hyper-mcp-${{ matrix.target }}.tar.gz
-            fi
-          } > checksums.txt
+          bin_name="hyper-mcp${{ matrix.ext }}"
+          src_path="target/${{ matrix.target }}/release/${bin_name}"
+
+          # Keep the inner filename consistent per target
+          out_bin="hyper-mcp-${{ matrix.target }}${{ matrix.ext }}"
+          cp "${src_path}" "dist/${out_bin}"
+
+          if [[ "${{ matrix.pkg }}" == "zip" ]]; then
+            # windows runner has bsdtar, so this works without extra installs
+            (cd dist && zip -q "hyper-mcp-${{ matrix.target }}.zip" "${out_bin}")
+            artifact="dist/hyper-mcp-${{ matrix.target }}.zip"
+          else
+            tar -czf "dist/hyper-mcp-${{ matrix.target }}.tar.gz" -C dist "${out_bin}"
+            artifact="dist/hyper-mcp-${{ matrix.target }}.tar.gz"
+          fi
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${artifact}" > "dist/checksums-${{ matrix.target }}.txt"
+          else
+            shasum -a 256 "${artifact}" > "dist/checksums-${{ matrix.target }}.txt"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/hyper-mcp-${{ matrix.target }}.tar.gz
+            dist/hyper-mcp-${{ matrix.target }}.zip
+            dist/checksums-${{ matrix.target }}.txt
+
+  # 4) Publish GitHub Release once (download artifacts, write body incl digest, upload assets)
+  publish-github-release:
+    name: Publish GitHub Release
+    needs:
+      - build-release-binaries
+      - create-multiarch-manifests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find dist -type f -maxdepth 3 -print -exec cp {} out/ \;
+
+      - name: Write release body (include immutable digest)
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF#refs/tags/}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+          TAG_DIGEST="${{ needs.create-multiarch-manifests.outputs.tag_digest }}"
+
+          cat > release-body.md <<EOF
+          Final release for \`${TAG}\`.
+
+          Included:
+          - hyper-mcp binaries for Linux & macOS
+          - hyper-mcp container image: \`${IMAGE}:${TAG}\`
+
+          ✅ Multi-arch digest (immutable, recommended for pinning):
+          - \`${IMAGE}@${TAG_DIGEST}\`
+
+          All container images are signed with Cosign. Verify with:
+
+          \`\`\`bash
+          cosign verify \
+            --certificate-identity "https://github.com/hyper-mcp-rs/hyper-mcp/.github/workflows/release.yml@refs/tags/${TAG}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            ${IMAGE}@${TAG_DIGEST}
+          \`\`\`
+          EOF
+
+          echo "body_path=release-body.md" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
@@ -155,21 +319,6 @@ jobs:
           prerelease: false
           generate_release_notes: true
           preserve_order: true
+          body_path: ${{ steps.notes.outputs.body_path }}
           files: |
-            dist/hyper-mcp-${{ matrix.target }}.tar.gz
-            dist/checksums.txt
-          body: |
-            Final release for `${{ github.ref_name }}`.
-
-            Included:
-            - hyper-mcp binaries for Linux & macOS
-            - hyper-mcp container image: `ghcr.io/${{ github.repository_owner }}/hyper-mcp:${{ github.ref_name }}`
-
-            All container images are signed with Cosign. Verify with:
-
-            ```bash
-            cosign verify \
-              --certificate-identity "https://github.com/hyper-mcp-rs/hyper-mcp/.github/workflows/release.yml@refs/tags/${{ github.ref_name }}" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              ghcr.io/hyper-mcp-rs/hyper-mcp:${{ github.ref_name }}
-            ```
+            out/*
