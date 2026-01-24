@@ -62,7 +62,9 @@ jobs:
             cargo-target-${{ runner.os }}-
 
       - name: Build all workspace artifacts and tests
-        run: cargo test --no-run --workspace --all-features --locked
+        run: |
+          cargo check --workspace --all-features --locked
+          cargo test --no-run --workspace --all-features --locked
 
   clippy:
     name: Clippy
