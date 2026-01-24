@@ -1,6 +1,7 @@
 use crate::config::OciConfig;
 use crate::naming::PluginName;
 use anyhow::{Context, Result, anyhow};
+use dashmap::DashMap;
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use flate2::read::GzDecoder;
 use oci_client::{
@@ -8,13 +9,14 @@ use oci_client::{
     secrets::RegistryAuth,
 };
 use sha2::{Digest, Sha256};
-use std::{fs, io::Read, path::Path};
+use std::{fs, io::Read, path::Path, sync::Arc};
 use tar::Archive;
 use tokio::process::Command;
-use tokio::sync::OnceCell;
+use tokio::sync::{Mutex, OnceCell};
 use url::Url;
 
 static OCI_CLIENT: OnceCell<Client> = OnceCell::const_new();
+static DOWNLOAD_LOCKS: OnceCell<DashMap<String, Arc<Mutex<()>>>> = OnceCell::const_new();
 
 fn build_auth(reference: &Reference) -> RegistryAuth {
     let server = reference
@@ -60,7 +62,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
         .context("Unable to determine cache dir")?;
     std::fs::create_dir_all(&cache_dir)?;
 
-    let local_output_path = cache_dir.join(format!("{plugin_name}-{short_hash}.wasm"));
+    let local_output_path = cache_dir.join(format!("{short_hash}.wasm"));
     let local_output_path_str = local_output_path
         .to_str()
         .ok_or_else(|| anyhow!("Non-utf8 cache path: {local_output_path:?}"))?;
@@ -74,7 +76,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
     .await
     .map_err(|e| anyhow!("Failed to pull OCI plugin: {e}"))?;
 
-    tracing::info!("cache plugin `{plugin_name}` to : {local_output_path_str}");
+    tracing::info!("Loaded plugin `{plugin_name}` from cache: {local_output_path_str}");
 
     tokio::fs::read(local_output_path_str)
         .await
@@ -164,6 +166,23 @@ async fn pull_and_extract_oci_image(
     target_file_path: &str,
     local_output_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Get or create the global lock map
+    let locks = DOWNLOAD_LOCKS
+        .get_or_init(|| async { DashMap::new() })
+        .await;
+
+    // Get or create a lock for this specific image reference (URL)
+    // This prevents concurrent downloads of the same OCI image, even if they're
+    // being cached to different local paths (e.g., for different plugin names)
+    let lock = locks
+        .entry(image_reference.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone();
+
+    // Acquire the lock to prevent concurrent downloads of the same image
+    let _guard = lock.lock().await;
+
+    // Double-check if file exists after acquiring lock (another thread might have downloaded it)
     if Path::new(local_output_path).exists() {
         tracing::info!(
             "Plugin {image_reference} already cached at: {local_output_path}. Skipping downloading."
