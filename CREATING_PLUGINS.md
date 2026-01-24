@@ -4,17 +4,17 @@
 >
 > The fastest and easiest way to create a plugin is to use the provided templates. Templates include all necessary boilerplate, build configuration, and documentation out of the box.
 >
-> **[👉 Start with the Plugin Templates](./templates/plugins/README.md)**
+> **[👉 Start with the Plugin Templates](./TEMPLATES.md)**
 
 Check out our [example plugins](https://github.com/hyper-mcp-rs/hyper-mcp/tree/main/examples/plugins/v2) for insight.
 
 > Note: Prior versions of hyper-mcp used a different plugin interface (v1). While this plugin interface is still supported, new plugins should use the v2 interface.
 
-## Quick Start with Templates
+## Quick Start with Templates (Recommended Method)
 
 The recommended way to create a new plugin:
 
-1. **Browse available templates** in [`templates/plugins/`](./templates/plugins/README.md)
+1. **Browse available templates** in [`templates/plugins/`](./TEMPLATES.md)
 
 2. **Copy the template** for your language:
    ```sh
@@ -28,7 +28,7 @@ The recommended way to create a new plugin:
 
 5. **Build and publish** using the provided `Dockerfile`
 
-See [Plugin Templates Documentation](./templates/plugins/README.md) for complete details and language options.
+See [Plugin Templates Documentation](./TEMPLATES.md) for complete details and language options.
 
 ## Using XTP (Alternative Method)
 
@@ -87,7 +87,7 @@ docker push your-registry/plugin-name
 
 ## Next Steps
 
-- **[📖 Plugin Templates Documentation](./templates/plugins/README.md)** - Comprehensive guide to using templates
+- **[📖 Plugin Templates Documentation](./TEMPLATES.md)** - Comprehensive guide to using templates
 - **[🚀 Rust Plugin Template](./templates/plugins/rust/README.md)** - Complete Rust plugin setup and development guide
 - **[📚 Example Plugins](https://github.com/hyper-mcp-rs/hyper-mcp/tree/main/examples/plugins)** - Working examples to learn from
 - **[🔗 MCP Protocol Specification](https://spec.modelcontextprotocol.io/)** - Protocol details and specifications
