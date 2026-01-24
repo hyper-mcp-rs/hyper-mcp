@@ -46,8 +46,10 @@ jobs:
           shared-key: "ci"
           save-if: true
 
-      - name: Build all workspace artifacts
-        run: cargo build --workspace --all-features
+      - name: Build all workspace artifacts and tests
+        run: |
+          cargo build --workspace --all-features
+          cargo test --no-run --workspace --all-features
 
   clippy:
     name: Clippy
