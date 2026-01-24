@@ -557,6 +557,14 @@ impl ServerHandler for PluginService {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        // Check if the request has been cancelled
+        if context.ct.is_cancelled() {
+            return Err(McpError::internal_error(
+                "Request cancelled".to_string(),
+                None,
+            ));
+        }
+
         tracing::info!("got tools/call request {:?}", request);
         let (plugin_name, tool_name) = match parse_namespaced_name(request.name.to_string()) {
             Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
@@ -941,6 +949,14 @@ impl ServerHandler for PluginService {
         request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        // Check if the request has been cancelled
+        if context.ct.is_cancelled() {
+            return Err(McpError::internal_error(
+                "Request cancelled".to_string(),
+                None,
+            ));
+        }
+
         tracing::info!("got tools/list request {:?}", request);
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
