@@ -1,5 +1,5 @@
 # ------ Builder Stage --------------
-FROM --platform=$TARGETPLATFORM rust:1.92 AS builder
+FROM rust:1.92 AS builder
 WORKDIR /app
 RUN cargo install cargo-auditable
 
@@ -10,10 +10,10 @@ RUN cargo auditable build --release --locked
 
 # ------- Cosign Stage ---------------
 
-FROM --platform=$TARGETPLATFORM ghcr.io/sigstore/cosign/cosign:v2.4.3 AS cosign
+FROM ghcr.io/sigstore/cosign/cosign:v2.4.3 AS cosign
 
 # ------- Production Stage -----------
-FROM --platform=$TARGETPLATFORM debian:13-slim
+FROM debian:13-slim
 
 LABEL org.opencontainers.image.authors="joseph.wortmann@gmail.com" \
     org.opencontainers.image.url="https://github.com/hyper-mcp-rs/hyper-mcp" \
