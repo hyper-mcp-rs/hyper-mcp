@@ -18,6 +18,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 1
 
 permissions:
   contents: read
@@ -47,9 +48,7 @@ jobs:
           save-if: true
 
       - name: Build all workspace artifacts and tests
-        run: |
-          cargo build --workspace --all-features
-          cargo test --no-run --workspace --all-features
+        run: cargo test --no-run --workspace --all-features --locked
 
   clippy:
     name: Clippy
@@ -76,7 +75,7 @@ jobs:
           shared-key: "ci"
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-features --locked -- -D warnings
 
   formatting:
     name: Check Formatting
@@ -133,7 +132,7 @@ jobs:
         env:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: RUST_BACKTRACE=1 cargo test --workspace --all-features
+        run: RUST_BACKTRACE=1 cargo test --workspace --all-features --locked
 
   # Summary job to check if all required jobs passed
   ci-success:
