@@ -46,10 +46,8 @@ jobs:
           shared-key: "ci"
           save-if: true
 
-      - name: Fetch and check dependencies
-        run: |
-          cargo fetch --locked
-          cargo check --workspace --all-features
+      - name: Build all workspace artifacts
+        run: cargo build --workspace --all-features
 
   clippy:
     name: Clippy
@@ -135,36 +133,11 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: RUST_BACKTRACE=1 cargo test --workspace --all-features
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: cache-prep
-
-    steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          fetch-depth: 0
-          submodules: true
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install WASM target
-        run: rustup target add wasm32-wasip1
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          shared-key: "ci"
-
-      - name: Build hyper-mcp
-        run: cargo build
-
   # Summary job to check if all required jobs passed
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [clippy, formatting, tests, build]
+    needs: [clippy, formatting, tests]
 
     steps:
       - name: All jobs succeeded
