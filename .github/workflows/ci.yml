@@ -103,6 +103,12 @@ jobs:
             cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
             cargo-target-${{ runner.os }}-
 
+      - name: Restore file timestamps
+        run: |
+          # Update source file timestamps to prevent unnecessary rebuilds
+          # This makes cargo think files haven't changed since the cache was created
+          git ls-files -z | xargs -0 touch
+
       - name: Run clippy
         run: cargo clippy --workspace --all-features --locked -- -D warnings
 
@@ -161,6 +167,12 @@ jobs:
           restore-keys: |
             cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
             cargo-target-${{ runner.os }}-
+
+      - name: Restore file timestamps
+        run: |
+          # Update source file timestamps to prevent unnecessary rebuilds
+          # This makes cargo think files haven't changed since the cache was created
+          git ls-files -z | xargs -0 touch
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
