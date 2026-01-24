@@ -84,7 +84,7 @@ Built with security-first mindset:
 > 📖 **For detailed configuration options including authentication setup, runtime configuration, and advanced features, see [RUNTIME_CONFIG.md](./RUNTIME_CONFIG.md)**
 
 Supported URL schemes:
-- `oci://` - for OCI-compliant registries (like Docker Hub, GitHub Container Registry, etc.)
+- `oci://` - for OCI-compliant registries (like Docker Hub, GitHub Container Registry, etc.) **REQUIRES COSIGN**
 - `file://` - for local files
 - `http://` or `https://` - for remote files
 - `s3://` - for Amazon S3 objects (requires that you have your AWS credentials set up in the environment)
@@ -181,6 +181,8 @@ These plugins use the v2 plugin interface. New plugins should use this interface
 ## Creating Plugins
 
 For comprehensive instructions on creating plugins, see [CREATING_PLUGINS.md](./CREATING_PLUGINS.md).
+
+For ready-to-use plugin templates in Rust and Go, see [TEMPLATES.md](./TEMPLATES.md).
 
 ## License
 
