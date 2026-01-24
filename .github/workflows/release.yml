@@ -144,7 +144,7 @@ jobs:
             "${IMAGE}@${AMD64_DIGEST}" \
             "${IMAGE}@${ARM64_DIGEST}"
 
-          TAG_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{.Digest}}')"
+          TAG_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" | grep -E '^Digest:' | awk '{print $2}')"
           echo "tag_digest=${TAG_DIGEST}" >> "$GITHUB_OUTPUT"
 
           echo "Signing tag manifest by digest: ${IMAGE}@${TAG_DIGEST}"
@@ -157,7 +157,7 @@ jobs:
             "${IMAGE}@${AMD64_DIGEST}" \
             "${IMAGE}@${ARM64_DIGEST}"
 
-          LATEST_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:latest" --format '{{.Digest}}')"
+          LATEST_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:latest" | grep -E '^Digest:' | awk '{print $2}')"
           echo "latest_digest=${LATEST_DIGEST}" >> "$GITHUB_OUTPUT"
 
           echo "Signing latest manifest by digest: ${IMAGE}@${LATEST_DIGEST}"
