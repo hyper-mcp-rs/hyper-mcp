@@ -1,6 +1,6 @@
 use crate::config::OciConfig;
 use crate::naming::PluginName;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use flate2::read::GzDecoder;
 use oci_client::{
@@ -8,21 +8,9 @@ use oci_client::{
     secrets::RegistryAuth,
 };
 use sha2::{Digest, Sha256};
-use sigstore::{
-    cosign::{
-        ClientBuilder, CosignCapabilities,
-        verification_constraint::{
-            CertSubjectEmailVerifier, CertSubjectUrlVerifier, VerificationConstraintVec,
-            cert_subject_email_verifier::StringVerifier,
-        },
-        verify_constraints,
-    },
-    errors::SigstoreVerifyConstraintsError,
-    registry::{Auth, OciReference},
-    trust::{ManualTrustRoot, TrustRoot, sigstore::SigstoreTrustRoot},
-};
-use std::{fs, io::Read, path::Path, str::FromStr};
+use std::{fs, io::Read, path::Path};
 use tar::Archive;
+use tokio::process::Command;
 use tokio::sync::OnceCell;
 use url::Url;
 
@@ -33,10 +21,6 @@ fn build_auth(reference: &Reference) -> RegistryAuth {
         .resolve_registry()
         .strip_suffix('/')
         .unwrap_or_else(|| reference.resolve_registry());
-
-    // if cli.anonymous {
-    //     return RegistryAuth::Anonymous;
-    // }
 
     match docker_credential::get_credential(server) {
         Err(CredentialRetrievalError::ConfigNotFound) => RegistryAuth::Anonymous,
@@ -50,211 +34,128 @@ fn build_auth(reference: &Reference) -> RegistryAuth {
             RegistryAuth::Basic(username, password)
         }
         Ok(DockerCredential::IdentityToken(_)) => {
-            tracing::info!(
-                "Cannot use contents of docker config, identity token not supported. Using anonymous auth"
-            );
+            tracing::info!("Identity token not supported via docker config. Using anonymous auth");
             RegistryAuth::Anonymous
         }
     }
 }
 
 pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) -> Result<Vec<u8>> {
-    let image_reference = url.as_str().strip_prefix("oci://").unwrap();
+    let image_reference = url
+        .as_str()
+        .strip_prefix("oci://")
+        .ok_or_else(|| anyhow!("Invalid OCI URL (missing oci://): {url}"))?;
+
     let target_file_path = "/plugin.wasm";
+
     let mut hasher = Sha256::new();
     hasher.update(image_reference);
-    let hash = hasher.finalize();
-    let short_hash = &hex::encode(hash)[..7];
+    let short_hash = &hex::encode(hasher.finalize())[..7];
+
     let cache_dir = dirs::cache_dir()
         .map(|mut path| {
             path.push("hyper-mcp");
             path
         })
-        .unwrap();
+        .context("Unable to determine cache dir")?;
     std::fs::create_dir_all(&cache_dir)?;
 
     let local_output_path = cache_dir.join(format!("{plugin_name}-{short_hash}.wasm"));
-    let local_output_path = local_output_path.to_str().unwrap();
+    let local_output_path_str = local_output_path
+        .to_str()
+        .ok_or_else(|| anyhow!("Non-utf8 cache path: {local_output_path:?}"))?;
 
-    if let Err(e) =
-        pull_and_extract_oci_image(config, image_reference, target_file_path, local_output_path)
-            .await
-    {
-        tracing::error!("Error pulling oci plugin: {e}");
-        return Err(anyhow::anyhow!("Failed to pull OCI plugin: {e}"));
-    }
-    tracing::info!("cache plugin `{plugin_name}` to : {local_output_path}");
-    tokio::fs::read(local_output_path)
+    pull_and_extract_oci_image(
+        config,
+        image_reference,
+        target_file_path,
+        local_output_path_str,
+    )
+    .await
+    .map_err(|e| anyhow!("Failed to pull OCI plugin: {e}"))?;
+
+    tracing::info!("cache plugin `{plugin_name}` to : {local_output_path_str}");
+
+    tokio::fs::read(local_output_path_str)
         .await
         .map_err(|e| e.into())
 }
 
-async fn setup_trust_repository(config: &OciConfig) -> Result<Box<dyn TrustRoot>> {
-    if config.use_sigstore_tuf_data {
-        // Use Sigstore TUF data from the official repository
-        tracing::info!("Using Sigstore TUF data for verification");
-        match SigstoreTrustRoot::new(None).await {
-            Ok(repo) => return Ok(Box::new(repo) as Box<dyn TrustRoot>),
-            Err(e) => {
-                tracing::error!("Failed to initialize TUF trust repository: {e}");
-                if !config.insecure_skip_signature {
-                    return Err(anyhow!(
-                        "Failed to initialize TUF trust repository and signature verification is required"
-                    ));
-                }
-                tracing::info!("Falling back to manual trust repository");
-            }
+/// Build cosign args for the strictest possible verification given your OciConfig.
+///
+/// Rules (strict):
+/// - If cert_email OR cert_url is set, cert_issuer MUST be set.
+/// - Prefer cert_email over cert_url if both are set (but you should avoid setting both).
+fn cosign_verify_args(config: &OciConfig) -> Result<Vec<String>> {
+    let mut args: Vec<String> = vec!["verify".to_string()];
+
+    // Pick identity constraint source (email or url)
+    let identity = config.cert_email.as_deref().or(config.cert_url.as_deref());
+
+    match identity {
+        Some(identity) => {
+            // Strictest possible when caller provides an identity:
+            // require issuer too (otherwise you can get surprising matches).
+            let issuer = config.cert_issuer.as_deref().ok_or_else(|| {
+                anyhow!("Strict verification requires cert_issuer when cert_email/cert_url is set")
+            })?;
+
+            args.push("--certificate-identity-regexp".into());
+            args.push(identity.to_string());
+
+            args.push("--certificate-oidc-issuer-regexp".into());
+            args.push(issuer.to_string());
+        }
+        None => {
+            // Keyless verification in newer cosign requires an identity constraint.
+            // Since you want to accept valid signatures from *any* signer, use match-all regexes.
+            args.push("--certificate-identity-regexp".into());
+            args.push(".*".into());
+
+            // Some cosign versions also effectively require issuer constraint for keyless flows;
+            // match-all keeps it permissive while still enforcing keyless + tlog.
+            args.push("--certificate-oidc-issuer-regexp".into());
+            args.push(".*".into());
         }
     }
 
-    // Create a manual trust repository
-    let mut data: ManualTrustRoot<'static> = ManualTrustRoot::default();
-
-    // Add Rekor public keys if provided
-    if let Some(rekor_keys_path) = &config.rekor_pub_keys {
-        if rekor_keys_path.exists() {
-            match fs::read(rekor_keys_path) {
-                Ok(content) => {
-                    tracing::info!("Added Rekor public key");
-                    if let Some(path_str) = rekor_keys_path.to_str() {
-                        data.rekor_keys.insert(path_str.to_string(), content);
-                        tracing::info!("Added Rekor public key from: {}", path_str);
-                    }
-                }
-                Err(e) => tracing::warn!("Failed to read Rekor public keys file: {e}"),
-            }
-        } else {
-            tracing::warn!("Rekor public keys file not found: {rekor_keys_path:?}");
-        }
-    }
-
-    // Add Fulcio certificates if provided
-    if let Some(fulcio_certs_path) = &config.fulcio_certs {
-        if fulcio_certs_path.exists() {
-            match fs::read(fulcio_certs_path) {
-                Ok(content) => {
-                    let certificate = sigstore::registry::Certificate {
-                        encoding: sigstore::registry::CertificateEncoding::Pem,
-                        data: content,
-                    };
-
-                    match certificate.try_into() {
-                        Ok(cert) => {
-                            tracing::info!("Added Fulcio certificate");
-                            data.fulcio_certs.push(cert);
-                        }
-                        Err(e) => tracing::warn!("Failed to parse Fulcio certificate: {e}"),
-                    }
-                }
-                Err(e) => tracing::warn!("Failed to read Fulcio certificates file: {e}"),
-            }
-        } else {
-            tracing::warn!("Fulcio certificates file not found: {fulcio_certs_path:?}");
-        }
-    }
-
-    Ok(Box::new(data) as Box<dyn TrustRoot>)
+    Ok(args)
 }
 
-async fn verify_image_signature(config: &OciConfig, image_reference: &str) -> Result<bool> {
-    tracing::info!("Verifying signature for {image_reference}");
+async fn verify_image_signature_with_cosign(
+    config: &OciConfig,
+    image_reference: &str,
+) -> Result<()> {
+    if config.insecure_skip_signature {
+        tracing::warn!("Signature verification disabled for {image_reference}");
+        return Ok(());
+    }
 
-    // Set up the trust repository based on CLI arguments
-    let repo = setup_trust_repository(config).await?;
-    let auth = &Auth::Anonymous;
+    tracing::info!("Verifying signature (cosign) for {image_reference}");
 
-    // Create a client builder
-    let client_builder = ClientBuilder::default();
+    // Build args and append the image ref at the end
+    let mut args = cosign_verify_args(config)?;
+    args.push(image_reference.to_string());
 
-    // Create client with trust repository
-    let client_builder = match client_builder.with_trust_repository(repo.as_ref()) {
-        Ok(builder) => builder,
-        Err(e) => return Err(anyhow!("Failed to set up trust repository: {e}")),
-    };
-
-    // Build the client
-    let mut client = match client_builder.build() {
-        Ok(client) => client,
-        Err(e) => return Err(anyhow!("Failed to build Sigstore client: {e}")),
-    };
-
-    // Parse the reference
-    let image_ref = match OciReference::from_str(image_reference) {
-        Ok(reference) => reference,
-        Err(e) => return Err(anyhow!("Invalid image reference: {e}")),
-    };
-
-    // Triangulate to find the signature image and source digest
-    let (cosign_signature_image, source_image_digest) =
-        match client.triangulate(&image_ref, auth).await {
-            Ok((sig_image, digest)) => (sig_image, digest),
-            Err(e) => {
-                tracing::warn!("Failed to triangulate image: {e}");
-                return Ok(false); // No signatures found
-            }
-        };
-
-    // Get trusted signature layers
-    let signature_layers = match client
-        .trusted_signature_layers(auth, &source_image_digest, &cosign_signature_image)
+    let output = Command::new("cosign")
+        .args(&args)
+        // IMPORTANT: inherit DOCKER_CONFIG etc so cosign can auth to private registries
+        .envs(std::env::vars())
+        .output()
         .await
-    {
-        Ok(layers) => layers,
-        Err(e) => {
-            tracing::warn!("Failed to get trusted signature layers: {e}");
-            return Ok(false);
-        }
-    };
+        .context("Failed to spawn cosign; is it installed and on PATH?")?;
 
-    if signature_layers.is_empty() {
-        tracing::warn!("No valid signatures found for {image_reference}");
-        return Ok(false);
+    if output.status.success() {
+        tracing::info!("Cosign verification successful for {image_reference}");
+        return Ok(());
     }
 
-    // Build verification constraints based on CLI options
-    let mut verification_constraints: VerificationConstraintVec = Vec::new();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
-    if let Some(cert_email) = &config.cert_email {
-        let issuer = config
-            .cert_issuer
-            .as_ref()
-            .map(|i| StringVerifier::ExactMatch(i.to_string()));
-
-        verification_constraints.push(Box::new(CertSubjectEmailVerifier {
-            email: StringVerifier::ExactMatch(cert_email.to_string()),
-            issuer,
-        }));
-    }
-
-    if let Some(cert_url) = &config.cert_url {
-        match config.cert_issuer.as_ref() {
-            Some(issuer) => {
-                verification_constraints.push(Box::new(CertSubjectUrlVerifier {
-                    url: cert_url.to_string(),
-                    issuer: issuer.to_string(),
-                }));
-            }
-            None => {
-                tracing::warn!("'cert-issuer' is required when 'cert-url' is specified");
-            }
-        }
-    }
-
-    // Verify the constraints
-    match verify_constraints(&signature_layers, verification_constraints.iter()) {
-        Ok(()) => {
-            tracing::info!("Signature verification successful for {image_reference}");
-            Ok(true)
-        }
-        Err(SigstoreVerifyConstraintsError {
-            unsatisfied_constraints,
-        }) => {
-            tracing::warn!(
-                "Signature verification failed for {image_reference}: {unsatisfied_constraints:?}"
-            );
-            Ok(false)
-        }
-    }
+    Err(anyhow!(
+        "Cosign verification failed for {image_reference}\n\nstdout:\n{stdout}\n\nstderr:\n{stderr}"
+    ))
 }
 
 async fn pull_and_extract_oci_image(
@@ -272,34 +173,18 @@ async fn pull_and_extract_oci_image(
 
     tracing::info!("Pulling {image_reference} ...");
 
+    // Verify BEFORE pulling layers (cosign will hit the registry itself).
+    verify_image_signature_with_cosign(config, image_reference)
+        .await
+        .map_err(|e| format!("No valid signatures found / verification failed: {e}"))?;
+
     let reference = Reference::try_from(image_reference)?;
     let auth = build_auth(&reference);
-
-    // Verify the image signature if it's an OCI image and verification is enabled
-    if !config.insecure_skip_signature {
-        tracing::info!("Signature verification enabled for {image_reference}");
-        match verify_image_signature(config, image_reference).await {
-            Ok(verified) => {
-                if !verified {
-                    return Err(format!(
-                        "No valid signatures found for the image {image_reference}"
-                    )
-                    .into());
-                }
-            }
-            Err(e) => {
-                return Err(format!("Image signature verification failed: {e}").into());
-            }
-        }
-    } else {
-        tracing::warn!("Signature verification disabled for {image_reference}");
-    }
 
     let client = OCI_CLIENT
         .get_or_init(|| async { Client::new(ClientConfig::default()) })
         .await;
 
-    // Accept both OCI and Docker manifest types
     let manifest = client
         .pull(
             &reference,
@@ -319,7 +204,8 @@ async fn pull_and_extract_oci_image(
             media_type: "application/vnd.docker.image.rootfs.diff.tar.gzip".to_string(),
             ..Default::default()
         };
-        client.pull_blob(&reference, &desc, &mut buf).await.unwrap();
+
+        client.pull_blob(&reference, &desc, &mut buf).await?;
 
         let gz_extract = GzDecoder::new(&buf[..]);
         let mut archive_extract = Archive::new(gz_extract);
