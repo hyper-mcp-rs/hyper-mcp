@@ -54,36 +54,152 @@ If you prefer to use the XTP CLI tool:
 
 ## Publishing Plugins
 
-### Rust
+The OCI loader accepts two types of artifacts:
 
-To publish a Rust plugin:
+1. **ORAS artifacts** (preferred method) - using `application/vnd.hyper-mcp.plugin.v2` artifact type
+2. **Docker images** - must be `linux/amd64` architecture
+
+Both methods **must be signed using cosign** for supply chain security.
+
+### Method 1: ORAS Artifacts (Recommended)
+
+ORAS artifacts are the preferred method as they are more efficient and purpose-built for distributing WebAssembly plugins.
+
+Build the WebAssembly binary separately, then package it as an ORAS artifact 
+
+**Example workflow** (see [rstime-plugin](https://github.com/hyper-mcp-rs/hyper-mcp/blob/main/rstime-plugin/.github/workflows/release.yml)):
+
+```yaml
+- name: Install ORAS
+  uses: oras-project/setup-oras@v1
+
+- name: Install cosign
+  uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
+
+- name: ORAS login to GHCR
+  shell: bash
+  run: |
+    echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+- name: Push ORAS artifact (plugin.wasm)
+  shell: bash
+  run: |
+    oras push "ghcr.io/your-org/your-plugin:$TAG" \
+      --artifact-type application/vnd.hyper-mcp.plugin.v2 \
+      ./plugin.wasm:application/wasm
+
+- name: Resolve digest
+  id: digest
+  shell: bash
+  run: |
+    DIGEST="$(
+      oras manifest fetch "ghcr.io/your-org/your-plugin:$TAG" --descriptor \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])'
+    )"
+    echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+- name: Sign ORAS artifact by digest
+  shell: bash
+  run: |
+    cosign sign --yes "ghcr.io/your-org/your-plugin@${{ steps.digest.outputs.digest }}"
+```
+
+### Method 2: Docker Images
+
+Docker images must target `linux/amd64` architecture. Build the WebAssembly binary separately, then package it in a minimal container.
+
+**Efficient Dockerfile** (see [time-plugin](https://github.com/hyper-mcp-rs/hyper-mcp/blob/main/time-plugin/Dockerfile)):
 
 ```dockerfile
-# example how to build with rust
-FROM rust:1.88-slim AS builder
-
-RUN rustup target add wasm32-wasip1 && \
-    rustup component add rust-std --target wasm32-wasip1 && \
-    cargo install cargo-auditable
-
-WORKDIR /workspace
-COPY . .
-RUN cargo fetch
-RUN cargo auditable build --release --target wasm32-wasip1
-
 FROM scratch
 WORKDIR /
-COPY --from=builder /workspace/target/wasm32-wasip1/release/plugin.wasm /plugin.wasm
-
+# plugin.wasm must be present in the Docker build context
+COPY plugin.wasm /plugin.wasm
 ```
 
-Then build and push:
+**Example workflow** (see [time-plugin release workflow](https://github.com/hyper-mcp-rs/hyper-mcp/blob/main/time-plugin/.github/workflows/release.yml)):
+
+```yaml
+- name: Install cosign
+  uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
+
+- name: Set up Docker Buildx
+  uses: docker/setup-buildx-action@v3
+
+- name: Log in to GitHub Container Registry
+  uses: docker/login-action@v3
+  with:
+    registry: ghcr.io
+    username: ${{ github.actor }}
+    password: ${{ secrets.GITHUB_TOKEN }}
+
+- name: Build and push image (linux/amd64)
+  uses: docker/build-push-action@v6
+  with:
+    context: .
+    file: ./Dockerfile
+    push: true
+    platforms: linux/amd64
+    provenance: false
+    tags: ghcr.io/your-org/your-plugin:$TAG
+
+- name: Resolve digest
+  id: digest
+  shell: bash
+  run: |
+    DIGEST="$(
+      docker buildx imagetools inspect "ghcr.io/your-org/your-plugin:$TAG" \
+        --format '{{json .Manifest}}' \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])'
+    )"
+    echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+- name: Sign by digest
+  shell: bash
+  run: |
+    cosign sign --yes "ghcr.io/your-org/your-plugin@${{ steps.digest.outputs.digest }}"
+```
+
+### Building the WebAssembly Binary
+
+For all plugins, build the WebAssembly binary before packaging.
+
+#### Rust
+
 ```sh
-docker build -t your-registry/plugin-name .
-docker push your-registry/plugin-name
+# Install wasm32-wasip1 target
+rustup target add wasm32-wasip1
+
+# Install cargo-auditable for supply chain security
+cargo install cargo-auditable
+
+# Build the plugin
+cargo fetch
+cargo auditable build --release --target wasm32-wasip1
+
+# Copy to build context
+cp target/wasm32-wasip1/release/plugin.wasm ./plugin.wasm
 ```
 
-**Note:** The Rust template includes this Dockerfile and all necessary build configuration - no additional setup needed if you're using the template.
+### Supply Chain Security
+
+**All plugins must be signed with cosign.** This ensures:
+- Authenticity: Verify the plugin came from the claimed source
+- Integrity: Detect tampering or corruption
+- Transparency: Audit trail via Sigstore's transparency log
+
+**Always reference artifacts by digest** (not tags) for immutable, verifiable deployments:
+```
+ghcr.io/your-org/your-plugin@sha256:abc123...
+```
+
+Users can verify the signature:
+```sh
+cosign verify \
+  --certificate-identity-regexp "https://github.com/your-org/your-plugin/.github/workflows/release.yml@refs/tags/v*" \
+  --certificate-oidc-issuer-regexp "https://token.actions.githubusercontent.com" \
+  ghcr.io/your-org/your-plugin@sha256:...
+```
 
 ## Next Steps
 
