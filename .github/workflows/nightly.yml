@@ -163,7 +163,16 @@ jobs:
             "${IMAGE}@${AMD64_DIGEST}" \
             "${IMAGE}@${ARM64_DIGEST}"
 
-          NIGHTLY_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:nightly" | grep -E '^Digest:' | awk '{print $2}')"
+          NIGHTLY_DIGEST="$(
+            docker buildx imagetools inspect "${IMAGE}:nightly" --format '{{json .Manifest}}' \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])'
+          )"
+
+          if [[ ! "$NIGHTLY_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: Invalid digest: '$NIGHTLY_DIGEST'" >&2
+            exit 1
+          fi
+
           echo "nightly_digest=${NIGHTLY_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Resolved ${IMAGE}:nightly -> ${NIGHTLY_DIGEST}"
 

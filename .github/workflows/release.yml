@@ -157,7 +157,16 @@ jobs:
             "${IMAGE}@${AMD64_DIGEST}" \
             "${IMAGE}@${ARM64_DIGEST}"
 
-          LATEST_DIGEST="$(docker buildx imagetools inspect "${IMAGE}:latest" | grep -E '^Digest:' | awk '{print $2}')"
+          LATEST_DIGEST="$(
+            docker buildx imagetools inspect "${IMAGE}:latest" --format '{{json .Manifest}}' \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])'
+          )"
+
+          if [[ ! "$LATEST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: Invalid digest: '$LATEST_DIGEST'" >&2
+            exit 1
+          fi
+
           echo "latest_digest=${LATEST_DIGEST}" >> "$GITHUB_OUTPUT"
 
           echo "Signing latest manifest by digest: ${IMAGE}@${LATEST_DIGEST}"
