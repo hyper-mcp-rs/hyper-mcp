@@ -38,9 +38,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install WASM target
-        run: rustup target add wasm32-wasip1
-
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -81,9 +78,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-
-      - name: Install WASM target
-        run: rustup target add wasm32-wasip1
 
       - name: Restore cargo registry
         uses: actions/cache/restore@v4
@@ -146,9 +140,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install WASM target
-        run: rustup target add wasm32-wasip1
 
       - name: Restore cargo registry
         uses: actions/cache/restore@v4
