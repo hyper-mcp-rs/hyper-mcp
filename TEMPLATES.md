@@ -1,6 +1,6 @@
 # Plugin Templates
 
-The `templates/plugins/` directory contains templates for creating plugins for hyper-mcp in various programming languages. Plugins extend hyper-mcp's functionality by providing tools, resources, prompts, and other MCP capabilities through WebAssembly modules.
+Plugins extend hyper-mcp's functionality by providing tools, resources, prompts, and other MCP capabilities through WebAssembly modules.
 
 ## Available Templates
 
@@ -8,8 +8,8 @@ The `templates/plugins/` directory contains templates for creating plugins for h
 
 The recommended language for building hyper-mcp plugins. Rust provides excellent performance, safety, and tooling for WebAssembly development.
 
-- **Location**: `templates/plugins/rust/`
-- **Getting Started**: See [templates/plugins/rust/README.md](./templates/plugins/rust/README.md)
+- **Location**: [rust-plugin-template](https://github.com/hyper-mcp-rs/rust-plugin-template)
+- **Getting Started**: See [README.md](https://github.com/hyper-mcp-rs/rust-plugin-template/README.md)
 - **Use When**: You want the best performance, safety, and ecosystem support
 - **Compile Target**: WebAssembly (`wasm32-wasip1`)
 
@@ -24,8 +24,8 @@ The recommended language for building hyper-mcp plugins. Rust provides excellent
 
 A modern, approachable language for building hyper-mcp plugins. Go offers simplicity, fast compilation, and a clean standard library for WebAssembly development.
 
-- **Location**: `templates/plugins/go/`
-- **Getting Started**: See [templates/plugins/go/README.md](./templates/plugins/go/README.md)
+- **Location**: [go-plugin-tempalte](https://github.com/hyper-mcp-rs/go-plugin-template)
+- **Getting Started**: See [README.md](https://github.com/hyper-mcp-rs/go-plugin-template/README.md)
 - **Use When**: You prefer simplicity, fast development cycles, and Go's syntax
 - **Compile Target**: WebAssembly (`wasip1`)
 
@@ -78,7 +78,7 @@ Plugins can provide any combination of:
 
 ### Set Up Development Environment
 
-Follow the language-specific template README (e.g., [templates/plugins/rust/README.md](./templates/plugins/rust/README.md) or [templates/plugins/go/README.md](./templates/plugins/go/README.md)) for:
+Follow the language-specific template README (e.g., [Rust](https://github.com/hyper-mcp-rs/rust-plugin-template/README.md) or [Go](https://github.com/hyper-mcp-rs/go-plugin-template/README.md)) for:
 - Required tools and dependencies
 - Target/runtime setup
 - Local build instructions
