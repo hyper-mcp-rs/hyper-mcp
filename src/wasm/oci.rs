@@ -673,11 +673,22 @@ mod tests {
     }
 
     #[test]
-    fn test_build_auth_creates_anonymous_for_public_registry() {
+    fn test_build_auth_returns_valid_auth() {
         let reference = Reference::try_from("ghcr.io/test/image:latest").unwrap();
         let auth = build_auth(&reference);
-        // Should be Anonymous since no credentials are configured in test environment
-        assert!(matches!(auth, RegistryAuth::Anonymous));
+        // Should be either Anonymous or Basic depending on environment
+        // In GitHub Actions, credentials may be configured; locally they may not be
+        match auth {
+            RegistryAuth::Anonymous => {
+                // No credentials configured - this is fine
+            }
+            RegistryAuth::Basic(_, _) => {
+                // Credentials found - this is also fine
+            }
+            _ => {
+                panic!("Unexpected auth type returned");
+            }
+        }
     }
 
     #[tokio::test]
