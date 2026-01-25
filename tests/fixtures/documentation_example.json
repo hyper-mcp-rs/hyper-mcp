@@ -17,10 +17,10 @@
   },
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:nightly"
     },
     "myip": {
-      "url": "oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest",
+      "url": "oci://ghcr.io/hyper-mcp-rs/myip-plugin:nightly",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"],
         "skip_tools": ["debug"],

@@ -1215,7 +1215,7 @@ mod tests {
     }
 
     fn get_test_wasm_url() -> &'static str {
-        "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
+        "oci://ghcr.io/hyper-mcp-rs/time-plugin:nightly"
     }
 
     fn test_wasm_exists() -> bool {
@@ -1224,7 +1224,7 @@ mod tests {
     }
 
     fn get_tool_list_changed_wasm_url() -> &'static str {
-        "oci://ghcr.io/hyper-mcp-rs/tool-list-changed-plugin:latest"
+        "oci://ghcr.io/hyper-mcp-rs/tool-list-changed-plugin:nightly"
     }
 
     fn test_tool_list_changed_wasm_exists() -> bool {
@@ -1233,7 +1233,7 @@ mod tests {
     }
 
     fn get_rstime_wasm_url() -> &'static str {
-        "oci://ghcr.io/hyper-mcp-rs/rstime-plugin:latest"
+        "oci://ghcr.io/hyper-mcp-rs/rstime-plugin:nightly"
     }
 
     fn test_rstime_wasm_exists() -> bool {
