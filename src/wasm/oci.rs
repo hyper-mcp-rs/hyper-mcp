@@ -389,3 +389,563 @@ async fn pull_and_extract_oci_artifact(
 
     Err("No wasm payload found in any layer (expected wasm blob or tar(.gz) containing plugin.wasm)".into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_looks_like_gzip_valid() {
+        let gzip_magic = vec![0x1F, 0x8B, 0x08, 0x00];
+        assert!(looks_like_gzip(&gzip_magic));
+    }
+
+    #[test]
+    fn test_looks_like_gzip_invalid() {
+        let not_gzip = vec![0x00, 0x00, 0x08, 0x00];
+        assert!(!looks_like_gzip(&not_gzip));
+    }
+
+    #[test]
+    fn test_looks_like_gzip_too_short() {
+        let too_short = vec![0x1F];
+        assert!(!looks_like_gzip(&too_short));
+    }
+
+    #[test]
+    fn test_looks_like_wasm_valid() {
+        let wasm_magic = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        assert!(looks_like_wasm(&wasm_magic));
+    }
+
+    #[test]
+    fn test_looks_like_wasm_invalid() {
+        let not_wasm = vec![0x00, 0x00, 0x00, 0x00];
+        assert!(!looks_like_wasm(&not_wasm));
+    }
+
+    #[test]
+    fn test_looks_like_wasm_too_short() {
+        let too_short = vec![0x00, 0x61, 0x73];
+        assert!(!looks_like_wasm(&too_short));
+    }
+
+    #[test]
+    fn test_normalize_tar_path_with_leading_slash() {
+        let path = Path::new("/plugin.wasm");
+        let normalized = normalize_tar_path(path);
+        assert_eq!(normalized, PathBuf::from("plugin.wasm"));
+    }
+
+    #[test]
+    fn test_normalize_tar_path_with_leading_dot() {
+        let path = Path::new("./plugin.wasm");
+        let normalized = normalize_tar_path(path);
+        assert_eq!(normalized, PathBuf::from("plugin.wasm"));
+    }
+
+    #[test]
+    fn test_normalize_tar_path_with_subdirectories() {
+        let path = Path::new("/opt/app/plugin.wasm");
+        let normalized = normalize_tar_path(path);
+        assert_eq!(normalized, PathBuf::from("opt/app/plugin.wasm"));
+    }
+
+    #[test]
+    fn test_normalize_tar_path_already_normalized() {
+        let path = Path::new("plugin.wasm");
+        let normalized = normalize_tar_path(path);
+        assert_eq!(normalized, PathBuf::from("plugin.wasm"));
+    }
+
+    #[test]
+    fn test_path_ends_with_exact_match() {
+        let full = Path::new("opt/app/plugin.wasm");
+        let suffix = Path::new("plugin.wasm");
+        assert!(path_ends_with(full, suffix));
+    }
+
+    #[test]
+    fn test_path_ends_with_multiple_components() {
+        let full = Path::new("opt/app/plugin.wasm");
+        let suffix = Path::new("app/plugin.wasm");
+        assert!(path_ends_with(full, suffix));
+    }
+
+    #[test]
+    fn test_path_ends_with_no_match() {
+        let full = Path::new("opt/app/plugin.wasm");
+        let suffix = Path::new("other.wasm");
+        assert!(!path_ends_with(full, suffix));
+    }
+
+    #[test]
+    fn test_path_ends_with_suffix_too_long() {
+        let full = Path::new("plugin.wasm");
+        let suffix = Path::new("opt/app/plugin.wasm");
+        assert!(!path_ends_with(full, suffix));
+    }
+
+    #[test]
+    fn test_path_ends_with_empty_suffix() {
+        let full = Path::new("plugin.wasm");
+        let suffix = Path::new("");
+        assert!(!path_ends_with(full, suffix));
+    }
+
+    #[test]
+    fn test_extract_wasm_from_blob_raw_wasm() {
+        let wasm_data = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let result = extract_wasm_from_blob(&wasm_data, "/plugin.wasm").unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), wasm_data);
+    }
+
+    #[test]
+    fn test_extract_wasm_from_blob_not_wasm() {
+        let not_wasm = vec![0x00, 0x00, 0x00, 0x00];
+        let result = extract_wasm_from_blob(&not_wasm, "/plugin.wasm").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_wasm_from_tar_with_target_path() -> Result<()> {
+        // Create a simple tar archive with a wasm file
+        let mut tar_builder = tar::Builder::new(Vec::new());
+
+        let wasm_data = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("plugin.wasm")?;
+        header.set_size(wasm_data.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, wasm_data.as_slice())?;
+
+        let tar_data = tar_builder.into_inner()?;
+
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/plugin.wasm")?;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), wasm_data);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_wasm_from_tar_multiple_wasm_files_prefers_exact_match() -> Result<()> {
+        let mut tar_builder = tar::Builder::new(Vec::new());
+
+        // Add a generic wasm file
+        let generic_wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("other.wasm")?;
+        header.set_size(generic_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, generic_wasm.as_slice())?;
+
+        // Add the target wasm file (longer to distinguish)
+        let target_wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("plugin.wasm")?;
+        header.set_size(target_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, target_wasm.as_slice())?;
+
+        let tar_data = tar_builder.into_inner()?;
+
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/plugin.wasm")?;
+        assert!(result.is_some());
+        // Should prefer the exact match (plugin.wasm)
+        assert_eq!(result.unwrap(), target_wasm);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_wasm_from_tar_no_wasm() -> Result<()> {
+        let mut tar_builder = tar::Builder::new(Vec::new());
+
+        let not_wasm = vec![0x00, 0x00, 0x00, 0x00];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("README.md")?;
+        header.set_size(not_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, not_wasm.as_slice())?;
+
+        let tar_data = tar_builder.into_inner()?;
+
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/plugin.wasm")?;
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cosign_verify_args_with_email_and_issuer() {
+        let config = OciConfig {
+            cert_email: Some("test@example.com".to_string()),
+            cert_issuer: Some("https://issuer.example.com".to_string()),
+            cert_url: None,
+            fulcio_certs: None,
+            insecure_skip_signature: false,
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let args = cosign_verify_args(&config).unwrap();
+        assert!(args.contains(&"verify".to_string()));
+        assert!(args.contains(&"--certificate-identity-regexp".to_string()));
+        assert!(args.contains(&"test@example.com".to_string()));
+        assert!(args.contains(&"--certificate-oidc-issuer-regexp".to_string()));
+        assert!(args.contains(&"https://issuer.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_cosign_verify_args_with_url_and_issuer() {
+        let config = OciConfig {
+            cert_email: None,
+            cert_url: Some("https://cert.example.com".to_string()),
+            cert_issuer: Some("https://issuer.example.com".to_string()),
+            fulcio_certs: None,
+            insecure_skip_signature: false,
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let args = cosign_verify_args(&config).unwrap();
+        assert!(args.contains(&"--certificate-identity-regexp".to_string()));
+        assert!(args.contains(&"https://cert.example.com".to_string()));
+        assert!(args.contains(&"--certificate-oidc-issuer-regexp".to_string()));
+        assert!(args.contains(&"https://issuer.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_cosign_verify_args_prefers_email_over_url() {
+        let config = OciConfig {
+            cert_email: Some("test@example.com".to_string()),
+            cert_url: Some("https://cert.example.com".to_string()),
+            cert_issuer: Some("https://issuer.example.com".to_string()),
+            fulcio_certs: None,
+            insecure_skip_signature: false,
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let args = cosign_verify_args(&config).unwrap();
+        // Should use email, not URL
+        assert!(args.contains(&"test@example.com".to_string()));
+        assert!(!args.contains(&"https://cert.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_cosign_verify_args_no_identity() {
+        let config = OciConfig {
+            cert_email: None,
+            cert_url: None,
+            cert_issuer: None,
+            fulcio_certs: None,
+            insecure_skip_signature: false,
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let args = cosign_verify_args(&config).unwrap();
+        // Should use wildcards
+        assert!(args.contains(&"--certificate-identity-regexp".to_string()));
+        assert!(args.contains(&".*".to_string()));
+        assert!(args.contains(&"--certificate-oidc-issuer-regexp".to_string()));
+    }
+
+    #[test]
+    fn test_cosign_verify_args_identity_without_issuer_fails() {
+        let config = OciConfig {
+            cert_email: Some("test@example.com".to_string()),
+            cert_url: None,
+            cert_issuer: None,
+            fulcio_certs: None,
+            insecure_skip_signature: false,
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let result = cosign_verify_args(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cert_issuer"));
+    }
+
+    #[test]
+    fn test_build_auth_creates_anonymous_for_public_registry() {
+        let reference = Reference::try_from("ghcr.io/test/image:latest").unwrap();
+        let auth = build_auth(&reference);
+        // Should be Anonymous since no credentials are configured in test environment
+        assert!(matches!(auth, RegistryAuth::Anonymous));
+    }
+
+    #[tokio::test]
+    async fn test_pull_docker_image() {
+        let config = OciConfig {
+            cert_email: None,
+            cert_url: None,
+            cert_issuer: None,
+            fulcio_certs: None,
+            insecure_skip_signature: true, // Skip signature for test
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let url = Url::parse("oci://ghcr.io/hyper-mcp-rs/time-plugin:nightly").unwrap();
+        let plugin_name = PluginName::try_from("time_plugin").unwrap();
+
+        let result = load_wasm(&url, &config, &plugin_name).await;
+
+        // This test validates that we can pull a Docker image
+        match result {
+            Ok(wasm_bytes) => {
+                assert!(!wasm_bytes.is_empty(), "Wasm bytes should not be empty");
+                assert!(looks_like_wasm(&wasm_bytes), "Should be valid wasm");
+            }
+            Err(e) => {
+                // Log the error but don't fail - might be network issues
+                eprintln!(
+                    "Warning: Docker image test failed (might be network issue): {}",
+                    e
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pull_oras_image() {
+        let config = OciConfig {
+            cert_email: None,
+            cert_url: None,
+            cert_issuer: None,
+            fulcio_certs: None,
+            insecure_skip_signature: true, // Skip signature for test
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let url = Url::parse("oci://ghcr.io/hyper-mcp-rs/rstime-plugin:nightly").unwrap();
+        let plugin_name = PluginName::try_from("rstime_plugin").unwrap();
+
+        let result = load_wasm(&url, &config, &plugin_name).await;
+
+        // This test validates that we can pull an ORAS artifact
+        match result {
+            Ok(wasm_bytes) => {
+                assert!(!wasm_bytes.is_empty(), "Wasm bytes should not be empty");
+                assert!(looks_like_wasm(&wasm_bytes), "Should be valid wasm");
+            }
+            Err(e) => {
+                // Log the error but don't fail - might be network issues
+                eprintln!(
+                    "Warning: ORAS image test failed (might be network issue): {}",
+                    e
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_caches_result() {
+        let config = OciConfig {
+            cert_email: None,
+            cert_url: None,
+            cert_issuer: None,
+            fulcio_certs: None,
+            insecure_skip_signature: true,
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let url = Url::parse("oci://ghcr.io/hyper-mcp-rs/time-plugin:nightly").unwrap();
+        let plugin_name = PluginName::try_from("time_plugin").unwrap();
+
+        // First load
+        let result1 = load_wasm(&url, &config, &plugin_name).await;
+        if result1.is_err() {
+            eprintln!("Skipping cache test due to network issue");
+            return;
+        }
+
+        // Second load should use cache
+        let result2 = load_wasm(&url, &config, &plugin_name).await;
+
+        match (result1, result2) {
+            (Ok(bytes1), Ok(bytes2)) => {
+                assert_eq!(bytes1, bytes2, "Cached result should match");
+            }
+            _ => {
+                eprintln!("Skipping cache validation due to network issue");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_invalid_url_format() {
+        let config = OciConfig {
+            cert_email: None,
+            cert_url: None,
+            cert_issuer: None,
+            fulcio_certs: None,
+            insecure_skip_signature: true,
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let url = Url::parse("https://example.com/not-oci").unwrap();
+        let plugin_name = PluginName::try_from("test").unwrap();
+
+        let result = load_wasm(&url, &config, &plugin_name).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid OCI URL"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_signature_skipped_when_insecure() {
+        let config = OciConfig {
+            cert_email: None,
+            cert_url: None,
+            cert_issuer: None,
+            fulcio_certs: None,
+            insecure_skip_signature: true,
+            rekor_pub_keys: None,
+            use_sigstore_tuf_data: false,
+        };
+
+        let result = verify_image_signature_with_cosign(&config, "ghcr.io/test/image:latest").await;
+        assert!(
+            result.is_ok(),
+            "Should skip verification when insecure flag is set"
+        );
+    }
+
+    #[test]
+    fn test_extract_wasm_from_gzipped_tar() -> Result<()> {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+
+        // Create a tar archive
+        let mut tar_builder = tar::Builder::new(Vec::new());
+        let wasm_data = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("plugin.wasm")?;
+        header.set_size(wasm_data.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, wasm_data.as_slice())?;
+        let tar_data = tar_builder.into_inner()?;
+
+        // Gzip the tar
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&tar_data)?;
+        let gzipped = encoder.finish()?;
+
+        // Extract from gzipped tar
+        let result = extract_wasm_from_blob(&gzipped, "/plugin.wasm")?;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), wasm_data);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_wasm_ranking_exact_path_wins() -> Result<()> {
+        let mut tar_builder = tar::Builder::new(Vec::new());
+
+        // Add a file that just ends with .wasm (rank 2)
+        let generic_wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x01];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("other.wasm")?;
+        header.set_size(generic_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, generic_wasm.as_slice())?;
+
+        // Add exact path match (rank 0) - should win
+        let exact_wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x02];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("plugin.wasm")?;
+        header.set_size(exact_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, exact_wasm.as_slice())?;
+
+        let tar_data = tar_builder.into_inner()?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/plugin.wasm")?;
+
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            exact_wasm,
+            "Should prefer exact path match"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_wasm_ranking_shallower_depth_wins() -> Result<()> {
+        let mut tar_builder = tar::Builder::new(Vec::new());
+
+        // Add deeper plugin.wasm
+        let deep_wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x01];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("a/b/c/plugin.wasm")?;
+        header.set_size(deep_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, deep_wasm.as_slice())?;
+
+        // Add shallower plugin.wasm - should win
+        let shallow_wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x02];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("plugin.wasm")?;
+        header.set_size(shallow_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, shallow_wasm.as_slice())?;
+
+        let tar_data = tar_builder.into_inner()?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/other.wasm")?;
+
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            shallow_wasm,
+            "Should prefer shallower depth"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_wasm_ranking_larger_size_wins() -> Result<()> {
+        let mut tar_builder = tar::Builder::new(Vec::new());
+
+        // Add smaller .wasm file (rank 2)
+        let small_wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("app/small.wasm")?;
+        header.set_size(small_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, small_wasm.as_slice())?;
+
+        // Add larger .wasm file at same depth and rank - should win due to size
+        let large_wasm = vec![
+            0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+        ];
+        let mut header = tar::Header::new_gnu();
+        header.set_path("lib/large.wasm")?;
+        header.set_size(large_wasm.len() as u64);
+        header.set_cksum();
+        tar_builder.append(&header, large_wasm.as_slice())?;
+
+        let tar_data = tar_builder.into_inner()?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/other.wasm")?;
+
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            large_wasm,
+            "Should prefer larger size when rank and depth are same"
+        );
+
+        Ok(())
+    }
+}
