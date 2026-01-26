@@ -1,5 +1,5 @@
 # ------ Builder Stage --------------
-FROM rust:1.92 AS builder
+FROM rust:1.93 AS builder
 WORKDIR /app
 RUN cargo install cargo-auditable
 
