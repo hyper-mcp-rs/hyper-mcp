@@ -73,3 +73,9 @@ tokio-util = "0.7"
 [[bin]]
 name = "hyper-mcp"
 path = "src/main.rs"
+
+[package.metadata.release]
+publish = false
+push = true
+tag = true
+tag-name = "v{{version}}"
