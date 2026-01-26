@@ -10,7 +10,7 @@ RUN cargo auditable build --release --locked
 
 # ------- Cosign Stage ---------------
 
-FROM ghcr.io/sigstore/cosign/cosign:v2.4.3 AS cosign
+FROM ghcr.io/sigstore/cosign/cosign:v2.6.2 AS cosign
 
 # ------- Production Stage -----------
 FROM debian:13-slim
