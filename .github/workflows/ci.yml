@@ -6,12 +6,19 @@ on:
     paths-ignore:
       - ".github/workflows/nightly.yml"
       - ".github/workflows/release.yml"
-      - "**/.md"
+      - "**/*.md"
       - ".cursor/**"
       - ".windsurf/**"
       - ".gitignore"
+      - "assets/**"
+      - "iac/**"
       - "LICENSE"
       - ".github/renovate.json5"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "xtp-plugin-schema.json"
+      - ".hadolint.yaml"
+      - "pre-commit-config.yaml"
   pull_request:
     branches: [main]
   workflow_dispatch:
