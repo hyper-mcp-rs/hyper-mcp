@@ -236,8 +236,13 @@ jobs:
           cp "${src_path}" "dist/${out_bin}"
 
           if [[ "${{ matrix.pkg }}" == "zip" ]]; then
-            # windows runner has bsdtar, so this works without extra installs
-            (cd dist && zip -q "hyper-mcp-${{ matrix.target }}.zip" "${out_bin}")
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              # Use built-in PowerShell on Windows (zip CLI is not guaranteed)
+              powershell.exe -NoProfile -Command \
+                "Compress-Archive -Path 'dist\\${out_bin}' -DestinationPath 'dist\\hyper-mcp-${{ matrix.target }}.zip' -Force"
+            else
+              (cd dist && zip -q "hyper-mcp-${{ matrix.target }}.zip" "${out_bin}")
+            fi
             artifact="dist/hyper-mcp-${{ matrix.target }}.zip"
           else
             tar -czf "dist/hyper-mcp-${{ matrix.target }}.tar.gz" -C dist "${out_bin}"
@@ -246,8 +251,14 @@ jobs:
 
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "${artifact}" > "dist/checksums-${{ matrix.target }}.txt"
-          else
+          elif command -v shasum >/dev/null 2>&1; then
             shasum -a 256 "${artifact}" > "dist/checksums-${{ matrix.target }}.txt"
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            powershell.exe -NoProfile -Command \
+              "\$h=(Get-FileHash -Algorithm SHA256 '${artifact}').Hash.ToLower(); '\$h  ${artifact}' | Out-File -Encoding ascii 'dist/checksums-${{ matrix.target }}.txt'"
+          else
+            echo "No SHA256 tool found" >&2
+            exit 1
           fi
 
       - name: Upload artifacts
