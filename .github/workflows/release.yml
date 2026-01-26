@@ -178,7 +178,6 @@ jobs:
   # 3) Build release binaries (matrix), upload as artifacts (no GH release here)
   build-release-binaries:
     name: Build release binaries (${{ matrix.target }})
-    needs: create-multiarch-manifests
     strategy:
       fail-fast: false
       matrix:
@@ -221,7 +220,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Build
-        run: cargo auditable build --target ${{ matrix.target }} --release
+        run: cargo auditable build --target ${{ matrix.target }} --release  --locked
 
       - name: Package + checksums
         shell: bash
