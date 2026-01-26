@@ -46,7 +46,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
         with:
           path: |
             ~/.cargo/registry/index/
@@ -57,7 +57,7 @@ jobs:
             cargo-registry-
 
       - name: Cache target directory
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
         with:
           path: target/
           key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
@@ -87,7 +87,7 @@ jobs:
           components: clippy
 
       - name: Restore cargo registry
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
         with:
           path: |
             ~/.cargo/registry/index/
@@ -98,7 +98,7 @@ jobs:
             cargo-registry-
 
       - name: Restore target directory
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
         with:
           path: target/
           key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
@@ -149,7 +149,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Restore cargo registry
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
         with:
           path: |
             ~/.cargo/registry/index/
@@ -160,7 +160,7 @@ jobs:
             cargo-registry-
 
       - name: Restore target directory
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
         with:
           path: target/
           key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
