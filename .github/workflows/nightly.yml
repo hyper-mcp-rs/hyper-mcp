@@ -220,7 +220,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Build
-        run: cargo auditable build --target ${{ matrix.target }} --release
+        run: cargo auditable build --target ${{ matrix.target }} --release --locked
 
       - name: Package
         shell: bash
