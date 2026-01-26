@@ -1,6 +1,6 @@
 [package]
 name = "hyper-mcp"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["Tuan Anh Tran <me@tuananh.org>", "Joseph Wortmann <joseph.wortmann@gmail.com>"]
 description = " A fast, secure MCP server that extends its capabilities through WebAssembly plugins"
