@@ -37,7 +37,7 @@ keyring = { version = "3.6", features = [
 ] }
 oci-client = "0.15"
 once_cell = "1.21"
-rmcp = { version = "0.13", features = [
+rmcp = { version = "0.14", features = [
     "elicitation",
     "server",
     "transport-io",
@@ -62,7 +62,7 @@ uuid = { version = "1.19", features = ["serde"] }
 
 [dev-dependencies]
 futures = "0.3"
-rmcp = { version = "0.13", features = [
+rmcp = { version = "0.14", features = [
     "client",
     "transport-async-rw",
 ] }
