@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           submodules: true
@@ -39,7 +39,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -50,7 +50,7 @@ jobs:
             cargo-registry-
 
       - name: Cache target directory
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: target/
           key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
@@ -69,7 +69,7 @@ jobs:
     needs: cache-prep
 
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           submodules: true
@@ -80,7 +80,7 @@ jobs:
           components: clippy
 
       - name: Restore cargo registry
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -91,7 +91,7 @@ jobs:
             cargo-registry-
 
       - name: Restore target directory
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: target/
           key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
@@ -114,7 +114,7 @@ jobs:
     needs: cache-prep
 
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           submodules: true
@@ -133,7 +133,7 @@ jobs:
     needs: cache-prep
 
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           submodules: true
@@ -142,7 +142,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Restore cargo registry
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -153,7 +153,7 @@ jobs:
             cargo-registry-
 
       - name: Restore target directory
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: target/
           key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
