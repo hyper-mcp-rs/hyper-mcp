@@ -64,7 +64,7 @@ static WASM_DATA_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::new(D
 #[derive(Clone, Debug, Serialize)]
 struct CreateElicitationRequestParamWithTimeout {
     #[serde(flatten)]
-    pub inner: CreateElicitationRequestParam,
+    pub inner: CreateElicitationRequestParams,
     #[serde_as(as = "Option<DurationSeconds<f64>>")]
     pub timeout: Option<Duration>,
 }
@@ -103,7 +103,7 @@ impl<'de> Deserialize<'de> for CreateElicitationRequestParamWithTimeout {
         #[derive(Deserialize)]
         struct Helper {
             #[serde(flatten)]
-            inner: CreateElicitationRequestParam,
+            inner: CreateElicitationRequestParams,
             #[serde_as(as = "Option<DurationSeconds<f64>>")]
             timeout: Option<Duration>,
         }
@@ -213,7 +213,7 @@ impl PluginService {
             }
         });
 
-        host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParam>) -> Json<CreateMessageResult> {
+        host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParams>) -> Json<CreateMessageResult> {
             let sampling_msg = sampling_msg.into_inner();
             let ctx = ctx.get()?.lock().unwrap().clone();
             let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
@@ -554,7 +554,7 @@ impl PluginService {
 impl ServerHandler for PluginService {
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         // Check if the request has been cancelled
@@ -591,7 +591,8 @@ impl ServerHandler for PluginService {
             return Err(McpError::method_not_found::<CallToolRequestMethod>());
         }
 
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: request.meta,
             name: std::borrow::Cow::Owned(tool_name.clone()),
             arguments: request.arguments,
             task: request.task,
@@ -612,7 +613,7 @@ impl ServerHandler for PluginService {
 
     async fn complete(
         &self,
-        request: CompleteRequestParam,
+        request: CompleteRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CompleteResult, McpError> {
         tracing::info!("got completion/complete request {:?}", request);
@@ -644,7 +645,8 @@ impl ServerHandler for PluginService {
                 }
                 (
                     plugin_name,
-                    CompleteRequestParam {
+                    CompleteRequestParams {
+                        meta: request.meta,
                         r#ref: Reference::Prompt(PromptReference {
                             name: prompt_name,
                             title,
@@ -681,7 +683,8 @@ impl ServerHandler for PluginService {
                 }
                 (
                     plugin_name,
-                    CompleteRequestParam {
+                    CompleteRequestParams {
+                        meta: request.meta,
                         r#ref: Reference::Resource(ResourceReference { uri: resource_uri }),
                         argument: request.argument,
                         context: request.context,
@@ -744,7 +747,7 @@ impl ServerHandler for PluginService {
 
     async fn get_prompt(
         &self,
-        request: GetPromptRequestParam,
+        request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
         tracing::info!("got prompts/get request {:?}", request);
@@ -773,7 +776,8 @@ impl ServerHandler for PluginService {
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         }
 
-        let request = GetPromptRequestParam {
+        let request = GetPromptRequestParams {
+            meta: request.meta,
             name: prompt_name.clone(),
             arguments: request.arguments,
         };
@@ -793,7 +797,7 @@ impl ServerHandler for PluginService {
 
     async fn list_prompts(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
         tracing::info!("got prompts/list request {:?}", request);
@@ -841,7 +845,7 @@ impl ServerHandler for PluginService {
 
     async fn list_resources(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         tracing::info!("got resources/list request {:?}", request);
@@ -892,7 +896,7 @@ impl ServerHandler for PluginService {
 
     async fn list_resource_templates(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         tracing::info!("got resources/templates/list request {:?}", request);
@@ -946,7 +950,7 @@ impl ServerHandler for PluginService {
 
     async fn list_tools(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         // Check if the request has been cancelled
@@ -1020,7 +1024,7 @@ impl ServerHandler for PluginService {
 
     async fn read_resource(
         &self,
-        request: ReadResourceRequestParam,
+        request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         tracing::info!("got resources/read request {:?}", request);
@@ -1049,7 +1053,8 @@ impl ServerHandler for PluginService {
             return Err(McpError::method_not_found::<ReadResourceRequestMethod>());
         }
 
-        let request = ReadResourceRequestParam {
+        let request = ReadResourceRequestParams {
+            meta: None,
             uri: resource_uri.clone(),
         };
 
@@ -1068,7 +1073,7 @@ impl ServerHandler for PluginService {
 
     fn set_level(
         &self,
-        request: SetLevelRequestParam,
+        request: SetLevelRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
         self.set_logging_level(request.level);
@@ -1077,7 +1082,7 @@ impl ServerHandler for PluginService {
 
     fn subscribe(
         &self,
-        request: SubscribeRequestParam,
+        request: SubscribeRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
         self.subscriptions.insert(request.uri);
@@ -1086,7 +1091,7 @@ impl ServerHandler for PluginService {
 
     fn unsubscribe(
         &self,
-        request: UnsubscribeRequestParam,
+        request: UnsubscribeRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
         self.subscriptions.remove(&request.uri);
@@ -1667,7 +1672,8 @@ plugins:
             create_test_pair(create_test_service(config), ClientInfo::default()).await;
 
         // Test calling tool with invalid format (missing plugin name separator)
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("invalid_tool_name"),
             arguments: None,
             task: None,
@@ -1686,7 +1692,8 @@ plugins:
         }
 
         // Test with empty tool name
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed(""),
             arguments: None,
             task: None,
@@ -1706,7 +1713,8 @@ plugins:
             create_test_pair(create_test_service(config), ClientInfo::default()).await;
 
         // Test calling tool on nonexistent plugin
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("nonexistent_plugin-some_tool"),
             arguments: None,
             task: None,
@@ -1761,7 +1769,8 @@ plugins:
         assert!(!plugins.is_empty(), "Should have loaded plugin");
 
         // Test calling the time tool with get_time_utc operation
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("time_plugin-time"),
             arguments: Some({
                 let mut map = serde_json::Map::new();
@@ -1789,7 +1798,8 @@ plugins:
         );
 
         // Test calling with parse_time operation
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("time_plugin-time"),
             arguments: Some({
                 let mut map = serde_json::Map::new();
@@ -1860,7 +1870,8 @@ plugins:
         assert!(!plugins.is_empty(), "Should have loaded plugin");
 
         // Test calling the skipped time tool
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("time_plugin-time"),
             arguments: Some({
                 let mut map = serde_json::Map::new();
@@ -1997,7 +2008,8 @@ plugins:
             peer: server.peer().clone(),
         };
 
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("time_plugin-time"),
             arguments: Some({
                 let mut map = serde_json::Map::new();
@@ -2174,7 +2186,8 @@ plugins:
         let initial_count = initial_result.tools.len();
 
         // Call add_tool
-        let add_tool_request = CallToolRequestParam {
+        let add_tool_request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(serde_json::Map::new()),
             task: None,
@@ -2242,7 +2255,8 @@ plugins:
         // Call add_tool three times
         for i in 1..=3 {
             let ctx = create_test_ctx(&server);
-            let add_tool_request = CallToolRequestParam {
+            let add_tool_request = CallToolRequestParams {
+                meta: None,
                 name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
                 arguments: Some(serde_json::Map::new()),
                 task: None,
@@ -2314,7 +2328,8 @@ plugins:
 
         // Add a tool
         let ctx = create_test_ctx(&server);
-        let add_tool_request = CallToolRequestParam {
+        let add_tool_request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(serde_json::Map::new()),
             task: None,
@@ -2325,7 +2340,8 @@ plugins:
 
         // Call the newly created tool_1
         let ctx2 = create_test_ctx(&server);
-        let tool_request = CallToolRequestParam {
+        let tool_request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-tool_1"),
             arguments: Some(serde_json::Map::new()),
             task: None,
@@ -2371,7 +2387,8 @@ plugins:
         let ctx = create_test_ctx(&server);
 
         // Call add_tool and verify response format
-        let add_tool_request = CallToolRequestParam {
+        let add_tool_request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(serde_json::Map::new()),
             task: None,
@@ -2425,7 +2442,8 @@ plugins:
         // Add 5 tools and verify tool_count in responses
         for expected_count in 1..=5 {
             let ctx = create_test_ctx(&server);
-            let add_tool_request = CallToolRequestParam {
+            let add_tool_request = CallToolRequestParams {
+                meta: None,
                 name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
                 arguments: Some(serde_json::Map::new()),
                 task: None,
@@ -2478,7 +2496,8 @@ plugins:
 
         // Try to call a tool that doesn't exist yet (tool_5 when only tool_1 exists)
         let ctx = create_test_ctx(&server);
-        let invalid_tool_request = CallToolRequestParam {
+        let invalid_tool_request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-tool_5"),
             arguments: Some(serde_json::Map::new()),
             task: None,
@@ -2536,7 +2555,8 @@ plugins:
             serde_json::Value::String("should_be_ignored".to_string()),
         );
 
-        let add_tool_request = CallToolRequestParam {
+        let add_tool_request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(args),
             task: None,
@@ -2599,7 +2619,8 @@ plugins:
 
         // Add tool_1
         let ctx = create_test_ctx(&server);
-        let add_tool_request = CallToolRequestParam {
+        let add_tool_request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
             arguments: Some(serde_json::Map::new()),
             task: None,
@@ -2658,7 +2679,8 @@ plugins:
         // Add two tools
         for _ in 0..2 {
             let ctx = create_test_ctx(&server);
-            let add_tool_request = CallToolRequestParam {
+            let add_tool_request = CallToolRequestParams {
+                meta: None,
                 name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
                 arguments: Some(serde_json::Map::new()),
                 task: None,
@@ -3006,7 +3028,8 @@ plugins:
         .await;
 
         // Test calling get_time with UTC (default)
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Owned("rstime-get_time".to_string()),
             arguments: None,
             task: None,
@@ -3081,7 +3104,8 @@ plugins:
             serde_json::Value::String("America/New_York".to_string()),
         );
 
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Owned("rstime-get_time".to_string()),
             arguments: Some(args),
             task: None,
@@ -3143,7 +3167,8 @@ plugins:
             serde_json::Value::String("Wed, 18 Feb 2015 23:16:09 GMT".to_string()),
         );
 
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Owned("rstime-parse_time".to_string()),
             arguments: Some(args),
             task: None,
@@ -3218,7 +3243,8 @@ plugins:
             serde_json::Value::String("invalid timestamp".to_string()),
         );
 
-        let request = CallToolRequestParam {
+        let request = CallToolRequestParams {
+            meta: None,
             name: std::borrow::Cow::Owned("rstime-parse_time".to_string()),
             arguments: Some(args),
             task: None,
@@ -3272,7 +3298,8 @@ plugins:
         .await;
 
         // Test getting the prompt without timezone argument
-        let request = GetPromptRequestParam {
+        let request = GetPromptRequestParams {
+            meta: None,
             name: "rstime-get_time_with_timezone".to_string(),
             arguments: None,
         };
@@ -3326,7 +3353,8 @@ plugins:
             serde_json::Value::String("Europe/London".to_string()),
         );
 
-        let request = GetPromptRequestParam {
+        let request = GetPromptRequestParams {
+            meta: None,
             name: "rstime-get_time_with_timezone".to_string(),
             arguments: Some(args),
         };
@@ -3393,7 +3421,8 @@ plugins:
         // Resource URIs are namespaced with plugin name inserted into the path
         // Format: scheme://host/plugin-name/rest-of-path
         // With allowed_hosts configured, the plugin can make HTTP requests
-        let request = ReadResourceRequestParam {
+        let request = ReadResourceRequestParams {
+            meta: None,
             uri: "https://www.timezoneconverter.com/rstime/cgi-bin/zoneinfo?tz=America/New_York"
                 .to_string(),
         };
@@ -3459,7 +3488,8 @@ plugins:
             value: "Ame".to_string(),
         };
 
-        let complete_request = CompleteRequestParam {
+        let complete_request = CompleteRequestParams {
+            meta: None,
             r#ref: Reference::Prompt(PromptReference {
                 name: "rstime-get_time_with_timezone".to_string(),
                 title: None,
@@ -3576,7 +3606,8 @@ plugins:
             value: "Eur".to_string(),
         };
 
-        let complete_request = CompleteRequestParam {
+        let complete_request = CompleteRequestParams {
+            meta: None,
             r#ref: Reference::Resource(ResourceReference { uri: resource_uri }),
             argument: argument_info,
             context: None,

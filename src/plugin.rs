@@ -51,13 +51,13 @@ impl<'a> From<&'a NotificationContext<RoleServer>> for PluginNotificationContext
 pub trait Plugin: Send + Sync + Debug {
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError>;
 
     async fn complete(
         &self,
-        request: CompleteRequestParam,
+        request: CompleteRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CompleteResult, McpError> {
         Ok(CompleteResult::default())
@@ -65,7 +65,7 @@ pub trait Plugin: Send + Sync + Debug {
 
     async fn get_prompt(
         &self,
-        request: GetPromptRequestParam,
+        request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
         Err(McpError::method_not_found::<GetPromptRequestMethod>())
@@ -73,7 +73,7 @@ pub trait Plugin: Send + Sync + Debug {
 
     async fn list_prompts(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
         Ok(ListPromptsResult::default())
@@ -81,7 +81,7 @@ pub trait Plugin: Send + Sync + Debug {
 
     async fn list_resources(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult::default())
@@ -89,7 +89,7 @@ pub trait Plugin: Send + Sync + Debug {
 
     async fn list_resource_templates(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         Ok(ListResourceTemplatesResult::default())
@@ -97,7 +97,7 @@ pub trait Plugin: Send + Sync + Debug {
 
     async fn list_tools(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError>;
 
@@ -114,7 +114,7 @@ pub trait Plugin: Send + Sync + Debug {
 
     async fn read_resource(
         &self,
-        request: ReadResourceRequestParam,
+        request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         Err(McpError::method_not_found::<ReadResourceRequestMethod>())
@@ -252,7 +252,7 @@ impl Deref for PluginV1 {
 impl Plugin for PluginV1 {
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         call_plugin::<CallToolResult>(
@@ -269,7 +269,7 @@ impl Plugin for PluginV1 {
 
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         call_plugin::<ListToolsResult>(self, "describe", "".to_string(), context.ct).await
@@ -305,7 +305,7 @@ impl Deref for PluginV2 {
 impl Plugin for PluginV2 {
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         call_plugin::<CallToolResult>(
@@ -323,11 +323,11 @@ impl Plugin for PluginV2 {
 
     async fn complete(
         &self,
-        request: CompleteRequestParam,
+        request: CompleteRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CompleteResult, McpError> {
         #[derive(Debug, Clone)]
-        struct Helper(CompleteRequestParam);
+        struct Helper(CompleteRequestParams);
 
         impl Serialize for Helper {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -363,7 +363,7 @@ impl Plugin for PluginV2 {
 
     async fn get_prompt(
         &self,
-        request: GetPromptRequestParam,
+        request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
         call_plugin::<GetPromptResult>(
@@ -381,7 +381,7 @@ impl Plugin for PluginV2 {
 
     async fn list_prompts(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
         if !function_exists_plugin(self, "list_prompts") {
@@ -401,7 +401,7 @@ impl Plugin for PluginV2 {
 
     async fn list_resources(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         if !function_exists_plugin(self, "list_resources") {
@@ -421,7 +421,7 @@ impl Plugin for PluginV2 {
 
     async fn list_resource_templates(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         if !function_exists_plugin(self, "list_resource_templates") {
@@ -441,7 +441,7 @@ impl Plugin for PluginV2 {
 
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         if !function_exists_plugin(self, "list_tools") {
@@ -487,7 +487,7 @@ impl Plugin for PluginV2 {
 
     async fn read_resource(
         &self,
-        request: ReadResourceRequestParam,
+        request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         call_plugin::<ReadResourceResult>(
