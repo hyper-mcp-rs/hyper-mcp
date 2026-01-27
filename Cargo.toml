@@ -17,6 +17,7 @@ git-version = "0.3"
 anyhow = "1.0"
 async-trait = "0.1"
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
+backoff = { version = "0.4", features = ["tokio"] }
 aws-sdk-s3 = "1.120"
 axum = "0.8"
 bytesize = "2.3"
@@ -49,7 +50,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 serde_with = "3.16"
-sha2 = "0.10"
 sigstore = { version = "0.13", features = ["cosign", "verify", "bundle"] }
 tar = "0.4"
 tokio = { version = "1.49", features = ["full"] }

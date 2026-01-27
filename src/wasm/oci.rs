@@ -1,6 +1,7 @@
 use crate::config::OciConfig;
 use crate::naming::PluginName;
 use anyhow::{Context, Result, anyhow};
+use backoff::{ExponentialBackoff, future::retry};
 use dashmap::DashMap;
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use flate2::read::GzDecoder;
@@ -10,12 +11,12 @@ use oci_client::{
     manifest::OciManifest,
     secrets::RegistryAuth,
 };
-use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use tar::Archive;
 use tokio::process::Command;
@@ -25,11 +26,11 @@ use url::Url;
 static OCI_CLIENT: OnceCell<Client> = OnceCell::const_new();
 static DOWNLOAD_LOCKS: OnceCell<DashMap<String, Arc<Mutex<()>>>> = OnceCell::const_new();
 
-fn build_auth(reference: &Reference) -> RegistryAuth {
-    let server = reference
-        .resolve_registry()
-        .strip_suffix('/')
-        .unwrap_or_else(|| reference.resolve_registry());
+async fn build_auth(reference: &Reference) -> RegistryAuth {
+    let mut server = reference.resolve_registry();
+    if let Some(svr) = server.strip_suffix('/') {
+        server = svr
+    }
 
     match docker_credential::get_credential(server) {
         Err(CredentialRetrievalError::ConfigNotFound) => RegistryAuth::Anonymous,
@@ -58,10 +59,6 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
     // your contract: look for this inside tar layers; OR accept a raw wasm layer
     let target_file_path = "/plugin.wasm";
 
-    let mut hasher = Sha256::new();
-    hasher.update(image_reference);
-    let hash = hex::encode(hasher.finalize());
-
     let cache_dir = dirs::cache_dir()
         .map(|mut path| {
             path.push("hyper-mcp");
@@ -70,19 +67,13 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
         .context("Unable to determine cache dir")?;
     std::fs::create_dir_all(&cache_dir)?;
 
-    let local_output_path = cache_dir.join(format!("{hash}.wasm"));
+    let local_output_path =
+        pull_and_extract_oci_artifact(cache_dir, config, image_reference, target_file_path)
+            .await
+            .map_err(|e| anyhow!("Failed to pull OCI plugin: {e}"))?;
     let local_output_path_str = local_output_path
         .to_str()
         .ok_or_else(|| anyhow!("Non-utf8 cache path: {local_output_path:?}"))?;
-
-    pull_and_extract_oci_artifact(
-        config,
-        image_reference,
-        target_file_path,
-        local_output_path_str,
-    )
-    .await
-    .map_err(|e| anyhow!("Failed to pull OCI plugin: {e}"))?;
 
     tracing::info!("Loaded plugin `{plugin_name}` from cache: {local_output_path_str}");
 
@@ -306,11 +297,11 @@ fn extract_wasm_from_blob(buf: &[u8], target_file_path: &str) -> Result<Option<V
 /// - an image-style tar.gz layer containing /plugin.wasm
 /// - an ORAS-style artifact where a layer is the wasm blob itself
 async fn pull_and_extract_oci_artifact(
+    cache_dir: PathBuf,
     config: &OciConfig,
     image_reference: &str,
     target_file_path: &str,
-    local_output_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let locks = DOWNLOAD_LOCKS
         .get_or_init(|| async { DashMap::new() })
         .await;
@@ -322,22 +313,8 @@ async fn pull_and_extract_oci_artifact(
 
     let _guard = lock.lock().await;
 
-    if Path::new(local_output_path).exists() {
-        tracing::info!(
-            "Plugin {image_reference} already cached at: {local_output_path}. Skipping downloading."
-        );
-        return Ok(());
-    }
-
-    tracing::info!("Pulling {image_reference} ...");
-
-    // Verify BEFORE downloading blobs
-    verify_image_signature_with_cosign(config, image_reference)
-        .await
-        .map_err(|e| format!("No valid signatures found / verification failed: {e}"))?;
-
     let reference = Reference::try_from(image_reference)?;
-    let auth = build_auth(&reference);
+    let auth = build_auth(&reference).await;
 
     let client = OCI_CLIENT
         .get_or_init(|| async {
@@ -354,7 +331,41 @@ async fn pull_and_extract_oci_artifact(
     //   but layer mediaTypes vary widely.
     // - The accept list here is mostly about manifest types, not layer types.
 
-    let (manifest, _manifest_digest) = client.pull_manifest(&reference, &auth).await?;
+    let manifest_backoff = ExponentialBackoff {
+        max_elapsed_time: Some(Duration::from_secs(30)),
+        max_interval: Duration::from_secs(5),
+        ..Default::default()
+    };
+
+    let (manifest, manifest_digest) = retry(manifest_backoff, || async {
+        client.pull_manifest(&reference, &auth).await.map_err(|e| {
+            tracing::warn!("Failed to pull manifest for {}: {}", image_reference, e);
+            backoff::Error::transient(e)
+        })
+    })
+    .await?;
+
+    let local_output_path = cache_dir.join(match manifest_digest.split_once(':') {
+        Some((algo, sha)) => format!("{algo}_{sha}"),
+        None => {
+            return Err("invalid digest".into());
+        }
+    });
+
+    if local_output_path.exists() {
+        tracing::info!(
+            "Plugin {image_reference} already cached at: {}. Skipping downloading.",
+            local_output_path.display()
+        );
+        return Ok(local_output_path);
+    }
+
+    tracing::info!("Pulling {image_reference} ...");
+
+    // Verify BEFORE downloading blobs
+    verify_image_signature_with_cosign(config, image_reference)
+        .await
+        .map_err(|e| format!("No valid signatures found / verification failed: {e}"))?;
 
     // Now manually pull blobs for every layer descriptor.
     // This avoids `client.pull()` rejecting docker rootfs layer media types.
@@ -372,18 +383,38 @@ async fn pull_and_extract_oci_artifact(
     for layer_desc in layers.iter() {
         let digest = layer_desc.digest.as_str(); // e.g. "sha256:...."
 
-        let mut buf = Vec::new();
-
         // Pull by digest string (AsLayerDescriptor for &str) to avoid media-type validation.
-        client.pull_blob(&reference, digest, &mut buf).await?;
+        let blob_backoff = ExponentialBackoff {
+            max_elapsed_time: Some(Duration::from_secs(30)),
+            max_interval: Duration::from_secs(5),
+            ..Default::default()
+        };
+
+        let buf = retry(blob_backoff, || async {
+            let mut temp_buf = Vec::new();
+            client
+                .pull_blob(&reference, digest, &mut temp_buf)
+                .await
+                .map(|_| temp_buf)
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Failed to pull blob {} for {}: {}",
+                        digest,
+                        image_reference,
+                        e
+                    );
+                    backoff::Error::transient(e)
+                })
+        })
+        .await?;
 
         if let Some(wasm) = extract_wasm_from_blob(&buf, target_file_path)? {
-            if let Some(parent) = Path::new(local_output_path).parent() {
+            if let Some(parent) = local_output_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(local_output_path, wasm)?;
-            tracing::info!("Successfully extracted to: {local_output_path}");
-            return Ok(());
+            fs::write(local_output_path.clone(), wasm)?;
+            tracing::info!("Successfully extracted to: {}", local_output_path.display());
+            return Ok(local_output_path);
         }
     }
 
@@ -672,10 +703,10 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("cert_issuer"));
     }
 
-    #[test]
-    fn test_build_auth_returns_valid_auth() {
+    #[tokio::test]
+    async fn test_build_auth_returns_valid_auth() {
         let reference = Reference::try_from("ghcr.io/test/image:latest").unwrap();
-        let auth = build_auth(&reference);
+        let auth = build_auth(&reference).await;
         // Should be either Anonymous or Basic depending on environment
         // In GitHub Actions, credentials may be configured; locally they may not be
         match auth {
