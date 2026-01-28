@@ -62,6 +62,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
     let cache_dir = dirs::cache_dir()
         .map(|mut path| {
             path.push("hyper-mcp");
+            path.push("oci");
             path
         })
         .context("Unable to determine cache dir")?;
