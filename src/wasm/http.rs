@@ -1,8 +1,14 @@
 use crate::config::AuthConfig;
-use anyhow::{Result, anyhow};
-use reqwest::{Client, RequestBuilder};
-use std::{cmp::Reverse, collections::HashMap};
-use tokio::sync::OnceCell;
+use anyhow::{Context, Result, anyhow};
+use percent_encoding::percent_decode_str;
+use reqwest::{
+    Client, RequestBuilder, Response, StatusCode,
+    header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED},
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{cmp::Reverse, collections::HashMap, path::PathBuf};
+use tokio::{fs, sync::OnceCell};
 use url::Url;
 
 static REQWEST_CLIENT: OnceCell<Client> = OnceCell::const_new();
@@ -35,29 +41,105 @@ impl Authenticator for RequestBuilder {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct CacheMeta {
+    etag: Option<String>,
+    last_modified: Option<String>,
+    url: String,
+}
+
 pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> Result<Vec<u8>> {
-    match url.scheme() {
-        "http" => Ok(REQWEST_CLIENT
-            .get_or_init(|| async { reqwest::Client::new() })
-            .await
-            .get(url.as_str())
-            .send()
-            .await?
-            .bytes()
-            .await?
-            .to_vec()),
-        "https" => Ok(REQWEST_CLIENT
-            .get_or_init(|| async { reqwest::Client::new() })
-            .await
-            .get(url.as_str())
-            .add_auth(auths, url)
-            .send()
-            .await?
-            .bytes()
-            .await?
-            .to_vec()),
-        _ => Err(anyhow!("Unsupported URL scheme: {}", url.scheme())),
+    let mut wasm_path = dirs::cache_dir()
+        .map(|mut path| {
+            path.push("hyper-mcp");
+            path
+        })
+        .context("Unable to determine cache dir")?;
+    wasm_path.push(url.scheme());
+    if let Some(host) = url.host_str() {
+        wasm_path.push(host);
+    } else {
+        return Err(anyhow!("URL has no host"));
     }
+    if let Some(port) = url.port_or_known_default() {
+        wasm_path.push(port.to_string());
+    }
+    for path_segment in url
+        .path_segments()
+        .ok_or_else(|| anyhow!("URL cannot be a base"))?
+    {
+        if !(path_segment.is_empty() || path_segment == "." || path_segment == "..") {
+            wasm_path.push(percent_decode_str(path_segment).decode_utf8()?.as_ref());
+        }
+    }
+    if let Some(query) = url.query() {
+        let mut query_hash = Sha256::new();
+        query_hash.update(query);
+        wasm_path.push(format!("{:x}", query_hash.finalize()));
+    }
+
+    let mut request = REQWEST_CLIENT
+        .get_or_init(|| async { reqwest::Client::new() })
+        .await
+        .get(url.as_str());
+    match url.scheme() {
+        "http" => {}
+        "https" => {
+            request = request.add_auth(auths, url);
+        }
+        s => {
+            return Err(anyhow!("Unsupported URL scheme: {s}"));
+        }
+    }
+
+    let mut path_str = wasm_path.to_string_lossy().to_string();
+    path_str.push_str(".meta");
+    let meta_path = PathBuf::from(path_str);
+    let mut meta = if meta_path.exists()
+        && let Ok(s) = fs::read_to_string(&meta_path).await
+        && let Ok(m) = serde_json::from_str::<CacheMeta>(&s)
+    {
+        if let Some(etag) = &m.etag {
+            request = request.header(IF_NONE_MATCH, etag);
+        }
+        if let Some(last_modified) = &m.last_modified {
+            request = request.header(IF_MODIFIED_SINCE, last_modified);
+        }
+        m
+    } else {
+        CacheMeta {
+            url: url.as_str().to_string(),
+
+            ..Default::default()
+        }
+    };
+
+    fn header_to_string(response: &Response, name: &str) -> Option<String> {
+        response
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+    }
+
+    let response = request.send().await?;
+
+    match response.status() {
+        StatusCode::NOT_MODIFIED => {}
+        StatusCode::OK => {
+            if let Some(parent) = wasm_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+            meta.etag = header_to_string(&response, ETAG.as_str());
+            meta.last_modified = header_to_string(&response, LAST_MODIFIED.as_str());
+            fs::write(&wasm_path, &response.bytes().await?).await?;
+            fs::write(meta_path, serde_json::to_string(&meta)?).await?;
+        }
+        s => {
+            return Err(anyhow!("Unexpected status {s} fetching {url}"));
+        }
+    }
+    fs::read(wasm_path).await.map_err(|e| e.into())
 }
 
 #[cfg(test)]
