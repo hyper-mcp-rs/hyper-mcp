@@ -357,10 +357,7 @@ impl PluginService {
                         "https" => {
                             wasm::http::load_wasm(&plugin_cfg.url, &self.config.auths).await?
                         }
-                        "oci" => {
-                            wasm::oci::load_wasm(&plugin_cfg.url, &self.config.oci, plugin_name)
-                                .await?
-                        }
+                        "oci" => wasm::oci::load_wasm(&plugin_cfg.url, &self.config.oci).await?,
                         "s3" => wasm::s3::load_wasm(&plugin_cfg.url).await?,
                         unsupported => {
                             tracing::error!("Unsupported plugin URL scheme: {unsupported}");

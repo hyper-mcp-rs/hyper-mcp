@@ -1,5 +1,4 @@
 use crate::config::OciConfig;
-use crate::naming::PluginName;
 use anyhow::{Context, Result, anyhow};
 use backoff::{ExponentialBackoff, future::retry};
 use dashmap::DashMap;
@@ -52,7 +51,7 @@ async fn build_auth(reference: &Reference) -> RegistryAuth {
     }
 }
 
-pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) -> Result<Vec<u8>> {
+pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
     let image_reference = url
         .as_str()
         .strip_prefix("oci://")
@@ -61,26 +60,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
     // your contract: look for this inside tar layers; OR accept a raw wasm layer
     let target_file_path = "/plugin.wasm";
 
-    let cache_dir = dirs::cache_dir()
-        .map(|mut path| {
-            path.push("hyper-mcp");
-            path.push("oci");
-            path
-        })
-        .context("Unable to determine cache dir")?;
-    fs::create_dir_all(&cache_dir).await?;
-
-    let local_output_path =
-        pull_and_extract_oci_artifact(cache_dir, config, image_reference, target_file_path)
-            .await
-            .map_err(|e| anyhow!("Failed to pull OCI plugin: {e}"))?;
-    let local_output_path_str = local_output_path
-        .to_str()
-        .ok_or_else(|| anyhow!("Non-utf8 cache path: {local_output_path:?}"))?;
-
-    tracing::info!("Loaded plugin `{plugin_name}` from cache: {local_output_path_str}");
-
-    fs::read(local_output_path_str).await.map_err(|e| e.into())
+    pull_and_extract_oci_artifact(config, image_reference, target_file_path).await
 }
 
 /// Build cosign args for the strictest possible verification given your OciConfig.
@@ -298,11 +278,10 @@ fn extract_wasm_from_blob(buf: &[u8], target_file_path: &str) -> Result<Option<V
 /// - an image-style tar.gz layer containing /plugin.wasm
 /// - an ORAS-style artifact where a layer is the wasm blob itself
 async fn pull_and_extract_oci_artifact(
-    cache_dir: PathBuf,
     config: &OciConfig,
     image_reference: &str,
     target_file_path: &str,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>> {
     let locks = DOWNLOAD_LOCKS
         .get_or_init(|| async { DashMap::new() })
         .await;
@@ -313,6 +292,15 @@ async fn pull_and_extract_oci_artifact(
         .clone();
 
     let _guard = lock.lock().await;
+
+    let cache_dir = dirs::cache_dir()
+        .map(|mut path| {
+            path.push("hyper-mcp");
+            path.push("oci");
+            path
+        })
+        .context("Unable to determine cache dir")?;
+    fs::create_dir_all(&cache_dir).await?;
 
     let reference = Reference::try_from(image_reference)?;
     let auth = build_auth(&reference).await;
@@ -349,7 +337,7 @@ async fn pull_and_extract_oci_artifact(
     let local_output_path = cache_dir.join(match manifest_digest.split_once(':') {
         Some((algo, sha)) => format!("{algo}_{sha}"),
         None => {
-            return Err("invalid digest".into());
+            return Err(anyhow!("invalid digest"));
         }
     });
 
@@ -358,15 +346,13 @@ async fn pull_and_extract_oci_artifact(
             "Plugin {image_reference} already cached at: {}. Skipping downloading.",
             local_output_path.display()
         );
-        return Ok(local_output_path);
+        return Ok(fs::read(local_output_path).await?);
     }
 
     tracing::info!("Pulling {image_reference} ...");
 
     // Verify BEFORE downloading blobs
-    verify_image_signature_with_cosign(config, image_reference)
-        .await
-        .map_err(|e| format!("No valid signatures found / verification failed: {e}"))?;
+    verify_image_signature_with_cosign(config, image_reference).await?;
 
     // Now manually pull blobs for every layer descriptor.
     // This avoids `client.pull()` rejecting docker rootfs layer media types.
@@ -375,9 +361,9 @@ async fn pull_and_extract_oci_artifact(
         OciManifest::ImageIndex(_) => {
             // If you're forcing amd64 elsewhere, `pull_manifest()` should already have resolved
             // to an Image manifest in most cases. If you still get an index here, treat as error.
-            return Err(
-                "Got an image index manifest unexpectedly (platform resolution failed)".into(),
-            );
+            return Err(anyhow!(
+                "Got an image index manifest unexpectedly (platform resolution failed)"
+            ));
         }
     };
 
@@ -413,13 +399,15 @@ async fn pull_and_extract_oci_artifact(
             if let Some(parent) = local_output_path.parent() {
                 fs::create_dir_all(parent).await?;
             }
-            fs::write(local_output_path.clone(), wasm).await?;
+            fs::write(local_output_path.clone(), &wasm).await?;
             tracing::info!("Successfully extracted to: {}", local_output_path.display());
-            return Ok(local_output_path);
+            return Ok(wasm);
         }
     }
 
-    Err("No wasm payload found in any layer (expected wasm blob or tar(.gz) containing plugin.wasm)".into())
+    Err(anyhow!(
+        "No wasm payload found in any layer (expected wasm blob or tar(.gz) containing plugin.wasm)"
+    ))
 }
 
 #[cfg(test)]
@@ -736,9 +724,8 @@ mod tests {
         };
 
         let url = Url::parse("oci://ghcr.io/hyper-mcp-rs/time-plugin:nightly").unwrap();
-        let plugin_name = PluginName::try_from("time_plugin").unwrap();
 
-        let result = load_wasm(&url, &config, &plugin_name).await;
+        let result = load_wasm(&url, &config).await;
 
         // This test validates that we can pull a Docker image
         match result {
@@ -769,9 +756,8 @@ mod tests {
         };
 
         let url = Url::parse("oci://ghcr.io/hyper-mcp-rs/rstime-plugin:nightly").unwrap();
-        let plugin_name = PluginName::try_from("rstime_plugin").unwrap();
 
-        let result = load_wasm(&url, &config, &plugin_name).await;
+        let result = load_wasm(&url, &config).await;
 
         // This test validates that we can pull an ORAS artifact
         match result {
@@ -802,17 +788,16 @@ mod tests {
         };
 
         let url = Url::parse("oci://ghcr.io/hyper-mcp-rs/time-plugin:nightly").unwrap();
-        let plugin_name = PluginName::try_from("time_plugin").unwrap();
 
         // First load
-        let result1 = load_wasm(&url, &config, &plugin_name).await;
+        let result1 = load_wasm(&url, &config).await;
         if result1.is_err() {
             eprintln!("Skipping cache test due to network issue");
             return;
         }
 
         // Second load should use cache
-        let result2 = load_wasm(&url, &config, &plugin_name).await;
+        let result2 = load_wasm(&url, &config).await;
 
         match (result1, result2) {
             (Ok(bytes1), Ok(bytes2)) => {
@@ -837,9 +822,8 @@ mod tests {
         };
 
         let url = Url::parse("https://example.com/not-oci").unwrap();
-        let plugin_name = PluginName::try_from("test").unwrap();
 
-        let result = load_wasm(&url, &config, &plugin_name).await;
+        let result = load_wasm(&url, &config).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Invalid OCI URL"));
     }
