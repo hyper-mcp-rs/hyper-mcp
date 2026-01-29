@@ -1,5 +1,6 @@
 use crate::config::AuthConfig;
 use anyhow::{Context, Result, anyhow};
+use backoff::{ExponentialBackoff, future::retry};
 use percent_encoding::percent_decode_str;
 use reqwest::{
     Client, RequestBuilder, Response, StatusCode,
@@ -7,7 +8,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{cmp::Reverse, collections::HashMap, path::PathBuf};
+use std::{cmp::Reverse, collections::HashMap, path::PathBuf, time::Duration};
 use tokio::{fs, sync::OnceCell};
 use url::Url;
 
@@ -122,24 +123,45 @@ pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> R
             .map(|s| s.to_string())
     }
 
-    let response = request.send().await?;
+    let backoff = ExponentialBackoff {
+        max_elapsed_time: Some(Duration::from_secs(30)),
+        max_interval: Duration::from_secs(5),
+        ..Default::default()
+    };
 
-    match response.status() {
-        StatusCode::NOT_MODIFIED => {}
-        StatusCode::OK => {
-            if let Some(parent) = wasm_path.parent() {
-                fs::create_dir_all(parent).await?;
+    let response = retry(backoff, || async {
+        let resp = request
+            .try_clone()
+            .ok_or_else(|| anyhow!("Failed to clone request"))?
+            .send()
+            .await
+            .map_err(|e| backoff::Error::transient(e.into()))?;
+
+        match resp.status() {
+            StatusCode::NOT_MODIFIED | StatusCode::OK => Ok(resp),
+            s => {
+                tracing::warn!("Unexpected status {} fetching {}, retrying...", s, url);
+                Err(backoff::Error::transient(anyhow!(
+                    "Unexpected status {s} fetching {url}"
+                )))
             }
-            meta.etag = header_to_string(&response, ETAG.as_str());
-            meta.last_modified = header_to_string(&response, LAST_MODIFIED.as_str());
-            fs::write(&wasm_path, &response.bytes().await?).await?;
-            fs::write(meta_path, serde_json::to_string(&meta)?).await?;
         }
-        s => {
-            return Err(anyhow!("Unexpected status {s} fetching {url}"));
+    })
+    .await?;
+
+    if response.status() == StatusCode::OK {
+        if let Some(parent) = wasm_path.parent() {
+            fs::create_dir_all(parent).await?;
         }
+        meta.etag = header_to_string(&response, ETAG.as_str());
+        meta.last_modified = header_to_string(&response, LAST_MODIFIED.as_str());
+        let bytes = &response.bytes().await?;
+        fs::write(&wasm_path, bytes).await?;
+        fs::write(meta_path, serde_json::to_string(&meta)?).await?;
+        Ok(bytes.to_vec())
+    } else {
+        fs::read(wasm_path).await.map_err(|e| e.into())
     }
-    fs::read(wasm_path).await.map_err(|e| e.into())
 }
 
 #[cfg(test)]
