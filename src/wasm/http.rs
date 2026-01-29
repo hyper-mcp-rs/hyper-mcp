@@ -167,8 +167,10 @@ pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::response::IntoResponse;
     use reqwest::Client;
     use std::collections::HashMap;
+    use tokio::net::TcpListener;
     use url::Url;
 
     #[test]
@@ -414,5 +416,346 @@ mod tests {
         let result2 = request2.add_auth(&Some(auths), &url);
         // The fact that we got here without panicking means the method worked
         drop(result2);
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_success() {
+        use axum::{Router, routing::get};
+
+        // Create a simple WASM-like content (valid wasm magic number)
+        let wasm_content = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let content_clone = wasm_content.clone();
+
+        let app = Router::new().route(
+            "/test.wasm",
+            get(move || {
+                let content = content_clone.clone();
+                async move { (StatusCode::OK, content) }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        // Give the server a moment to start
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let url = Url::parse(&format!("http://127.0.0.1:{}/test.wasm", addr.port())).unwrap();
+        let result = load_wasm(&url, &None).await;
+
+        assert!(result.is_ok());
+        let bytes = result.unwrap();
+        assert_eq!(bytes, wasm_content);
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_with_auth_only_https() {
+        use axum::{Router, routing::get};
+
+        // Auth is only applied to https URLs, so http should work without auth
+        let wasm_content = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let content_clone = wasm_content.clone();
+
+        let app = Router::new().route(
+            "/public.wasm",
+            get(move || {
+                let content = content_clone.clone();
+                async move { (StatusCode::OK, content) }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Test with http URL - auth should be ignored
+        let url = Url::parse(&format!("http://127.0.0.1:{}/public.wasm", addr.port())).unwrap();
+        let mut auths = HashMap::new();
+        let base_url = Url::parse(&format!("http://127.0.0.1:{}", addr.port())).unwrap();
+        auths.insert(
+            base_url,
+            AuthConfig::Basic {
+                username: "testuser".to_string(),
+                password: "testpass".to_string(),
+            },
+        );
+
+        let result = load_wasm(&url, &Some(auths)).await;
+        // Should succeed because http URLs don't require auth
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_with_etag_caching() {
+        use axum::{Router, http::HeaderMap, routing::get};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        };
+
+        let wasm_content = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let request_count = Arc::new(AtomicU32::new(0));
+        let request_count_clone = request_count.clone();
+
+        let app = Router::new().route(
+            "/cached.wasm",
+            get(move |headers: HeaderMap| {
+                let count = request_count_clone.clone();
+                let content = wasm_content.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+
+                    if let Some(etag) = headers.get("if-none-match") {
+                        if etag.to_str().unwrap() == "\"test-etag\"" {
+                            return (StatusCode::NOT_MODIFIED, Vec::new()).into_response();
+                        }
+                    }
+
+                    (StatusCode::OK, [("etag", "\"test-etag\"")], content).into_response()
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let url = Url::parse(&format!("http://127.0.0.1:{}/cached.wasm", addr.port())).unwrap();
+
+        // First request
+        let result1 = load_wasm(&url, &None).await;
+        assert!(result1.is_ok());
+
+        // Second request should use cache
+        let result2 = load_wasm(&url, &None).await;
+        assert!(result2.is_ok());
+
+        // Should have made 2 requests (one initial, one with etag that returns 304)
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_retry_on_500() {
+        use axum::{Router, routing::get};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        };
+
+        let wasm_content = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let attempt_count = Arc::new(AtomicU32::new(0));
+        let attempt_count_clone = attempt_count.clone();
+
+        let app = Router::new().route(
+            "/flaky.wasm",
+            get(move || {
+                let count = attempt_count_clone.clone();
+                let content = wasm_content.clone();
+                async move {
+                    let attempts = count.fetch_add(1, Ordering::SeqCst);
+
+                    // Fail first 2 attempts, succeed on 3rd
+                    if attempts < 2 {
+                        return (StatusCode::INTERNAL_SERVER_ERROR, Vec::new()).into_response();
+                    }
+
+                    (StatusCode::OK, content).into_response()
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let url = Url::parse(&format!("http://127.0.0.1:{}/flaky.wasm", addr.port())).unwrap();
+        let result = load_wasm(&url, &None).await;
+
+        // Should succeed after retries
+        assert!(result.is_ok());
+        // Should have made at least 3 attempts
+        assert!(attempt_count.load(Ordering::SeqCst) >= 3);
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_retry_exhaustion() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/always-fails.wasm",
+            get(|| async move { (StatusCode::INTERNAL_SERVER_ERROR, Vec::<u8>::new()) }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let url = Url::parse(&format!(
+            "http://127.0.0.1:{}/always-fails.wasm",
+            addr.port()
+        ))
+        .unwrap();
+        let result = load_wasm(&url, &None).await;
+
+        // Should fail after exhausting retries
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_unsupported_scheme() {
+        let url = Url::parse("ftp://example.com/test.wasm").unwrap();
+        let result = load_wasm(&url, &None).await;
+
+        // Should fail with unsupported scheme error
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported URL scheme")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_404_not_found() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/exists.wasm",
+            get(|| async move { (StatusCode::OK, vec![0x00, 0x61, 0x73, 0x6D]) }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let url = Url::parse(&format!("http://127.0.0.1:{}/not-exists.wasm", addr.port())).unwrap();
+        let result = load_wasm(&url, &None).await;
+
+        // Should fail with 404
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_wasm_cache_hit_with_same_etag() {
+        use axum::{Router, http::HeaderMap, routing::get};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        };
+
+        let wasm_content = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        let request_count = Arc::new(AtomicU32::new(0));
+        let request_count_clone = request_count.clone();
+
+        let app = Router::new().route(
+            "/cache-test.wasm",
+            get(move |headers: HeaderMap| {
+                let count = request_count_clone.clone();
+                let content = wasm_content.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+
+                    // Check if client sent if-none-match header
+                    if let Some(etag) = headers.get("if-none-match") {
+                        if etag.to_str().unwrap() == "\"test-etag-123\"" {
+                            // Return 304 Not Modified
+                            return (
+                                StatusCode::NOT_MODIFIED,
+                                [
+                                    ("etag", "\"test-etag-123\""),
+                                    ("last-modified", "Wed, 01 Jan 2025 00:00:00 GMT"),
+                                ],
+                                Vec::new(),
+                            )
+                                .into_response();
+                        }
+                    }
+
+                    // First request - return full content with etag and last-modified
+                    (
+                        StatusCode::OK,
+                        [
+                            ("etag", "\"test-etag-123\""),
+                            ("last-modified", "Wed, 01 Jan 2025 00:00:00 GMT"),
+                        ],
+                        content,
+                    )
+                        .into_response()
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let url = Url::parse(&format!("http://127.0.0.1:{}/cache-test.wasm", addr.port())).unwrap();
+
+        // First load - should get full content
+        let result1 = load_wasm(&url, &None).await;
+        assert!(result1.is_ok());
+        let bytes1 = result1.unwrap();
+        assert_eq!(bytes1, vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+
+        // Second load - should send if-none-match, get 304, and return cached content
+        let result2 = load_wasm(&url, &None).await;
+        assert!(result2.is_ok());
+        let bytes2 = result2.unwrap();
+        assert_eq!(bytes2, vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]);
+        // Should have made 2 requests total (second one returns 304)
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
+
+        // Verify both loads returned the same content
+        assert_eq!(bytes1, bytes2);
     }
 }
