@@ -347,7 +347,7 @@ async fn pull_and_extract_oci_artifact(
     .await?;
 
     let local_output_path = cache_dir.join(match manifest_digest.split_once(':') {
-        Some((algo, sha)) => format!("{algo}_{sha}.wasm"),
+        Some((algo, sha)) => format!("{algo}_{sha}"),
         None => {
             return Err("invalid digest".into());
         }
