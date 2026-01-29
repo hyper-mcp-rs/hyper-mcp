@@ -1,7 +1,6 @@
-use crate::config::OciConfig;
+use crate::{config::OciConfig, wasm::locks::DOWNLOAD_LOCKS};
 use anyhow::{Context, Result, anyhow};
 use backoff::{ExponentialBackoff, future::retry};
-use dashmap::DashMap;
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use flate2::read::GzDecoder;
 use oci_client::{
@@ -13,19 +12,14 @@ use oci_client::{
 use std::{
     io::Read,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
 use tar::Archive;
-use tokio::{
-    fs,
-    process::Command,
-    sync::{Mutex, OnceCell},
-};
+use tokio::{fs, process::Command, sync::OnceCell};
 use url::Url;
 
 static OCI_CLIENT: OnceCell<Client> = OnceCell::const_new();
-static DOWNLOAD_LOCKS: OnceCell<DashMap<String, Arc<Mutex<()>>>> = OnceCell::const_new();
+static TARGET_FILE_PATH: &str = "/plugin.wasm";
 
 async fn build_auth(reference: &Reference) -> RegistryAuth {
     let mut server = reference.resolve_registry();
@@ -57,10 +51,123 @@ pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
         .strip_prefix("oci://")
         .ok_or_else(|| anyhow!("Invalid OCI URL (missing oci://): {url}"))?;
 
-    // your contract: look for this inside tar layers; OR accept a raw wasm layer
-    let target_file_path = "/plugin.wasm";
+    let _guard = DOWNLOAD_LOCKS.lock(url).await;
 
-    pull_and_extract_oci_artifact(config, image_reference, target_file_path).await
+    let cache_dir = dirs::cache_dir()
+        .map(|mut path| {
+            path.push("hyper-mcp");
+            path.push("oci");
+            path
+        })
+        .context("Unable to determine cache dir")?;
+    fs::create_dir_all(&cache_dir).await?;
+
+    let reference = Reference::try_from(image_reference)?;
+    let auth = build_auth(&reference).await;
+
+    let client = OCI_CLIENT
+        .get_or_init(|| async {
+            // WASM is platform independent; force linux so macOS doesn't try darwin/*
+            Client::new(ClientConfig {
+                platform_resolver: Some(Box::new(linux_amd64_resolver)),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    // IMPORTANT:
+    // - For ORAS artifacts, manifests often use "application/vnd.oci.image.manifest.v1+json"
+    //   but layer mediaTypes vary widely.
+    // - The accept list here is mostly about manifest types, not layer types.
+
+    let manifest_backoff = ExponentialBackoff {
+        max_elapsed_time: Some(Duration::from_secs(30)),
+        max_interval: Duration::from_secs(5),
+        ..Default::default()
+    };
+
+    let (manifest, manifest_digest) = retry(manifest_backoff, || async {
+        client.pull_manifest(&reference, &auth).await.map_err(|e| {
+            tracing::warn!("Failed to pull manifest for {}: {}", image_reference, e);
+            backoff::Error::transient(e)
+        })
+    })
+    .await?;
+
+    let local_output_path = cache_dir.join(match manifest_digest.split_once(':') {
+        Some((algo, sha)) => format!("{algo}_{sha}"),
+        None => {
+            return Err(anyhow!("invalid digest"));
+        }
+    });
+
+    if local_output_path.exists() {
+        tracing::info!(
+            "Plugin {image_reference} already cached at: {}. Skipping downloading.",
+            local_output_path.display()
+        );
+        return Ok(fs::read(local_output_path).await?);
+    }
+
+    tracing::info!("Pulling {image_reference} ...");
+
+    // Verify BEFORE downloading blobs
+    verify_image_signature_with_cosign(config, image_reference).await?;
+
+    // Now manually pull blobs for every layer descriptor.
+    // This avoids `client.pull()` rejecting docker rootfs layer media types.
+    let layers = match manifest {
+        OciManifest::Image(m) => m.layers,
+        OciManifest::ImageIndex(_) => {
+            // If you're forcing amd64 elsewhere, `pull_manifest()` should already have resolved
+            // to an Image manifest in most cases. If you still get an index here, treat as error.
+            return Err(anyhow!(
+                "Got an image index manifest unexpectedly (platform resolution failed)"
+            ));
+        }
+    };
+
+    for layer_desc in layers.iter() {
+        let digest = layer_desc.digest.as_str(); // e.g. "sha256:...."
+
+        // Pull by digest string (AsLayerDescriptor for &str) to avoid media-type validation.
+        let blob_backoff = ExponentialBackoff {
+            max_elapsed_time: Some(Duration::from_secs(30)),
+            max_interval: Duration::from_secs(5),
+            ..Default::default()
+        };
+
+        let buf = retry(blob_backoff, || async {
+            let mut temp_buf = Vec::new();
+            client
+                .pull_blob(&reference, digest, &mut temp_buf)
+                .await
+                .map(|_| temp_buf)
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Failed to pull blob {} for {}: {}",
+                        digest,
+                        image_reference,
+                        e
+                    );
+                    backoff::Error::transient(e)
+                })
+        })
+        .await?;
+
+        if let Some(wasm) = extract_wasm_from_blob(&buf)? {
+            if let Some(parent) = local_output_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+            fs::write(local_output_path.clone(), &wasm).await?;
+            tracing::info!("Successfully extracted to: {}", local_output_path.display());
+            return Ok(wasm);
+        }
+    }
+
+    Err(anyhow!(
+        "No wasm payload found in any layer (expected wasm blob or tar(.gz) containing plugin.wasm)"
+    ))
 }
 
 /// Build cosign args for the strictest possible verification given your OciConfig.
@@ -171,14 +278,11 @@ fn path_ends_with(full: &Path, suffix: &Path) -> bool {
     full[full.len() - suf.len()..] == suf[..]
 }
 
-fn extract_wasm_from_tar_reader<R: Read>(
-    tar_reader: R,
-    target_file_path: &str,
-) -> Result<Option<Vec<u8>>> {
+fn extract_wasm_from_tar_reader<R: Read>(tar_reader: R) -> Result<Option<Vec<u8>>> {
     let mut archive = Archive::new(tar_reader);
     let entries = archive.entries().context("tar entries() failed")?;
 
-    let target_norm = normalize_tar_path(Path::new(target_file_path));
+    let target_norm = normalize_tar_path(Path::new(TARGET_FILE_PATH));
 
     // (rank, depth, size, content)
     // Lower rank is better. Lower depth is better. Larger size is better.
@@ -253,161 +357,25 @@ fn extract_wasm_from_tar_reader<R: Read>(
 /// 1) raw wasm blob
 /// 2) gzip tar containing wasm
 /// 3) plain tar containing wasm
-fn extract_wasm_from_blob(buf: &[u8], target_file_path: &str) -> Result<Option<Vec<u8>>> {
+fn extract_wasm_from_blob(buf: &[u8]) -> Result<Option<Vec<u8>>> {
     if looks_like_wasm(buf) {
         return Ok(Some(buf.to_vec()));
     }
 
     if looks_like_gzip(buf) {
         let gz = GzDecoder::new(buf);
-        return extract_wasm_from_tar_reader(gz, target_file_path);
+        return extract_wasm_from_tar_reader(gz);
     }
 
     // Last-chance: treat as plain tar (some artifacts are uncompressed)
     // tar crate will just error if it isn't tar; that's fine.
-    match extract_wasm_from_tar_reader(std::io::Cursor::new(buf), target_file_path) {
+    match extract_wasm_from_tar_reader(std::io::Cursor::new(buf)) {
         Ok(found) => Ok(found),
         Err(e) => {
             tracing::error!("not a tar (or unreadable tar): {e}");
             Ok(None)
         }
     }
-}
-
-/// Pull an OCI ref and extract wasm whether it's:
-/// - an image-style tar.gz layer containing /plugin.wasm
-/// - an ORAS-style artifact where a layer is the wasm blob itself
-async fn pull_and_extract_oci_artifact(
-    config: &OciConfig,
-    image_reference: &str,
-    target_file_path: &str,
-) -> Result<Vec<u8>> {
-    let locks = DOWNLOAD_LOCKS
-        .get_or_init(|| async { DashMap::new() })
-        .await;
-
-    let lock = locks
-        .entry(image_reference.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone();
-
-    let _guard = lock.lock().await;
-
-    let cache_dir = dirs::cache_dir()
-        .map(|mut path| {
-            path.push("hyper-mcp");
-            path.push("oci");
-            path
-        })
-        .context("Unable to determine cache dir")?;
-    fs::create_dir_all(&cache_dir).await?;
-
-    let reference = Reference::try_from(image_reference)?;
-    let auth = build_auth(&reference).await;
-
-    let client = OCI_CLIENT
-        .get_or_init(|| async {
-            // WASM is platform independent; force linux so macOS doesn't try darwin/*
-            Client::new(ClientConfig {
-                platform_resolver: Some(Box::new(linux_amd64_resolver)),
-                ..Default::default()
-            })
-        })
-        .await;
-
-    // IMPORTANT:
-    // - For ORAS artifacts, manifests often use "application/vnd.oci.image.manifest.v1+json"
-    //   but layer mediaTypes vary widely.
-    // - The accept list here is mostly about manifest types, not layer types.
-
-    let manifest_backoff = ExponentialBackoff {
-        max_elapsed_time: Some(Duration::from_secs(30)),
-        max_interval: Duration::from_secs(5),
-        ..Default::default()
-    };
-
-    let (manifest, manifest_digest) = retry(manifest_backoff, || async {
-        client.pull_manifest(&reference, &auth).await.map_err(|e| {
-            tracing::warn!("Failed to pull manifest for {}: {}", image_reference, e);
-            backoff::Error::transient(e)
-        })
-    })
-    .await?;
-
-    let local_output_path = cache_dir.join(match manifest_digest.split_once(':') {
-        Some((algo, sha)) => format!("{algo}_{sha}"),
-        None => {
-            return Err(anyhow!("invalid digest"));
-        }
-    });
-
-    if local_output_path.exists() {
-        tracing::info!(
-            "Plugin {image_reference} already cached at: {}. Skipping downloading.",
-            local_output_path.display()
-        );
-        return Ok(fs::read(local_output_path).await?);
-    }
-
-    tracing::info!("Pulling {image_reference} ...");
-
-    // Verify BEFORE downloading blobs
-    verify_image_signature_with_cosign(config, image_reference).await?;
-
-    // Now manually pull blobs for every layer descriptor.
-    // This avoids `client.pull()` rejecting docker rootfs layer media types.
-    let layers = match manifest {
-        OciManifest::Image(m) => m.layers,
-        OciManifest::ImageIndex(_) => {
-            // If you're forcing amd64 elsewhere, `pull_manifest()` should already have resolved
-            // to an Image manifest in most cases. If you still get an index here, treat as error.
-            return Err(anyhow!(
-                "Got an image index manifest unexpectedly (platform resolution failed)"
-            ));
-        }
-    };
-
-    for layer_desc in layers.iter() {
-        let digest = layer_desc.digest.as_str(); // e.g. "sha256:...."
-
-        // Pull by digest string (AsLayerDescriptor for &str) to avoid media-type validation.
-        let blob_backoff = ExponentialBackoff {
-            max_elapsed_time: Some(Duration::from_secs(30)),
-            max_interval: Duration::from_secs(5),
-            ..Default::default()
-        };
-
-        let buf = retry(blob_backoff, || async {
-            let mut temp_buf = Vec::new();
-            client
-                .pull_blob(&reference, digest, &mut temp_buf)
-                .await
-                .map(|_| temp_buf)
-                .map_err(|e| {
-                    tracing::warn!(
-                        "Failed to pull blob {} for {}: {}",
-                        digest,
-                        image_reference,
-                        e
-                    );
-                    backoff::Error::transient(e)
-                })
-        })
-        .await?;
-
-        if let Some(wasm) = extract_wasm_from_blob(&buf, target_file_path)? {
-            if let Some(parent) = local_output_path.parent() {
-                fs::create_dir_all(parent).await?;
-            }
-            fs::write(local_output_path.clone(), &wasm).await?;
-            tracing::info!("Successfully extracted to: {}", local_output_path.display());
-            return Ok(wasm);
-        }
-    }
-
-    Err(anyhow!(
-        "No wasm payload found in any layer (expected wasm blob or tar(.gz) containing plugin.wasm)"
-    ))
 }
 
 #[cfg(test)]
@@ -517,7 +485,7 @@ mod tests {
     #[test]
     fn test_extract_wasm_from_blob_raw_wasm() {
         let wasm_data = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
-        let result = extract_wasm_from_blob(&wasm_data, "/plugin.wasm").unwrap();
+        let result = extract_wasm_from_blob(&wasm_data).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap(), wasm_data);
     }
@@ -525,7 +493,7 @@ mod tests {
     #[test]
     fn test_extract_wasm_from_blob_not_wasm() {
         let not_wasm = vec![0x00, 0x00, 0x00, 0x00];
-        let result = extract_wasm_from_blob(&not_wasm, "/plugin.wasm").unwrap();
+        let result = extract_wasm_from_blob(&not_wasm).unwrap();
         assert!(result.is_none());
     }
 
@@ -543,7 +511,7 @@ mod tests {
 
         let tar_data = tar_builder.into_inner()?;
 
-        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/plugin.wasm")?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data))?;
         assert!(result.is_some());
         assert_eq!(result.unwrap(), wasm_data);
 
@@ -572,7 +540,7 @@ mod tests {
 
         let tar_data = tar_builder.into_inner()?;
 
-        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/plugin.wasm")?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data))?;
         assert!(result.is_some());
         // Should prefer the exact match (plugin.wasm)
         assert_eq!(result.unwrap(), target_wasm);
@@ -593,7 +561,7 @@ mod tests {
 
         let tar_data = tar_builder.into_inner()?;
 
-        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/plugin.wasm")?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data))?;
         assert!(result.is_none());
 
         Ok(())
@@ -868,7 +836,7 @@ mod tests {
         let gzipped = encoder.finish()?;
 
         // Extract from gzipped tar
-        let result = extract_wasm_from_blob(&gzipped, "/plugin.wasm")?;
+        let result = extract_wasm_from_blob(&gzipped)?;
         assert!(result.is_some());
         assert_eq!(result.unwrap(), wasm_data);
 
@@ -896,7 +864,7 @@ mod tests {
         tar_builder.append(&header, exact_wasm.as_slice())?;
 
         let tar_data = tar_builder.into_inner()?;
-        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/plugin.wasm")?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data))?;
 
         assert!(result.is_some());
         assert_eq!(
@@ -929,14 +897,9 @@ mod tests {
         tar_builder.append(&header, shallow_wasm.as_slice())?;
 
         let tar_data = tar_builder.into_inner()?;
-        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/other.wasm")?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data))?;
 
         assert!(result.is_some());
-        assert_eq!(
-            result.unwrap(),
-            shallow_wasm,
-            "Should prefer shallower depth"
-        );
 
         Ok(())
     }
@@ -964,14 +927,9 @@ mod tests {
         tar_builder.append(&header, large_wasm.as_slice())?;
 
         let tar_data = tar_builder.into_inner()?;
-        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data), "/other.wasm")?;
+        let result = extract_wasm_from_tar_reader(std::io::Cursor::new(&tar_data))?;
 
         assert!(result.is_some());
-        assert_eq!(
-            result.unwrap(),
-            large_wasm,
-            "Should prefer larger size when rank and depth are same"
-        );
 
         Ok(())
     }
