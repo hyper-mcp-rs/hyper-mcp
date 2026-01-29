@@ -12,15 +12,17 @@ use oci_client::{
     secrets::RegistryAuth,
 };
 use std::{
-    fs,
     io::Read,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 use tar::Archive;
-use tokio::process::Command;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::{
+    fs,
+    process::Command,
+    sync::{Mutex, OnceCell},
+};
 use url::Url;
 
 static OCI_CLIENT: OnceCell<Client> = OnceCell::const_new();
@@ -66,7 +68,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
             path
         })
         .context("Unable to determine cache dir")?;
-    std::fs::create_dir_all(&cache_dir)?;
+    fs::create_dir_all(&cache_dir).await?;
 
     let local_output_path =
         pull_and_extract_oci_artifact(cache_dir, config, image_reference, target_file_path)
@@ -78,9 +80,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig, plugin_name: &PluginName) 
 
     tracing::info!("Loaded plugin `{plugin_name}` from cache: {local_output_path_str}");
 
-    tokio::fs::read(local_output_path_str)
-        .await
-        .map_err(|e| e.into())
+    fs::read(local_output_path_str).await.map_err(|e| e.into())
 }
 
 /// Build cosign args for the strictest possible verification given your OciConfig.
@@ -411,9 +411,9 @@ async fn pull_and_extract_oci_artifact(
 
         if let Some(wasm) = extract_wasm_from_blob(&buf, target_file_path)? {
             if let Some(parent) = local_output_path.parent() {
-                fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent).await?;
             }
-            fs::write(local_output_path.clone(), wasm)?;
+            fs::write(local_output_path.clone(), wasm).await?;
             tracing::info!("Successfully extracted to: {}", local_output_path.display());
             return Ok(local_output_path);
         }
