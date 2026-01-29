@@ -1,4 +1,7 @@
-use crate::{config::OciConfig, wasm::locks::DOWNLOAD_LOCKS};
+use crate::{
+    config::OciConfig,
+    wasm::{cache::cache_dir, locks::DOWNLOAD_LOCKS},
+};
 use anyhow::{Context, Result, anyhow};
 use backoff::{ExponentialBackoff, future::retry};
 use docker_credential::{CredentialRetrievalError, DockerCredential};
@@ -53,13 +56,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
 
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
 
-    let cache_dir = dirs::cache_dir()
-        .map(|mut path| {
-            path.push("hyper-mcp");
-            path.push("oci");
-            path
-        })
-        .context("Unable to determine cache dir")?;
+    let cache_dir = cache_dir();
     fs::create_dir_all(&cache_dir).await?;
 
     let reference = Reference::try_from(image_reference)?;

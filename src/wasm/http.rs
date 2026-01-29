@@ -1,5 +1,8 @@
-use crate::{config::AuthConfig, wasm::locks::DOWNLOAD_LOCKS};
-use anyhow::{Context, Result, anyhow};
+use crate::{
+    config::AuthConfig,
+    wasm::{cache::cache_dir, locks::DOWNLOAD_LOCKS},
+};
+use anyhow::{Result, anyhow};
 use backoff::{ExponentialBackoff, future::retry};
 use percent_encoding::percent_decode_str;
 use reqwest::{
@@ -52,12 +55,7 @@ struct CacheMeta {
 pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
 
-    let mut wasm_path = dirs::cache_dir()
-        .map(|mut path| {
-            path.push("hyper-mcp");
-            path
-        })
-        .context("Unable to determine cache dir")?;
+    let mut wasm_path = cache_dir();
     wasm_path.push(url.scheme());
     if let Some(host) = url.host_str() {
         wasm_path.push(host);
