@@ -1,6 +1,7 @@
 use crate::config::AuthConfig;
 use anyhow::{Context, Result, anyhow};
 use backoff::{ExponentialBackoff, future::retry};
+use dashmap::DashMap;
 use percent_encoding::percent_decode_str;
 use reqwest::{
     Client, RequestBuilder, Response, StatusCode,
@@ -8,11 +9,15 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{cmp::Reverse, collections::HashMap, path::PathBuf, time::Duration};
-use tokio::{fs, sync::OnceCell};
+use std::{cmp::Reverse, collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use tokio::{
+    fs,
+    sync::{Mutex, OnceCell},
+};
 use url::Url;
 
 static REQWEST_CLIENT: OnceCell<Client> = OnceCell::const_new();
+static DOWNLOAD_LOCKS: OnceCell<DashMap<String, Arc<Mutex<()>>>> = OnceCell::const_new();
 
 trait Authenticator {
     /// Adds authentication headers to the request if present in auths.
@@ -50,6 +55,17 @@ struct CacheMeta {
 }
 
 pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> Result<Vec<u8>> {
+    let locks = DOWNLOAD_LOCKS
+        .get_or_init(|| async { DashMap::new() })
+        .await;
+
+    let lock = locks
+        .entry(url.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone();
+
+    let _guard = lock.lock().await;
+
     let mut wasm_path = dirs::cache_dir()
         .map(|mut path| {
             path.push("hyper-mcp");
