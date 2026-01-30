@@ -80,7 +80,7 @@ async fn load_wasm_from_s3_or_cache(s3_client: &Client, url: &Url) -> Result<Vec
                 }
                 meta.etag = response.e_tag;
                 meta.last_modified = match response.last_modified {
-                    Some(dt) => dt.fmt(Format::EpochSeconds).ok(),
+                    Some(dt) => dt.fmt(Format::DateTimeWithOffset).ok(),
                     None => None,
                 };
                 let bytes = &body.into_bytes();
