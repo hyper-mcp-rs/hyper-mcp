@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{env::temp_dir, path::PathBuf, sync::LazyLock};
 
 static CACHE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
@@ -11,4 +12,11 @@ static CACHE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 
 pub fn cache_dir() -> PathBuf {
     CACHE_DIR.clone()
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct CacheMeta {
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    pub url: String,
 }

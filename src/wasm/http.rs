@@ -1,6 +1,9 @@
 use crate::{
     config::AuthConfig,
-    wasm::{cache::cache_dir, locks::DOWNLOAD_LOCKS},
+    wasm::{
+        cache::{CacheMeta, cache_dir},
+        locks::DOWNLOAD_LOCKS,
+    },
 };
 use anyhow::{Result, anyhow};
 use backoff::{ExponentialBackoff, future::retry};
@@ -9,7 +12,6 @@ use reqwest::{
     Client, RequestBuilder, Response, StatusCode,
     header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED},
 };
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{cmp::Reverse, collections::HashMap, path::PathBuf, time::Duration};
 use tokio::{fs, sync::OnceCell};
@@ -45,15 +47,13 @@ impl Authenticator for RequestBuilder {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct CacheMeta {
-    etag: Option<String>,
-    last_modified: Option<String>,
-    url: String,
-}
-
 pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
+    if !(url.scheme() == "http" || url.scheme() == "https") {
+        return Err(anyhow!(
+            "Invalid HTTP URL (missing http:// or https://): {url}"
+        ));
+    }
 
     let mut wasm_path = cache_dir();
     wasm_path.push(url.scheme());
@@ -70,7 +70,7 @@ pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> R
         .ok_or_else(|| anyhow!("URL cannot be a base"))?
     {
         if !(path_segment.is_empty() || path_segment == "." || path_segment == "..") {
-            wasm_path.push(percent_decode_str(path_segment).decode_utf8()?.as_ref());
+            wasm_path.push(percent_decode_str(path_segment).decode_utf8()?.as_ref() as &str);
         }
     }
     if let Some(query) = url.query() {
@@ -88,9 +88,7 @@ pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> R
         "https" => {
             request = request.add_auth(auths, url);
         }
-        s => {
-            return Err(anyhow!("Unsupported URL scheme: {s}"));
-        }
+        _ => {}
     }
 
     let mut path_str = wasm_path.to_string_lossy().to_string();
@@ -642,12 +640,7 @@ mod tests {
 
         // Should fail with unsupported scheme error
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Unsupported URL scheme")
-        );
+        assert!(result.unwrap_err().to_string().contains("Invalid HTTP URL"));
     }
 
     #[tokio::test]

@@ -17,6 +17,7 @@ git-version = "0.3"
 anyhow = "1.0"
 async-trait = "0.1"
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
+aws-smithy-types = "1.4"
 backoff = { version = "0.4", features = ["tokio"] }
 aws-sdk-s3 = "1.121"
 axum = "0.8"
