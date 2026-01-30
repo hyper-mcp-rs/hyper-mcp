@@ -14,6 +14,17 @@ static S3_CLIENT: OnceCell<Client> = OnceCell::const_new();
 
 pub async fn load_wasm(url: &Url) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
+
+    load_wasm_from_s3_or_cache(
+        S3_CLIENT
+            .get_or_init(|| async { Client::new(&aws_config::load_from_env().await) })
+            .await,
+        url,
+    )
+    .await
+}
+
+async fn load_wasm_from_s3_or_cache(s3_client: &Client, url: &Url) -> Result<Vec<u8>> {
     if url.scheme() != "s3" {
         return Err(anyhow!("Invalid S3 URL (missing s3://): {url}"));
     }
@@ -33,9 +44,7 @@ pub async fn load_wasm(url: &Url) -> Result<Vec<u8>> {
         }
     }
 
-    let mut request = S3_CLIENT
-        .get_or_init(|| async { Client::new(&aws_config::load_from_env().await) })
-        .await
+    let mut request = s3_client
         .get_object()
         .bucket(bucket)
         .key(url.path().trim_start_matches('/'));
@@ -96,3 +105,6 @@ pub async fn load_wasm(url: &Url) -> Result<Vec<u8>> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {}
