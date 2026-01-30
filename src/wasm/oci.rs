@@ -49,12 +49,11 @@ async fn build_auth(reference: &Reference) -> RegistryAuth {
 }
 
 pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
+    let _guard = DOWNLOAD_LOCKS.lock(url).await;
     let image_reference = url
         .as_str()
         .strip_prefix("oci://")
         .ok_or_else(|| anyhow!("Invalid OCI URL (missing oci://): {url}"))?;
-
-    let _guard = DOWNLOAD_LOCKS.lock(url).await;
 
     let cache_dir = cache_dir();
     fs::create_dir_all(&cache_dir).await?;
