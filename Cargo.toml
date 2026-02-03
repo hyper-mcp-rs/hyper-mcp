@@ -81,7 +81,7 @@ name = "hyper-mcp"
 path = "src/main.rs"
 
 [package.metadata.release]
-publish = false
+publish = true
 push = true
 tag = true
 tag-name = "v{{version}}"
