@@ -101,7 +101,8 @@
     "create_elicitation": {
       "description": "Request user input through the client's elicitation interface.\n\nPlugins can use this to ask users for input, decisions, or confirmations. This is useful for interactive plugins that need user guidance during tool execution. Returns the user's response with action and optional form data.",
       "input": {
-        "$ref": "#/components/schemas/ElicitRequestParamWithTimeout",
+        "description": "One of FormElicitRequestParamWithTimeout or UrlElicitRequestParamWithTimeout",
+        "type": "object",
         "contentType": "application/json"
       },
       "output": {
@@ -156,6 +157,13 @@
     },
     "notify_tool_list_changed": {
       "description": "Notify the client that the list of available tools has changed.\n\nPlugins should call this when they add, remove, or modify their available tools. The client will typically refresh its tool list in response."
+    },
+    "notify_url_elicitation_completed": {
+      "description": "Notify the client that a specific url elicitation has been completed.\n\nPlugins should call this when they notice that an url elicitation is done. The client can use this to manage the tracking of elicitations.",
+      "input": {
+        "$ref": "#/components/schemas/ElicitationResponseNotificationParam",
+        "contentType": "application/json"
+      }
     }
   },
   "components": {
@@ -382,12 +390,19 @@
         },
         "required": ["values"]
       },
-      "ElicitRequestParamWithTimeout": {
+      "FormElicitRequestMode": {
+        "type": "string",
+        "enum": "form"
+      },
+      "FormElicitRequestParamWithTimeout": {
         "description": "Input for the create_elicitation import function",
         "properties": {
           "message": {
             "type": "string",
             "description": "Message to present to the user"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/FormElicitRequestMode"
           },
           "requestedSchema": {
             "$ref": "#/components/schemas/Schema"
@@ -397,7 +412,7 @@
             "description": "Optional timeout in milliseconds"
           }
         },
-        "required": ["message", "requestedSchema"]
+        "required": ["message", "mode", "requestedSchema"]
       },
       "ElicitResult": {
         "description": "Result of an elicitation request",
@@ -481,6 +496,16 @@
           }
         },
         "required": ["content", "model", "role"]
+      },
+      "ElicitationResponseNotificationParam": {
+        "description": "Parameters for notify_url_elicitation_completed to notify about specific url elicitation",
+        "properties": {
+          "elicitationId": {
+            "type": "string",
+            "description": "The id of the completed elicitation"
+          }
+        },
+        "required": ["elicitationId"]
       },
       "EmbeddedResource": {
         "description": "An embedded resource with data",
@@ -1289,6 +1314,35 @@
           }
         },
         "required": ["type"]
+      },
+      "UrlElicitRequestMode": {
+        "type": "string",
+        "enum": "url"
+      },
+      "UrlElicitRequestParamWithTimeout": {
+        "description": "Input for the create_elicitation import function",
+        "properties": {
+          "elicitationId": {
+            "type": "string",
+            "description": "The unique identifier for this elicitation"
+          },
+          "message": {
+            "type": "string",
+            "description": "Message to present to the user"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/UrlElicitRequestMode"
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Optional timeout in milliseconds"
+          },
+          "url": {
+            "type": "string",
+            "description": "The URL where the user can provide the requested information"
+          }
+        },
+        "required": ["elicitationId", "message", "mode", "url"]
       }
     }
   }

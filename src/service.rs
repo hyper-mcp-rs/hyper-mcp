@@ -14,7 +14,7 @@ use extism_convert::Json;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
-    service::{NotificationContext, Peer, RequestContext, RoleServer},
+    service::{ElicitationMode, NotificationContext, Peer, RequestContext, RoleServer},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -193,16 +193,37 @@ impl PluginService {
             })?;
             match plugin_service.peer.get() {
                 Some(peer) => {
-                    if peer.supports_elicitation() {
+                    let peer_create_elicitation = || {
                         if let Some(timeout) = elicitation_msg.timeout {
                             tracing::info!("Creating elicitation from {} with timeout {:?}", ctx.plugin_name, timeout);
-                            ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner, Some(timeout))).map(Json).map_err(Error::from)
+                            ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).map_err(Error::from)
                         } else {
                             tracing::info!("Creating elicitation from {}", ctx.plugin_name);
-                            ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner)).map(Json).map_err(Error::from)
+                            ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).map_err(Error::from)
+                        }
+                    };
+                    if let CreateElicitationRequestParams::FormElicitationParams { .. } = elicitation_msg.inner {
+                        if peer.supported_elicitation_modes().contains(&ElicitationMode::Form) {
+                            peer_create_elicitation()
+                        } else {
+                            tracing::info!("Peer does not support form elicitation, declining from {}", ctx.plugin_name);
+                            Ok(Json(CreateElicitationResult {
+                                action: ElicitationAction::Decline,
+                                content: None,
+                            }))
+                        }
+                    } else if let CreateElicitationRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
+                        if peer.supported_elicitation_modes().contains(&ElicitationMode::Url) {
+                            peer_create_elicitation()
+                        } else {
+                            tracing::info!("Peer does not support url elicitation, declining from {}", ctx.plugin_name);
+                            Ok(Json(CreateElicitationResult {
+                                action: ElicitationAction::Decline,
+                                content: None,
+                            }))
                         }
                     } else {
-                        tracing::info!("Peer does not support elicitation, declining from {}", ctx.plugin_name);
+                        tracing::info!("Unknown elicitation type, declining from {}", ctx.plugin_name);
                         Ok(Json(CreateElicitationResult {
                             action: ElicitationAction::Decline,
                             content: None,
@@ -342,6 +363,21 @@ impl PluginService {
                 Some(peer) => {
                     tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
                     ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from)
+                },
+                None => Ok(()),
+            }
+        });
+
+        host_fn!(notify_url_elicitation_completed(ctx: PluginServiceContext; completed_msg: Json<ElicitationResponseNotificationParam>) {
+            let completed_msg = completed_msg.into_inner();
+            let ctx = ctx.get()?.lock().unwrap().clone();
+            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+            })?;
+            match plugin_service.peer.get() {
+                Some(peer) => {
+                    tracing::info!("Notifying url elicitation {} completed from {}", completed_msg.elicitation_id, ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).map_err(Error::from)
                 },
                 None => Ok(()),
             }
@@ -508,6 +544,18 @@ impl PluginService {
                             plugin_name: plugin_name.to_string(),
                         }),
                         notify_tool_list_changed,
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
+                    Function::new(
+                        "notify_url_elicitation_completed",
+                        [extism::PTR],
+                        [],
+                        UserData::new(PluginServiceContext {
+                            plugin_service_id: self.id,
+                            handle: Handle::current(),
+                            plugin_name: plugin_name.to_string(),
+                        }),
+                        notify_url_elicitation_completed,
                     )
                     .with_namespace(EXTISM_USER_MODULE),
                 ],
