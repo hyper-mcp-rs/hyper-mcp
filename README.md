@@ -30,7 +30,7 @@ hyper-mcp makes it easy to add AI capabilities to your applications. It works wi
 - Built on [Extism](https://github.com/extism/extism) for rock-solid plugin support
 - Sanboxing with WASM: ability to limit network, filesystem, memory access
 - Lightweight enough for resource-constrained environments
-- Support all 3 protocols in the spec: `stdio`, `sse` and `streamble-http`.
+- Support `stdio` transport protocol
 - Deploy anywhere: serverless, edge, mobile, IoT devices
 - Cross-platform compatibility out of the box
 - Support tool name prefix to prevent tool names collision
@@ -95,8 +95,8 @@ Supported URL schemes:
 $ hyper-mcp
 ```
 
-- By default, it will use `stdio` transport. If you want to use SSE, use flag `--transport sse` or streamable HTTP with `--transport streamable-http`.
-- If you want to debug, use `RUST_LOG=info`.
+- Uses `stdio` transport protocol.
+- If you want to debug, use `RUST_LOG=debug`.
 - If you're loading unsigned OCI plugin, you need to set `insecure_skip_signature` flag or env var `HYPER_MCP_INSECURE_SKIP_SIGNATURE` to `true`
 
 ## Using with Cursor IDE

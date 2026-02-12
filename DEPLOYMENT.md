@@ -40,7 +40,6 @@ docker run -d \
     -v /home/ubuntu/config.json:/app/config.json \
     -v ~/.local/share/keyrings:/home/appuser/.local/share/keyrings:ro \
     ghcr.io/hyper-mcp-rs/hyper-mcp \
-    --transport sse \
     --bind-address 0.0.0.0:3001 \
     --config-file /app/config.json
 ```
@@ -57,7 +56,6 @@ docker run -d \
     -v /home/ubuntu/config.json:/app/config.json \
     --secret registry_auth \
     ghcr.io/hyper-mcp-rs/hyper-mcp \
-    --transport sse \
     --bind-address 0.0.0.0:3001 \
     --config-file /app/config.json
 ```
@@ -71,7 +69,6 @@ docker run -d \
     -e REGISTRY_USER="username" \
     -e REGISTRY_PASS="password" \
     ghcr.io/hyper-mcp-rs/hyper-mcp \
-    --transport sse \
     --bind-address 0.0.0.0:3001 \
     --config-file /app/config.json
 ```
@@ -84,7 +81,6 @@ docker run -d \
     -p 3001:3001 \
     -v /home/ubuntu/config.json:/app/config.json \
     ghcr.io/hyper-mcp-rs/hyper-mcp \
-    --transport sse \
     --bind-address 0.0.0.0:3001 \
     --config-file /app/config.json
 ```
@@ -163,7 +159,6 @@ The service will be deployed with:
 - Port 3001 exposed
 - Config file mounted at `/app/config.json`
 - Public access enabled
-- SSE transport mode
 - Bound to 0.0.0.0:3001
 
 ### Accessing the Service
