@@ -12,7 +12,15 @@ use dashmap::DashSet;
 use extism::{Manifest, Wasm};
 use rmcp::{
     ErrorData as McpError, ServerHandler,
-    model::*,
+    model::{
+        CallToolRequestMethod, CallToolRequestParams, CallToolResult, CompleteRequestMethod,
+        CompleteRequestParams, CompleteResult, GetPromptRequestMethod, GetPromptRequestParams,
+        GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
+        ListResourcesResult, ListToolsResult, LoggingLevel, PaginatedRequestParams,
+        PromptReference, ReadResourceRequestMethod, ReadResourceRequestParams, ReadResourceResult,
+        Reference, Resource, ResourceReference, ResourceTemplate, ServerCapabilities, ServerInfo,
+        SetLevelRequestParams, SubscribeRequestParams, UnsubscribeRequestParams,
+    },
     service::{ElicitationMode, NotificationContext, Peer, RequestContext, RoleServer},
 };
 use serde::{Deserialize, Serialize};
@@ -27,61 +35,6 @@ use std::{
 };
 use tokio::{runtime::Handle, sync::SetOnce};
 use uuid::Uuid;
-
-#[allow(dead_code)]
-#[serde_as]
-#[derive(Clone, Debug, Serialize)]
-struct CreateElicitationRequestParamWithTimeout {
-    #[serde(flatten)]
-    pub inner: CreateElicitationRequestParams,
-    #[serde_as(as = "Option<DurationSeconds<f64>>")]
-    pub timeout: Option<Duration>,
-}
-
-impl<'de> Deserialize<'de> for CreateElicitationRequestParamWithTimeout {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let mut value = Value::deserialize(deserializer)?;
-
-        fn patch_formats(value: &mut Value) {
-            match value {
-                Value::Object(map) => {
-                    if let Some(Value::String(s)) = map.get_mut("format")
-                        && s == "date_time"
-                    {
-                        *s = "date-time".to_string();
-                    }
-                    for val in map.values_mut() {
-                        patch_formats(val);
-                    }
-                }
-                Value::Array(arr) => {
-                    for val in arr.iter_mut() {
-                        patch_formats(val);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        patch_formats(&mut value);
-
-        #[serde_as]
-        #[derive(Deserialize)]
-        struct Helper {
-            #[serde(flatten)]
-            inner: CreateElicitationRequestParams,
-            #[serde_as(as = "Option<DurationSeconds<f64>>")]
-            timeout: Option<Duration>,
-        }
-
-        let Helper { inner, timeout } =
-            Helper::deserialize(value).map_err(serde::de::Error::custom)?;
-        Ok(CreateElicitationRequestParamWithTimeout { inner, timeout })
-    }
-}
 
 #[derive(Debug)]
 pub struct PluginServiceInner {
@@ -793,6 +746,67 @@ mod host_fns {
     use super::*;
     use extism::{EXTISM_USER_MODULE, Function, UserData, host_fn};
     use extism_convert::Json;
+    use rmcp::model::{
+        CreateElicitationRequestParams, CreateElicitationResult, CreateMessageRequestParams,
+        ElicitationAction, ElicitationResponseNotificationParam, ListRootsResult,
+        LoggingMessageNotificationParam, ProgressNotificationParam,
+        ResourceUpdatedNotificationParam,
+    };
+
+    #[allow(dead_code)]
+    #[serde_as]
+    #[derive(Clone, Debug, Serialize)]
+    struct CreateElicitationRequestParamWithTimeout {
+        #[serde(flatten)]
+        pub inner: CreateElicitationRequestParams,
+        #[serde_as(as = "Option<DurationSeconds<f64>>")]
+        pub timeout: Option<Duration>,
+    }
+
+    impl<'de> Deserialize<'de> for CreateElicitationRequestParamWithTimeout {
+        fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let mut value = Value::deserialize(deserializer)?;
+
+            fn patch_formats(value: &mut Value) {
+                match value {
+                    Value::Object(map) => {
+                        if let Some(Value::String(s)) = map.get_mut("format")
+                            && s == "date_time"
+                        {
+                            *s = "date-time".to_string();
+                        }
+                        for val in map.values_mut() {
+                            patch_formats(val);
+                        }
+                    }
+                    Value::Array(arr) => {
+                        for val in arr.iter_mut() {
+                            patch_formats(val);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            patch_formats(&mut value);
+
+            #[serde_as]
+            #[derive(Deserialize)]
+            struct Helper {
+                #[serde(flatten)]
+                inner: CreateElicitationRequestParams,
+                #[serde_as(as = "Option<DurationSeconds<f64>>")]
+                timeout: Option<Duration>,
+            }
+
+            let Helper { inner, timeout } =
+                Helper::deserialize(value).map_err(serde::de::Error::custom)?;
+            Ok(CreateElicitationRequestParamWithTimeout { inner, timeout })
+        }
+    }
 
     #[derive(Clone, Debug)]
     pub struct PluginServiceContext {
@@ -1109,7 +1123,10 @@ mod tests {
     use crate::{cli::Cli, config::load_config};
     use rmcp::{
         ClientHandler,
-        model::ClientInfo,
+        model::{
+            ArgumentInfo, ClientInfo, CompletionContext, Extensions, Meta, ProtocolVersion,
+            RequestId, Tool,
+        },
         service::{RoleClient, RunningService, Service, serve_client, serve_server},
     };
     use std::{
