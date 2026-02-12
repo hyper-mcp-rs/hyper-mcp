@@ -9,8 +9,7 @@ use crate::{
 };
 use anyhow::{Error, Result};
 use dashmap::DashSet;
-use extism::{EXTISM_USER_MODULE, Function, Manifest, UserData, Wasm, host_fn};
-use extism_convert::Json;
+use extism::{Manifest, Wasm};
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
@@ -84,13 +83,6 @@ impl<'de> Deserialize<'de> for CreateElicitationRequestParamWithTimeout {
     }
 }
 
-#[derive(Clone, Debug)]
-struct PluginServiceContext {
-    handle: Handle,
-    plugin_service: PluginService,
-    plugin_name: String,
-}
-
 #[derive(Debug)]
 pub struct PluginServiceInner {
     config: Config,
@@ -117,168 +109,6 @@ impl Deref for PluginService {
         &self.0
     }
 }
-
-host_fn!(create_elicitation(ctx: PluginServiceContext; elicitation_msg: Json<CreateElicitationRequestParamWithTimeout>) -> Json<CreateElicitationResult> {
-    let elicitation_msg = elicitation_msg.into_inner();
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    match ctx.plugin_service.peer.get() {
-        Some(peer) => {
-            let peer_create_elicitation = || {
-                if let Some(timeout) = elicitation_msg.timeout {
-                    tracing::info!("Creating elicitation from {} with timeout {:?}", ctx.plugin_name, timeout);
-                    ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).map_err(Error::from)
-                } else {
-                    tracing::info!("Creating elicitation from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).map_err(Error::from)
-                }
-            };
-            if let CreateElicitationRequestParams::FormElicitationParams { .. } = elicitation_msg.inner {
-                if peer.supported_elicitation_modes().contains(&ElicitationMode::Form) {
-                    peer_create_elicitation()
-                } else {
-                    tracing::info!("Peer does not support form elicitation, declining from {}", ctx.plugin_name);
-                    Ok(Json(CreateElicitationResult {
-                        action: ElicitationAction::Decline,
-                        content: None,
-                    }))
-                }
-            } else if let CreateElicitationRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
-                if peer.supported_elicitation_modes().contains(&ElicitationMode::Url) {
-                    peer_create_elicitation()
-                } else {
-                    tracing::info!("Peer does not support url elicitation, declining from {}", ctx.plugin_name);
-                    Ok(Json(CreateElicitationResult {
-                        action: ElicitationAction::Decline,
-                        content: None,
-                    }))
-                }
-            } else {
-                tracing::info!("Unknown elicitation type, declining from {}", ctx.plugin_name);
-                Ok(Json(CreateElicitationResult {
-                    action: ElicitationAction::Decline,
-                    content: None,
-                }))
-            }
-        },
-        None => Err(anyhow::anyhow!("No peer available")),
-    }
-});
-
-host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParams>) -> Json<CreateMessageResult> {
-    let sampling_msg = sampling_msg.into_inner();
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    match ctx.plugin_service.peer.get() {
-        Some(peer) => {
-            if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.sampling.is_some() {
-                tracing::info!("Creating sampling message from {}", ctx.plugin_name);
-                ctx.handle.block_on(peer.create_message(sampling_msg)).map(Json).map_err(Error::from)
-            } else {
-                Err(anyhow::anyhow!("Peer does not support sampling"))
-            }
-        },
-        None => Err(anyhow::anyhow!("No peer available")),
-    }
-});
-
-// Declares a host function `list_roots` that plugins can call
-host_fn!(list_roots(ctx: PluginServiceContext;) -> Json<ListRootsResult> {
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    match ctx.plugin_service.peer.get() {
-        Some(peer) => {
-            if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.roots.is_some() {
-                tracing::info!("Listing roots from {}", ctx.plugin_name);
-                ctx.handle.block_on(peer.list_roots()).map(Json).map_err(Error::from)
-            } else {
-                Ok(Json(ListRootsResult::default()))
-            }
-        },
-        None => Err(anyhow::anyhow!("No peer available")),
-    }
-});
-
-host_fn!(notify_logging_message(ctx: PluginServiceContext; log_msg: Json<LoggingMessageNotificationParam>) {
-    let log_msg = log_msg.into_inner();
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    if (ctx.plugin_service.logging_level() as u8) <= (log_msg.level as u8) && let Some(peer) = ctx.plugin_service.peer.get() {
-        tracing::debug!("Logging message from {}", ctx.plugin_name);
-        return ctx.handle.block_on(peer.notify_logging_message(log_msg)).map_err(Error::from);
-    }
-    Ok(())
-});
-
-host_fn!(notify_progress(ctx: PluginServiceContext; progress_msg: Json<ProgressNotificationParam>) {
-    let progress_msg = progress_msg.into_inner();
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    match ctx.plugin_service.peer.get() {
-        Some(peer) => {
-            tracing::debug!("Progress notification from {}", ctx.plugin_name);
-            ctx.handle.block_on(peer.notify_progress(progress_msg)).map_err(Error::from)
-        },
-        None => Ok(()),
-    }
-});
-
-host_fn!(notify_prompt_list_changed(ctx: PluginServiceContext;) {
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    match ctx.plugin_service.peer.get() {
-        Some(peer) => {
-            tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-            ctx.handle.block_on(peer.notify_prompt_list_changed()).map_err(Error::from)
-        },
-        None => Ok(()),
-    }
-});
-
-host_fn!(notify_resource_list_changed(ctx: PluginServiceContext;) {
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    match ctx.plugin_service.peer.get() {
-        Some(peer) => {
-            tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-            ctx.handle.block_on(peer.notify_resource_list_changed()).map_err(Error::from)
-        },
-        None => Ok(()),
-    }
-});
-
-host_fn!(notify_resource_updated(ctx: PluginServiceContext; update_msg: Json<ResourceUpdatedNotificationParam>) {
-    let update_msg = update_msg.into_inner();
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    if ctx.plugin_service.subscriptions.contains(&update_msg.uri) {
-        match ctx.plugin_service.peer.get() {
-            Some(peer) => {
-                tracing::info!("Notifying resource {} updated from {}", update_msg.uri, ctx.plugin_name);
-                ctx.handle.block_on(peer.notify_resource_updated(update_msg)).map_err(Error::from)
-            },
-            None => Ok(()),
-        }
-    }
-    else {
-        Ok(())
-    }
-});
-
-host_fn!(notify_tool_list_changed(ctx: PluginServiceContext;) {
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    match ctx.plugin_service.peer.get() {
-        Some(peer) => {
-            tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-            ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from)
-        },
-        None => Ok(()),
-    }
-});
-
-host_fn!(notify_url_elicitation_completed(ctx: PluginServiceContext; completed_msg: Json<ElicitationResponseNotificationParam>) {
-    let completed_msg = completed_msg.into_inner();
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    match ctx.plugin_service.peer.get() {
-        Some(peer) => {
-            tracing::info!("Notifying url elicitation {} completed from {}", completed_msg.elicitation_id, ctx.plugin_name);
-            ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).map_err(Error::from)
-        },
-        None => Ok(()),
-    }
-});
 
 impl PluginService {
     pub async fn new(config: &Config) -> Result<Self> {
@@ -368,129 +198,24 @@ impl PluginService {
                     manifest = manifest.with_memory_max(num_pages as u32);
                 }
             }
+            let ctx = host_fns::PluginServiceContext {
+                handle: Handle::current(),
+                plugin_name: plugin_name.clone(),
+                plugin_service: self.clone(),
+            };
             let extism_plugin = extism::Plugin::new(
                 &manifest,
                 [
-                    Function::new(
-                        "create_elicitation",
-                        [extism::PTR],
-                        [extism::PTR],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        create_elicitation,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "create_message",
-                        [extism::PTR],
-                        [extism::PTR],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        create_message,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "list_roots",
-                        [],
-                        [extism::PTR],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        list_roots,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "notify_logging_message",
-                        [extism::PTR],
-                        [],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        notify_logging_message,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "notify_progress",
-                        [extism::PTR],
-                        [],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        notify_progress,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "notify_prompt_list_changed",
-                        [],
-                        [],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        notify_prompt_list_changed,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "notify_resource_list_changed",
-                        [],
-                        [],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        notify_resource_list_changed,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "notify_resource_updated",
-                        [extism::PTR],
-                        [],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        notify_resource_updated,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "notify_tool_list_changed",
-                        [],
-                        [],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        notify_tool_list_changed,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
-                    Function::new(
-                        "notify_url_elicitation_completed",
-                        [extism::PTR],
-                        [],
-                        UserData::new(PluginServiceContext {
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                            plugin_service: self.clone(),
-                        }),
-                        notify_url_elicitation_completed,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE),
+                    host_fns::create_elicitation(ctx.clone()),
+                    host_fns::create_message(ctx.clone()),
+                    host_fns::list_roots(ctx.clone()),
+                    host_fns::notify_logging_message(ctx.clone()),
+                    host_fns::notify_progress(ctx.clone()),
+                    host_fns::notify_prompt_list_changed(ctx.clone()),
+                    host_fns::notify_resource_list_changed(ctx.clone()),
+                    host_fns::notify_resource_updated(ctx.clone()),
+                    host_fns::notify_tool_list_changed(ctx.clone()),
+                    host_fns::notify_url_elicitation_completed(ctx.clone()),
                 ],
                 true,
             )
@@ -1061,6 +786,320 @@ impl ServerHandler for PluginService {
     ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
         self.subscriptions.remove(&request.uri);
         std::future::ready(Ok(()))
+    }
+}
+
+mod host_fns {
+    use super::*;
+    use extism::{EXTISM_USER_MODULE, Function, UserData, host_fn};
+    use extism_convert::Json;
+
+    #[derive(Clone, Debug)]
+    pub struct PluginServiceContext {
+        pub handle: Handle,
+        pub plugin_service: PluginService,
+        pub plugin_name: PluginName,
+    }
+
+    pub fn create_elicitation(ctx: PluginServiceContext) -> Function {
+        host_fn!(create_elicitation(ctx: PluginServiceContext; elicitation_msg: Json<CreateElicitationRequestParamWithTimeout>) -> Json<CreateElicitationResult> {
+            let elicitation_msg = elicitation_msg.into_inner();
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            match ctx.plugin_service.peer.get() {
+                Some(peer) => {
+                    let peer_create_elicitation = || {
+                        if let Some(timeout) = elicitation_msg.timeout {
+                            tracing::info!("Creating elicitation from {} with timeout {:?}", ctx.plugin_name, timeout);
+                            ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).map_err(Error::from)
+                        } else {
+                            tracing::info!("Creating elicitation from {}", ctx.plugin_name);
+                            ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).map_err(Error::from)
+                        }
+                    };
+                    if let CreateElicitationRequestParams::FormElicitationParams { .. } = elicitation_msg.inner {
+                        if peer.supported_elicitation_modes().contains(&ElicitationMode::Form) {
+                            peer_create_elicitation()
+                        } else {
+                            tracing::info!("Peer does not support form elicitation, declining from {}", ctx.plugin_name);
+                            Ok(Json(CreateElicitationResult {
+                                action: ElicitationAction::Decline,
+                                content: None,
+                            }))
+                        }
+                    } else if let CreateElicitationRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
+                        if peer.supported_elicitation_modes().contains(&ElicitationMode::Url) {
+                            peer_create_elicitation()
+                        } else {
+                            tracing::info!("Peer does not support url elicitation, declining from {}", ctx.plugin_name);
+                            Ok(Json(CreateElicitationResult {
+                                action: ElicitationAction::Decline,
+                                content: None,
+                            }))
+                        }
+                    } else {
+                        tracing::info!("Unknown elicitation type, declining from {}", ctx.plugin_name);
+                        Ok(Json(CreateElicitationResult {
+                            action: ElicitationAction::Decline,
+                            content: None,
+                        }))
+                    }
+                },
+                None => Err(anyhow::anyhow!("No peer available")),
+            }
+        });
+
+        Function::new(
+            "create_elicitation",
+            [extism::PTR],
+            [extism::PTR],
+            UserData::new(ctx),
+            create_elicitation,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn create_message(ctx: PluginServiceContext) -> Function {
+        host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParams>) -> Json<CreateMessageResult> {
+            let sampling_msg = sampling_msg.into_inner();
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            match ctx.plugin_service.peer.get() {
+                Some(peer) => {
+                    if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.sampling.is_some() {
+                        tracing::info!("Creating sampling message from {}", ctx.plugin_name);
+                        ctx.handle.block_on(peer.create_message(sampling_msg)).map(Json).map_err(Error::from)
+                    } else {
+                        Err(anyhow::anyhow!("Peer does not support sampling"))
+                    }
+                },
+                None => Err(anyhow::anyhow!("No peer available")),
+            }
+        });
+
+        Function::new(
+            "create_message",
+            [extism::PTR],
+            [extism::PTR],
+            UserData::new(ctx),
+            create_message,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn list_roots(ctx: PluginServiceContext) -> Function {
+        host_fn!(list_roots(ctx: PluginServiceContext;) -> Json<ListRootsResult> {
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            match ctx.plugin_service.peer.get() {
+                Some(peer) => {
+                    if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.roots.is_some() {
+                        tracing::info!("Listing roots from {}", ctx.plugin_name);
+                        ctx.handle.block_on(peer.list_roots()).map(Json).map_err(Error::from)
+                    } else {
+                        Ok(Json(ListRootsResult::default()))
+                    }
+                },
+                None => Err(anyhow::anyhow!("No peer available")),
+            }
+        });
+
+        Function::new(
+            "list_roots",
+            [],
+            [extism::PTR],
+            UserData::new(ctx),
+            list_roots,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn notify_logging_message(ctx: PluginServiceContext) -> Function {
+        host_fn!(notify_logging_message(ctx: PluginServiceContext; log_msg: Json<LoggingMessageNotificationParam>) {
+            let log_msg = log_msg.into_inner();
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            if (ctx.plugin_service.logging_level() as u8) <= (log_msg.level as u8) && let Some(peer) = ctx.plugin_service.peer.get() {
+                tracing::debug!("Logging message from {}", ctx.plugin_name);
+                return ctx.handle.block_on(peer.notify_logging_message(log_msg)).map_err(Error::from);
+            }
+            Ok(())
+        });
+
+        Function::new(
+            "notify_logging_message",
+            [extism::PTR],
+            [],
+            UserData::new(ctx),
+            notify_logging_message,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn notify_progress(ctx: PluginServiceContext) -> Function {
+        host_fn!(notify_progress(ctx: PluginServiceContext; progress_msg: Json<ProgressNotificationParam>) {
+            let progress_msg = progress_msg.into_inner();
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            match ctx.plugin_service.peer.get() {
+                Some(peer) => {
+                    tracing::debug!("Progress notification from {}", ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_progress(progress_msg)).map_err(Error::from)
+                },
+                None => Ok(()),
+            }
+        });
+
+        Function::new(
+            "notify_progress",
+            [extism::PTR],
+            [],
+            UserData::new(ctx),
+            notify_progress,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn notify_prompt_list_changed(ctx: PluginServiceContext) -> Function {
+        host_fn!(notify_prompt_list_changed(ctx: PluginServiceContext;) {
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            match ctx.plugin_service.peer.get() {
+                Some(peer) => {
+                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_prompt_list_changed()).map_err(Error::from)
+                },
+                None => Ok(()),
+            }
+        });
+
+        Function::new(
+            "notify_prompt_list_changed",
+            [],
+            [],
+            UserData::new(ctx),
+            notify_prompt_list_changed,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn notify_resource_list_changed(ctx: PluginServiceContext) -> Function {
+        host_fn!(notify_resource_list_changed(ctx: PluginServiceContext;) {
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            match ctx.plugin_service.peer.get() {
+                Some(peer) => {
+                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_resource_list_changed()).map_err(Error::from)
+                },
+                None => Ok(()),
+            }
+        });
+
+        Function::new(
+            "notify_resource_list_changed",
+            [],
+            [],
+            UserData::new(ctx),
+            notify_resource_list_changed,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn notify_resource_updated(ctx: PluginServiceContext) -> Function {
+        host_fn!(notify_resource_updated(ctx: PluginServiceContext; update_msg: Json<ResourceUpdatedNotificationParam>) {
+            let update_msg = update_msg.into_inner();
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            if ctx.plugin_service.subscriptions.contains(&update_msg.uri) {
+                match ctx.plugin_service.peer.get() {
+                    Some(peer) => {
+                        tracing::info!("Notifying resource {} updated from {}", update_msg.uri, ctx.plugin_name);
+                        ctx.handle.block_on(peer.notify_resource_updated(update_msg)).map_err(Error::from)
+                    },
+                    None => Ok(()),
+                }
+            }
+            else {
+                Ok(())
+            }
+        });
+
+        Function::new(
+            "notify_resource_updated",
+            [extism::PTR],
+            [],
+            UserData::new(ctx),
+            notify_resource_updated,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn notify_tool_list_changed(ctx: PluginServiceContext) -> Function {
+        host_fn!(notify_tool_list_changed(ctx: PluginServiceContext;) {
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            match ctx.plugin_service.peer.get() {
+                Some(peer) => {
+                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from)
+                },
+                None => Ok(()),
+            }
+        });
+
+        Function::new(
+            "notify_tool_list_changed",
+            [],
+            [],
+            UserData::new(ctx),
+            notify_tool_list_changed,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn notify_url_elicitation_completed(ctx: PluginServiceContext) -> Function {
+        host_fn!(notify_url_elicitation_completed(ctx: PluginServiceContext; completed_msg: Json<ElicitationResponseNotificationParam>) {
+            let completed_msg = completed_msg.into_inner();
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            match ctx.plugin_service.peer.get() {
+                Some(peer) => {
+                    tracing::info!("Notifying url elicitation {} completed from {}", completed_msg.elicitation_id, ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).map_err(Error::from)
+                },
+                None => Ok(()),
+            }
+        });
+
+        Function::new(
+            "notify_url_elicitation_completed",
+            [extism::PTR],
+            [],
+            UserData::new(ctx),
+            notify_url_elicitation_completed,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
     }
 }
 
