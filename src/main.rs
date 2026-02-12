@@ -14,7 +14,6 @@ use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing::debug!("Parsing CLI");
     let cli = cli::Cli::parse();
     tracing::debug!("Loading config from {:?}", cli);
     let config = config::load_config(&cli).await?;
