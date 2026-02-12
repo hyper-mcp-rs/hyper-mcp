@@ -8,7 +8,7 @@ const VERSION: &str = git_version!(
     fallback = env!("CARGO_PKG_VERSION")
 );
 
-#[derive(Parser, Clone, Debug)]
+#[derive(Parser, Clone, Debug, Default)]
 #[command(
     author = "Joseph Wortmann <joseph.wortmann@gmail.com>",
     version = VERSION,
@@ -67,19 +67,4 @@ pub struct Cli {
         env = "HYPER_MCP_CERT_URL"
     )]
     pub cert_url: Option<String>,
-}
-
-impl Default for Cli {
-    fn default() -> Self {
-        Self {
-            config_file: None,
-            insecure_skip_signature: None,
-            use_sigstore_tuf_data: None,
-            rekor_pub_keys: None,
-            fulcio_certs: None,
-            cert_issuer: None,
-            cert_email: None,
-            cert_url: None,
-        }
-    }
 }
