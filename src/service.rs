@@ -8,7 +8,7 @@ use crate::{
     wasm,
 };
 use anyhow::{Error, Result};
-use dashmap::{DashMap, DashSet, Entry};
+use dashmap::DashSet;
 use extism::{EXTISM_USER_MODULE, Function, Manifest, UserData, Wasm, host_fn};
 use extism_convert::Json;
 use rmcp::{
@@ -23,41 +23,11 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     ops::Deref,
-    sync::{Arc, LazyLock, Mutex, RwLock, Weak},
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 use tokio::{runtime::Handle, sync::SetOnce};
 use uuid::Uuid;
-
-/// Check if a value contains an environment variable reference in the format ${ENVVARKEY}
-/// and replace it with the actual environment variable value if it exists.
-/// If the environment variable doesn't exist, returns the original value.
-fn check_env_reference(value: &str) -> String {
-    // Check if the value matches the pattern ${ENVVARKEY}
-    if let Some(stripped) = value.strip_prefix("${").and_then(|s| s.strip_suffix("}")) {
-        // Try to get the environment variable
-        match std::env::var(stripped) {
-            Ok(env_value) => {
-                tracing::debug!(
-                    "Resolved environment variable reference ${{{stripped}}} to actual value"
-                );
-                env_value
-            }
-            Err(_) => {
-                tracing::warn!(
-                    "Environment variable {stripped} not found, keeping original value {value}"
-                );
-                value.to_string()
-            }
-        }
-    } else {
-        value.to_string()
-    }
-}
-
-static PLUGIN_SERVICE_INNER_REGISTRY: LazyLock<DashMap<Uuid, Weak<PluginServiceInner>>> =
-    LazyLock::new(DashMap::new);
-static WASM_DATA_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::new(DashMap::new);
 
 #[allow(dead_code)]
 #[serde_as]
@@ -117,13 +87,13 @@ impl<'de> Deserialize<'de> for CreateElicitationRequestParamWithTimeout {
 #[derive(Clone, Debug)]
 struct PluginServiceContext {
     handle: Handle,
-    plugin_service_id: Uuid,
+    plugin_service: PluginService,
     plugin_name: String,
 }
 
+#[derive(Debug)]
 pub struct PluginServiceInner {
     config: Config,
-    id: Uuid,
     logging_level: RwLock<LoggingLevel>,
     names: SetOnce<HashMap<Uuid, PluginName>>,
     peer: SetOnce<Peer<RoleServer>>,
@@ -131,12 +101,7 @@ pub struct PluginServiceInner {
     subscriptions: DashSet<String>,
 }
 
-impl Drop for PluginServiceInner {
-    fn drop(&mut self) {
-        PLUGIN_SERVICE_INNER_REGISTRY.remove(&self.id);
-    }
-}
-
+#[derive(Debug)]
 pub struct PluginService(Arc<PluginServiceInner>);
 
 impl Clone for PluginService {
@@ -153,257 +118,200 @@ impl Deref for PluginService {
     }
 }
 
+host_fn!(create_elicitation(ctx: PluginServiceContext; elicitation_msg: Json<CreateElicitationRequestParamWithTimeout>) -> Json<CreateElicitationResult> {
+    let elicitation_msg = elicitation_msg.into_inner();
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    match ctx.plugin_service.peer.get() {
+        Some(peer) => {
+            let peer_create_elicitation = || {
+                if let Some(timeout) = elicitation_msg.timeout {
+                    tracing::info!("Creating elicitation from {} with timeout {:?}", ctx.plugin_name, timeout);
+                    ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).map_err(Error::from)
+                } else {
+                    tracing::info!("Creating elicitation from {}", ctx.plugin_name);
+                    ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).map_err(Error::from)
+                }
+            };
+            if let CreateElicitationRequestParams::FormElicitationParams { .. } = elicitation_msg.inner {
+                if peer.supported_elicitation_modes().contains(&ElicitationMode::Form) {
+                    peer_create_elicitation()
+                } else {
+                    tracing::info!("Peer does not support form elicitation, declining from {}", ctx.plugin_name);
+                    Ok(Json(CreateElicitationResult {
+                        action: ElicitationAction::Decline,
+                        content: None,
+                    }))
+                }
+            } else if let CreateElicitationRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
+                if peer.supported_elicitation_modes().contains(&ElicitationMode::Url) {
+                    peer_create_elicitation()
+                } else {
+                    tracing::info!("Peer does not support url elicitation, declining from {}", ctx.plugin_name);
+                    Ok(Json(CreateElicitationResult {
+                        action: ElicitationAction::Decline,
+                        content: None,
+                    }))
+                }
+            } else {
+                tracing::info!("Unknown elicitation type, declining from {}", ctx.plugin_name);
+                Ok(Json(CreateElicitationResult {
+                    action: ElicitationAction::Decline,
+                    content: None,
+                }))
+            }
+        },
+        None => Err(anyhow::anyhow!("No peer available")),
+    }
+});
+
+host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParams>) -> Json<CreateMessageResult> {
+    let sampling_msg = sampling_msg.into_inner();
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    match ctx.plugin_service.peer.get() {
+        Some(peer) => {
+            if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.sampling.is_some() {
+                tracing::info!("Creating sampling message from {}", ctx.plugin_name);
+                ctx.handle.block_on(peer.create_message(sampling_msg)).map(Json).map_err(Error::from)
+            } else {
+                Err(anyhow::anyhow!("Peer does not support sampling"))
+            }
+        },
+        None => Err(anyhow::anyhow!("No peer available")),
+    }
+});
+
+// Declares a host function `list_roots` that plugins can call
+host_fn!(list_roots(ctx: PluginServiceContext;) -> Json<ListRootsResult> {
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    match ctx.plugin_service.peer.get() {
+        Some(peer) => {
+            if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.roots.is_some() {
+                tracing::info!("Listing roots from {}", ctx.plugin_name);
+                ctx.handle.block_on(peer.list_roots()).map(Json).map_err(Error::from)
+            } else {
+                Ok(Json(ListRootsResult::default()))
+            }
+        },
+        None => Err(anyhow::anyhow!("No peer available")),
+    }
+});
+
+host_fn!(notify_logging_message(ctx: PluginServiceContext; log_msg: Json<LoggingMessageNotificationParam>) {
+    let log_msg = log_msg.into_inner();
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    if (ctx.plugin_service.logging_level() as u8) <= (log_msg.level as u8) && let Some(peer) = ctx.plugin_service.peer.get() {
+        tracing::debug!("Logging message from {}", ctx.plugin_name);
+        return ctx.handle.block_on(peer.notify_logging_message(log_msg)).map_err(Error::from);
+    }
+    Ok(())
+});
+
+host_fn!(notify_progress(ctx: PluginServiceContext; progress_msg: Json<ProgressNotificationParam>) {
+    let progress_msg = progress_msg.into_inner();
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    match ctx.plugin_service.peer.get() {
+        Some(peer) => {
+            tracing::debug!("Progress notification from {}", ctx.plugin_name);
+            ctx.handle.block_on(peer.notify_progress(progress_msg)).map_err(Error::from)
+        },
+        None => Ok(()),
+    }
+});
+
+host_fn!(notify_prompt_list_changed(ctx: PluginServiceContext;) {
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    match ctx.plugin_service.peer.get() {
+        Some(peer) => {
+            tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+            ctx.handle.block_on(peer.notify_prompt_list_changed()).map_err(Error::from)
+        },
+        None => Ok(()),
+    }
+});
+
+host_fn!(notify_resource_list_changed(ctx: PluginServiceContext;) {
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    match ctx.plugin_service.peer.get() {
+        Some(peer) => {
+            tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+            ctx.handle.block_on(peer.notify_resource_list_changed()).map_err(Error::from)
+        },
+        None => Ok(()),
+    }
+});
+
+host_fn!(notify_resource_updated(ctx: PluginServiceContext; update_msg: Json<ResourceUpdatedNotificationParam>) {
+    let update_msg = update_msg.into_inner();
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    if ctx.plugin_service.subscriptions.contains(&update_msg.uri) {
+        match ctx.plugin_service.peer.get() {
+            Some(peer) => {
+                tracing::info!("Notifying resource {} updated from {}", update_msg.uri, ctx.plugin_name);
+                ctx.handle.block_on(peer.notify_resource_updated(update_msg)).map_err(Error::from)
+            },
+            None => Ok(()),
+        }
+    }
+    else {
+        Ok(())
+    }
+});
+
+host_fn!(notify_tool_list_changed(ctx: PluginServiceContext;) {
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    match ctx.plugin_service.peer.get() {
+        Some(peer) => {
+            tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+            ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from)
+        },
+        None => Ok(()),
+    }
+});
+
+host_fn!(notify_url_elicitation_completed(ctx: PluginServiceContext; completed_msg: Json<ElicitationResponseNotificationParam>) {
+    let completed_msg = completed_msg.into_inner();
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    match ctx.plugin_service.peer.get() {
+        Some(peer) => {
+            tracing::info!("Notifying url elicitation {} completed from {}", completed_msg.elicitation_id, ctx.plugin_name);
+            ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).map_err(Error::from)
+        },
+        None => Ok(()),
+    }
+});
+
 impl PluginService {
     pub async fn new(config: &Config) -> Result<Self> {
         let inner = Arc::new(PluginServiceInner {
             config: config.clone(),
-            id: Uuid::new_v4(),
             logging_level: RwLock::new(LoggingLevel::Error),
             names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),
             subscriptions: DashSet::new(),
         });
-        PLUGIN_SERVICE_INNER_REGISTRY.insert(inner.id, Arc::downgrade(&inner));
         let service = Self(inner);
 
         service.load_plugins().await?;
         Ok(service)
     }
 
-    fn get(id: Uuid) -> Option<PluginService> {
-        if let Some(weak_inner) = PLUGIN_SERVICE_INNER_REGISTRY.get(&id)
-            && let Some(inner) = weak_inner.upgrade()
-        {
-            return Some(PluginService(inner));
-        }
-        PLUGIN_SERVICE_INNER_REGISTRY.remove(&id);
-        None
-    }
-
     async fn load_plugins(&self) -> Result<()> {
         let mut names = HashMap::new();
         let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
 
-        host_fn!(create_elicitation(ctx: PluginServiceContext; elicitation_msg: Json<CreateElicitationRequestParamWithTimeout>) -> Json<CreateElicitationResult> {
-            let elicitation_msg = elicitation_msg.into_inner();
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-            match plugin_service.peer.get() {
-                Some(peer) => {
-                    let peer_create_elicitation = || {
-                        if let Some(timeout) = elicitation_msg.timeout {
-                            tracing::info!("Creating elicitation from {} with timeout {:?}", ctx.plugin_name, timeout);
-                            ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).map_err(Error::from)
-                        } else {
-                            tracing::info!("Creating elicitation from {}", ctx.plugin_name);
-                            ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).map_err(Error::from)
-                        }
-                    };
-                    if let CreateElicitationRequestParams::FormElicitationParams { .. } = elicitation_msg.inner {
-                        if peer.supported_elicitation_modes().contains(&ElicitationMode::Form) {
-                            peer_create_elicitation()
-                        } else {
-                            tracing::info!("Peer does not support form elicitation, declining from {}", ctx.plugin_name);
-                            Ok(Json(CreateElicitationResult {
-                                action: ElicitationAction::Decline,
-                                content: None,
-                            }))
-                        }
-                    } else if let CreateElicitationRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
-                        if peer.supported_elicitation_modes().contains(&ElicitationMode::Url) {
-                            peer_create_elicitation()
-                        } else {
-                            tracing::info!("Peer does not support url elicitation, declining from {}", ctx.plugin_name);
-                            Ok(Json(CreateElicitationResult {
-                                action: ElicitationAction::Decline,
-                                content: None,
-                            }))
-                        }
-                    } else {
-                        tracing::info!("Unknown elicitation type, declining from {}", ctx.plugin_name);
-                        Ok(Json(CreateElicitationResult {
-                            action: ElicitationAction::Decline,
-                            content: None,
-                        }))
-                    }
-                },
-                None => Err(anyhow::anyhow!("No peer available")),
-            }
-        });
-
-        host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParams>) -> Json<CreateMessageResult> {
-            let sampling_msg = sampling_msg.into_inner();
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-            match plugin_service.peer.get() {
-                Some(peer) => {
-                    if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.sampling.is_some() {
-                        tracing::info!("Creating sampling message from {}", ctx.plugin_name);
-                        ctx.handle.block_on(peer.create_message(sampling_msg)).map(Json).map_err(Error::from)
-                    } else {
-                        Err(anyhow::anyhow!("Peer does not support sampling"))
-                    }
-                },
-                None => Err(anyhow::anyhow!("No peer available")),
-            }
-        });
-
-        // Declares a host function `list_roots` that plugins can call
-        host_fn!(list_roots(ctx: PluginServiceContext;) -> Json<ListRootsResult> {
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-            match plugin_service.peer.get() {
-                Some(peer) => {
-                    if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.roots.is_some() {
-                        tracing::info!("Listing roots from {}", ctx.plugin_name);
-                        ctx.handle.block_on(peer.list_roots()).map(Json).map_err(Error::from)
-                    } else {
-                        Ok(Json(ListRootsResult::default()))
-                    }
-                },
-                None => Err(anyhow::anyhow!("No peer available")),
-            }
-        });
-
-        // Declares a host function `notify_logging_message` that plugins can call
-        host_fn!(notify_logging_message(ctx: PluginServiceContext; log_msg: Json<LoggingMessageNotificationParam>) {
-            let log_msg = log_msg.into_inner();
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-            if !plugin_service.config.disable_logging && (plugin_service.logging_level() as u8) <= (log_msg.level as u8) && let Some(peer) = plugin_service.peer.get() {
-                tracing::debug!("Logging message from {}", ctx.plugin_name);
-                return ctx.handle.block_on(peer.notify_logging_message(log_msg)).map_err(Error::from);
-            }
-            Ok(())
-        });
-
-        // Declares a host function `notify_progress` that plugins can call
-        host_fn!(notify_progress(ctx: PluginServiceContext; progress_msg: Json<ProgressNotificationParam>) {
-            let progress_msg = progress_msg.into_inner();
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-            match plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::debug!("Progress notification from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_progress(progress_msg)).map_err(Error::from)
-                },
-                None => Ok(()),
-            }
-        });
-
-        host_fn!(notify_prompt_list_changed(ctx: PluginServiceContext;) {
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-
-            match plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_prompt_list_changed()).map_err(Error::from)
-                },
-                None => Ok(()),
-            }
-        });
-
-        host_fn!(notify_resource_list_changed(ctx: PluginServiceContext;) {
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-
-            match plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_resource_list_changed()).map_err(Error::from)
-                },
-                None => Ok(()),
-            }
-        });
-
-        host_fn!(notify_resource_updated(ctx: PluginServiceContext; update_msg: Json<ResourceUpdatedNotificationParam>) {
-            let update_msg = update_msg.into_inner();
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-            if plugin_service.subscriptions.contains(&update_msg.uri) {
-                match plugin_service.peer.get() {
-                    Some(peer) => {
-                        tracing::info!("Notifying resource {} updated from {}", update_msg.uri, ctx.plugin_name);
-                        ctx.handle.block_on(peer.notify_resource_updated(update_msg)).map_err(Error::from)
-                    },
-                    None => Ok(()),
-                }
-            }
-            else {
-                Ok(())
-            }
-        });
-
-        // Declares a host function `notify_tool_list_changed` that plugins can call
-        host_fn!(notify_tool_list_changed(ctx: PluginServiceContext;) {
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-
-            match plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from)
-                },
-                None => Ok(()),
-            }
-        });
-
-        host_fn!(notify_url_elicitation_completed(ctx: PluginServiceContext; completed_msg: Json<ElicitationResponseNotificationParam>) {
-            let completed_msg = completed_msg.into_inner();
-            let ctx = ctx.get()?.lock().unwrap().clone();
-            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-            })?;
-            match plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::info!("Notifying url elicitation {} completed from {}", completed_msg.elicitation_id, ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).map_err(Error::from)
-                },
-                None => Ok(()),
-            }
-        });
-
         for (plugin_name, plugin_cfg) in &self.config.plugins {
-            let wasm_data = match WASM_DATA_CACHE.entry(plugin_name.clone()) {
-                Entry::Occupied(entry) => entry.get().clone(),
-                Entry::Vacant(entry) => {
-                    let content = match plugin_cfg.url.scheme() {
-                        "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
-                        "http" => wasm::http::load_wasm(&plugin_cfg.url, &None).await?,
-                        "https" => {
-                            wasm::http::load_wasm(&plugin_cfg.url, &self.config.auths).await?
-                        }
-                        "oci" => wasm::oci::load_wasm(&plugin_cfg.url, &self.config.oci).await?,
-                        "s3" => wasm::s3::load_wasm(&plugin_cfg.url).await?,
-                        unsupported => {
-                            tracing::error!("Unsupported plugin URL scheme: {unsupported}");
-                            return Err(anyhow::anyhow!(
-                                "Unsupported plugin URL scheme: {unsupported}"
-                            ));
-                        }
-                    };
-                    entry.insert(content.clone());
-                    content
+            let wasm_data = match plugin_cfg.url.scheme() {
+                "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
+                "http" => wasm::http::load_wasm(&plugin_cfg.url, &None).await?,
+                "https" => wasm::http::load_wasm(&plugin_cfg.url, &self.config.auths).await?,
+                "oci" => wasm::oci::load_wasm(&plugin_cfg.url, &self.config.oci).await?,
+                "s3" => wasm::s3::load_wasm(&plugin_cfg.url).await?,
+                unsupported => {
+                    tracing::error!("Unsupported plugin URL scheme: {unsupported}");
+                    return Err(anyhow::anyhow!(
+                        "Unsupported plugin URL scheme: {unsupported}"
+                    ));
                 }
             };
             let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
@@ -423,6 +331,31 @@ impl PluginService {
 
                 // Add plugin configurations if present
                 if let Some(env_vars) = &runtime_cfg.env_vars {
+                    fn check_env_reference(value: &str) -> String {
+                        // Check if the value matches the pattern ${ENVVARKEY}
+                        if let Some(stripped) =
+                            value.strip_prefix("${").and_then(|s| s.strip_suffix("}"))
+                        {
+                            // Try to get the environment variable
+                            match std::env::var(stripped) {
+                                Ok(env_value) => {
+                                    tracing::debug!(
+                                        "Resolved environment variable reference ${{{stripped}}} to actual value"
+                                    );
+                                    env_value
+                                }
+                                Err(_) => {
+                                    tracing::warn!(
+                                        "Environment variable {stripped} not found, keeping original value {value}"
+                                    );
+                                    value.to_string()
+                                }
+                            }
+                        } else {
+                            value.to_string()
+                        }
+                    }
+
                     for (key, value) in env_vars {
                         let resolved_value = check_env_reference(value);
                         manifest = manifest.with_config_key(key, &resolved_value);
@@ -443,9 +376,9 @@ impl PluginService {
                         [extism::PTR],
                         [extism::PTR],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         create_elicitation,
                     )
@@ -455,9 +388,9 @@ impl PluginService {
                         [extism::PTR],
                         [extism::PTR],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         create_message,
                     )
@@ -467,9 +400,9 @@ impl PluginService {
                         [],
                         [extism::PTR],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         list_roots,
                     )
@@ -479,9 +412,9 @@ impl PluginService {
                         [extism::PTR],
                         [],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         notify_logging_message,
                     )
@@ -491,9 +424,9 @@ impl PluginService {
                         [extism::PTR],
                         [],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         notify_progress,
                     )
@@ -503,9 +436,9 @@ impl PluginService {
                         [],
                         [],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         notify_prompt_list_changed,
                     )
@@ -515,9 +448,9 @@ impl PluginService {
                         [],
                         [],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         notify_resource_list_changed,
                     )
@@ -527,9 +460,9 @@ impl PluginService {
                         [extism::PTR],
                         [],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         notify_resource_updated,
                     )
@@ -539,9 +472,9 @@ impl PluginService {
                         [],
                         [],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         notify_tool_list_changed,
                     )
@@ -551,9 +484,9 @@ impl PluginService {
                         [extism::PTR],
                         [],
                         UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
                             handle: Handle::current(),
                             plugin_name: plugin_name.to_string(),
+                            plugin_service: self.clone(),
                         }),
                         notify_url_elicitation_completed,
                     )
@@ -761,30 +694,17 @@ impl ServerHandler for PluginService {
 
                 ..Default::default()
             },
-            capabilities: if self.config.disable_logging {
-                ServerCapabilities::builder()
-                    .enable_completions()
-                    .enable_prompts()
-                    .enable_prompts_list_changed()
-                    .enable_resources()
-                    .enable_resources_list_changed()
-                    .enable_resources_subscribe()
-                    .enable_tools()
-                    .enable_tool_list_changed()
-                    .build()
-            } else {
-                ServerCapabilities::builder()
-                    .enable_completions()
-                    .enable_logging()
-                    .enable_prompts()
-                    .enable_prompts_list_changed()
-                    .enable_resources()
-                    .enable_resources_list_changed()
-                    .enable_resources_subscribe()
-                    .enable_tools()
-                    .enable_tool_list_changed()
-                    .build()
-            },
+            capabilities: ServerCapabilities::builder()
+                .enable_completions()
+                .enable_logging()
+                .enable_prompts()
+                .enable_prompts_list_changed()
+                .enable_resources()
+                .enable_resources_list_changed()
+                .enable_resources_subscribe()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build(),
 
             ..Default::default()
         }
@@ -1231,7 +1151,6 @@ mod tests {
     fn create_test_service(config: Config) -> PluginService {
         PluginService(Arc::new(PluginServiceInner {
             config,
-            id: Uuid::new_v4(),
             logging_level: RwLock::new(LoggingLevel::Info),
             names: SetOnce::new(),
             peer: SetOnce::new(),

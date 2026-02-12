@@ -2,15 +2,13 @@ use clap::Parser;
 use git_version::git_version;
 use std::path::PathBuf;
 
-pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:3001";
-
 // Get version from git describe, fallback to Cargo.toml version
 const VERSION: &str = git_version!(
     args = ["--tags", "--always", "--dirty=-modified"],
     fallback = env!("CARGO_PKG_VERSION")
 );
 
-#[derive(Parser, Clone)]
+#[derive(Parser, Clone, Debug)]
 #[command(
     author = "Joseph Wortmann <joseph.wortmann@gmail.com>",
     version = VERSION,
@@ -20,23 +18,6 @@ const VERSION: &str = git_version!(
 pub struct Cli {
     #[arg(short, long, value_name = "FILE")]
     pub config_file: Option<PathBuf>,
-
-    #[arg(
-        long = "transport",
-        value_name = "TRANSPORT",
-        env = "HYPER_MCP_TRANSPORT",
-        default_value = "stdio",
-        value_parser = ["stdio", "sse", "streamable-http"]
-    )]
-    pub transport: String,
-
-    #[arg(
-        long = "bind-address",
-        value_name = "ADDRESS",
-        env = "HYPER_MCP_BIND_ADDRESS",
-        default_value = DEFAULT_BIND_ADDRESS
-    )]
-    pub bind_address: String,
 
     #[arg(
         long = "insecure-skip-signature",
@@ -92,8 +73,6 @@ impl Default for Cli {
     fn default() -> Self {
         Self {
             config_file: None,
-            transport: "stdio".to_string(),
-            bind_address: DEFAULT_BIND_ADDRESS.to_string(),
             insecure_skip_signature: None,
             use_sigstore_tuf_data: None,
             rekor_pub_keys: None,
