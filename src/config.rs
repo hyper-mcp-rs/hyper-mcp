@@ -195,6 +195,12 @@ impl Serialize for AllowedPath {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct KeyringEntryId {
+    pub service: String,
+    pub user: String,
+}
+
 #[serde_as]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct RuntimeConfig {
@@ -212,6 +218,7 @@ pub struct RuntimeConfig {
     pub skip_tools: Option<RegexSet>,
     pub allowed_hosts: Option<Vec<String>>,
     pub allowed_paths: Option<Vec<AllowedPath>>,
+    pub allowed_secrets: Option<Vec<KeyringEntryId>>,
     pub env_vars: Option<HashMap<String, String>>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
@@ -2133,16 +2140,7 @@ plugins:
     // Tests for skip_tools Option<RegexSet> functionality
     #[test]
     fn test_skip_tools_none() {
-        let runtime_config = RuntimeConfig {
-            skip_prompts: None,
-            skip_resource_templates: None,
-            skip_resources: None,
-            skip_tools: None,
-            allowed_hosts: None,
-            allowed_paths: None,
-            env_vars: None,
-            memory_limit: None,
-        };
+        let runtime_config = RuntimeConfig::default();
 
         // Test serialization
         let json = serde_json::to_string(&runtime_config).unwrap();
@@ -2241,14 +2239,9 @@ plugins:
         let regex_set = RegexSet::new(&original_patterns).unwrap();
 
         let runtime_config = RuntimeConfig {
-            skip_prompts: None,
-            skip_resource_templates: None,
-            skip_resources: None,
             skip_tools: Some(regex_set),
-            allowed_hosts: None,
-            allowed_paths: None,
-            env_vars: None,
-            memory_limit: None,
+
+            ..Default::default()
         };
 
         // Serialize
@@ -2883,11 +2876,6 @@ allowed_paths:
         #[cfg(not(windows))]
         {
             let original = RuntimeConfig {
-                skip_prompts: None,
-                skip_resource_templates: None,
-                skip_resources: None,
-                skip_tools: None,
-                allowed_hosts: None,
                 allowed_paths: Some(vec![
                     AllowedPath {
                         host: Utf8PathBuf::from("/tmp"),
@@ -2898,8 +2886,8 @@ allowed_paths:
                         plugin: Utf8PathBuf::from("/plugin/logs"),
                     },
                 ]),
-                env_vars: None,
-                memory_limit: None,
+
+                ..Default::default()
             };
 
             let serialized = serde_json::to_string(&original).unwrap();
@@ -3387,5 +3375,396 @@ allowed_paths:
             assert_eq!(root_paths[4].host.as_str(), "/var");
             assert_eq!(root_paths[4].plugin.as_str(), "/plugin/var");
         }
+    }
+
+    #[test]
+    fn test_allowed_secrets_none() {
+        // Test RuntimeConfig with no allowed_secrets
+        let yaml = r#"
+    allowed_hosts:
+      - "example.com"
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(runtime_config.allowed_secrets.is_none());
+    }
+
+    #[test]
+    fn test_allowed_secrets_single_entry() {
+        // Test allowed_secrets with a single keyring entry
+        let yaml = r#"
+    allowed_secrets:
+      - service: "my-app"
+        user: "admin"
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].service, "my-app");
+        assert_eq!(secrets[0].user, "admin");
+    }
+
+    #[test]
+    fn test_allowed_secrets_multiple_entries() {
+        // Test allowed_secrets with multiple keyring entries
+        let yaml = r#"
+    allowed_secrets:
+      - service: "my-app"
+        user: "admin"
+      - service: "database"
+        user: "db_user"
+      - service: "api-service"
+        user: "api_key_user"
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 3);
+        assert_eq!(secrets[0].service, "my-app");
+        assert_eq!(secrets[0].user, "admin");
+        assert_eq!(secrets[1].service, "database");
+        assert_eq!(secrets[1].user, "db_user");
+        assert_eq!(secrets[2].service, "api-service");
+        assert_eq!(secrets[2].user, "api_key_user");
+    }
+
+    #[test]
+    fn test_allowed_secrets_json_format() {
+        // Test allowed_secrets deserialization from JSON
+        let json = r#"
+    {
+      "allowed_secrets": [
+        {
+          "service": "my-app",
+          "user": "admin"
+        },
+        {
+          "service": "database",
+          "user": "db_user"
+        }
+      ]
+    }
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_json::from_str(json).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(secrets[0].service, "my-app");
+        assert_eq!(secrets[0].user, "admin");
+        assert_eq!(secrets[1].service, "database");
+        assert_eq!(secrets[1].user, "db_user");
+    }
+
+    #[test]
+    fn test_allowed_secrets_serialization_roundtrip() {
+        // Test that allowed_secrets can be serialized and deserialized correctly
+        let original_config = RuntimeConfig {
+            skip_prompts: None,
+            skip_resource_templates: None,
+            skip_resources: None,
+            skip_tools: None,
+            allowed_hosts: None,
+            allowed_paths: None,
+            allowed_secrets: Some(vec![
+                KeyringEntryId {
+                    service: "service1".to_string(),
+                    user: "user1".to_string(),
+                },
+                KeyringEntryId {
+                    service: "service2".to_string(),
+                    user: "user2".to_string(),
+                },
+            ]),
+            env_vars: None,
+            memory_limit: None,
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&original_config).unwrap();
+        let deserialized: RuntimeConfig = serde_json::from_str(&json).unwrap();
+
+        let secrets = deserialized.allowed_secrets.unwrap();
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(secrets[0].service, "service1");
+        assert_eq!(secrets[0].user, "user1");
+        assert_eq!(secrets[1].service, "service2");
+        assert_eq!(secrets[1].user, "user2");
+    }
+
+    #[test]
+    fn test_allowed_secrets_with_special_characters() {
+        // Test allowed_secrets with special characters in service and user names
+        let yaml = r#"
+    allowed_secrets:
+      - service: "my-app.production"
+        user: "admin@example.com"
+      - service: "service_with_underscore"
+        user: "user-with-dash"
+      - service: "service/with/slash"
+        user: "user.with.dots"
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 3);
+        assert_eq!(secrets[0].service, "my-app.production");
+        assert_eq!(secrets[0].user, "admin@example.com");
+        assert_eq!(secrets[1].service, "service_with_underscore");
+        assert_eq!(secrets[1].user, "user-with-dash");
+        assert_eq!(secrets[2].service, "service/with/slash");
+        assert_eq!(secrets[2].user, "user.with.dots");
+    }
+
+    #[test]
+    fn test_allowed_secrets_empty_list() {
+        // Test allowed_secrets with an empty list
+        let yaml = r#"
+    allowed_secrets: []
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 0);
+    }
+
+    #[test]
+    fn test_allowed_secrets_with_whitespace() {
+        // Test allowed_secrets with whitespace in values
+        let yaml = r#"
+    allowed_secrets:
+      - service: "  my-app  "
+        user: "  admin  "
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        // YAML preserves whitespace in quoted strings
+        assert_eq!(secrets[0].service, "  my-app  ");
+        assert_eq!(secrets[0].user, "  admin  ");
+    }
+
+    #[test]
+    fn test_allowed_secrets_unicode_values() {
+        // Test allowed_secrets with Unicode characters
+        let yaml = r#"
+    allowed_secrets:
+      - service: "应用服务"
+        user: "用户名"
+      - service: "мой-сервис"
+        user: "пользователь"
+      - service: "アプリ"
+        user: "ユーザー"
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 3);
+        assert_eq!(secrets[0].service, "应用服务");
+        assert_eq!(secrets[0].user, "用户名");
+        assert_eq!(secrets[1].service, "мой-сервис");
+        assert_eq!(secrets[1].user, "пользователь");
+        assert_eq!(secrets[2].service, "アプリ");
+        assert_eq!(secrets[2].user, "ユーザー");
+    }
+
+    #[test]
+    fn test_allowed_secrets_in_full_runtime_config() {
+        // Test allowed_secrets as part of a complete RuntimeConfig
+        let yaml = r#"
+    skip_tools:
+      - "dangerous_.*"
+    allowed_hosts:
+      - "example.com"
+      - "api.example.com"
+    allowed_paths:
+      - "/tmp"
+      - "/var/log"
+    allowed_secrets:
+      - service: "my-app"
+        user: "admin"
+      - service: "database"
+        user: "db_user"
+    env_vars:
+      KEY1: "value1"
+      KEY2: "value2"
+    memory_limit: "1GB"
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+
+        // Verify skip_tools
+        assert!(runtime_config.skip_tools.is_some());
+
+        // Verify allowed_hosts
+        let hosts = runtime_config.allowed_hosts.unwrap();
+        assert_eq!(hosts.len(), 2);
+
+        // Verify allowed_paths
+        let paths = runtime_config.allowed_paths.unwrap();
+        assert_eq!(paths.len(), 2);
+
+        // Verify allowed_secrets
+        let secrets = runtime_config.allowed_secrets.unwrap();
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(secrets[0].service, "my-app");
+        assert_eq!(secrets[0].user, "admin");
+        assert_eq!(secrets[1].service, "database");
+        assert_eq!(secrets[1].user, "db_user");
+
+        // Verify env_vars
+        let env_vars = runtime_config.env_vars.unwrap();
+        assert_eq!(env_vars.len(), 2);
+
+        // Verify memory_limit
+        assert!(runtime_config.memory_limit.is_some());
+    }
+
+    #[test]
+    fn test_allowed_secrets_json_serialization_roundtrip() {
+        // Test JSON serialization roundtrip specifically
+        let original_secrets = vec![
+            KeyringEntryId {
+                service: "test-service".to_string(),
+                user: "test-user".to_string(),
+            },
+            KeyringEntryId {
+                service: "prod-service".to_string(),
+                user: "prod-user".to_string(),
+            },
+        ];
+
+        let config = RuntimeConfig {
+            skip_prompts: None,
+            skip_resource_templates: None,
+            skip_resources: None,
+            skip_tools: None,
+            allowed_hosts: None,
+            allowed_paths: None,
+            allowed_secrets: Some(original_secrets),
+            env_vars: None,
+            memory_limit: None,
+        };
+
+        // Serialize to JSON string
+        let json_str = serde_json::to_string_pretty(&config).unwrap();
+
+        // Deserialize back
+        let deserialized: RuntimeConfig = serde_json::from_str(&json_str).unwrap();
+        let secrets = deserialized.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(secrets[0].service, "test-service");
+        assert_eq!(secrets[0].user, "test-user");
+        assert_eq!(secrets[1].service, "prod-service");
+        assert_eq!(secrets[1].user, "prod-user");
+    }
+
+    #[test]
+    fn test_allowed_secrets_yaml_serialization_roundtrip() {
+        // Test YAML serialization roundtrip specifically
+        let original_secrets = vec![KeyringEntryId {
+            service: "yaml-service".to_string(),
+            user: "yaml-user".to_string(),
+        }];
+
+        let config = RuntimeConfig {
+            skip_prompts: None,
+            skip_resource_templates: None,
+            skip_resources: None,
+            skip_tools: None,
+            allowed_hosts: None,
+            allowed_paths: None,
+            allowed_secrets: Some(original_secrets),
+            env_vars: None,
+            memory_limit: None,
+        };
+
+        // Serialize to YAML string
+        let yaml_str = serde_yaml::to_string(&config).unwrap();
+
+        // Deserialize back
+        let deserialized: RuntimeConfig = serde_yaml::from_str(&yaml_str).unwrap();
+        let secrets = deserialized.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].service, "yaml-service");
+        assert_eq!(secrets[0].user, "yaml-user");
+    }
+
+    #[test]
+    fn test_allowed_secrets_long_values() {
+        // Test allowed_secrets with very long service and user names
+        let long_service = "a".repeat(500);
+        let long_user = "b".repeat(500);
+
+        let yaml = format!(
+            r#"
+    allowed_secrets:
+      - service: "{}"
+        user: "{}"
+    "#,
+            long_service, long_user
+        );
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(&yaml).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].service, long_service);
+        assert_eq!(secrets[0].user, long_user);
+    }
+
+    #[test]
+    fn test_allowed_secrets_duplicate_entries() {
+        // Test that duplicate entries are preserved
+        let yaml = r#"
+    allowed_secrets:
+      - service: "my-app"
+        user: "admin"
+      - service: "my-app"
+        user: "admin"
+    "#;
+
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let secrets = runtime_config.allowed_secrets.unwrap();
+
+        // Duplicates should be preserved in the list
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(secrets[0].service, secrets[1].service);
+        assert_eq!(secrets[0].user, secrets[1].user);
+    }
+
+    #[test]
+    fn test_keyring_entry_id_clone() {
+        // Test that KeyringEntryId can be cloned
+        let original = KeyringEntryId {
+            service: "test-service".to_string(),
+            user: "test-user".to_string(),
+        };
+
+        let cloned = original.clone();
+        assert_eq!(cloned.service, "test-service");
+        assert_eq!(cloned.user, "test-user");
+    }
+
+    #[test]
+    fn test_keyring_entry_id_debug() {
+        // Test Debug implementation for KeyringEntryId
+        let entry = KeyringEntryId {
+            service: "debug-service".to_string(),
+            user: "debug-user".to_string(),
+        };
+
+        let debug_str = format!("{:?}", entry);
+        assert!(debug_str.contains("debug-service"));
+        assert!(debug_str.contains("debug-user"));
     }
 }

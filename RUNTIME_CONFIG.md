@@ -11,6 +11,7 @@ The configuration is structured as follows:
     - **skip_tools** (`array[string]`, optional): List of regex patterns for tool names to skip loading at runtime. Each pattern is automatically anchored to match the entire tool name (equivalent to wrapping with `^` and `$`). Supports full regex syntax for powerful pattern matching.
     - **allowed_hosts** (`array[string]`, optional): List of allowed hosts for the plugin (e.g., `["1.1.1.1"]` or `["*"]`).
     - **allowed_paths** (`array[string]`, optional): List of allowed file system paths. Supports both simple paths and host-to-plugin path mapping. See [Allowed Paths Configuration](#allowed-paths-configuration) for detailed documentation.
+    - **allowed_secrets** (`array[object]`, optional): List of allowed keyring entries that the plugin can access. Each entry specifies a `service` and `user` name. See [Allowed Secrets Configuration](#allowed-secrets-configuration) for detailed documentation.
     - **env_vars** (`object`, optional): Key-value pairs of environment variables for the plugin.
     - **memory_limit** (`string`, optional): Memory limit for the plugin (e.g., `"512Mi"`).
 
@@ -325,6 +326,11 @@ plugins:
         - "/tmp"                      # Single path (same for host and plugin)
         - "/var/log:/plugin/logs"     # Mapped path (host:plugin)
         - "/home/user/data"           # Another single path
+      allowed_secrets:
+        - service: "my-app"
+          user: "admin"
+        - service: "database"
+          user: "db_user"
       skip_tools:
         - "debug_tool"           # Skip exact tool name
         - "temp_.*"              # Skip tools starting with "temp_"
@@ -338,6 +344,9 @@ plugins:
     runtime_config:
       allowed_hosts:
         - "private.registry.io"
+      allowed_secrets:
+        - service: "private-registry"
+          user: "auth-token"
 ```
 
 ## Example (JSON)
@@ -372,6 +381,12 @@ plugins:
           "/tmp",
           "/var/log:/plugin/logs",
           "/home/user/data"
+        ],
+        "allowed_secrets": [
+          {
+            "service": "my-app",
+            "user": "admin"
+          }
         ],
         "skip_tools": [
           "debug_tool",
@@ -808,6 +823,372 @@ plugins:
 5. **Environment-Specific Paths**: Use different path configurations for different environments (dev, staging, prod).
 6. **Test Path Access**: Verify that plugins can actually access configured paths before deploying to production.
 
+## Allowed Secrets Configuration
+
+The `allowed_secrets` field provides fine-grained control over which system keyring entries a plugin can access. This enables secure secret management by explicitly whitelisting keyring credentials that plugins are permitted to retrieve.
+
+### Purpose
+
+Rather than allowing plugins unrestricted access to the system keyring, `allowed_secrets` implements a principle of least privilege by specifying exactly which keyring entries a plugin may access. This prevents plugins from accessing sensitive credentials they don't need.
+
+### Entry Format
+
+Each entry in `allowed_secrets` is an object with two required fields:
+
+```yaml
+allowed_secrets:
+  - service: "service-name"
+    user: "user-name"
+```
+
+- **service** (`string`, required): The service name of the keyring entry
+- **user** (`string`, required): The user/account name of the keyring entry
+
+### Basic Examples
+
+#### Single Secret
+```yaml
+runtime_config:
+  allowed_secrets:
+    - service: "my-app"
+      user: "admin"
+```
+
+#### Multiple Secrets
+```yaml
+runtime_config:
+  allowed_secrets:
+    - service: "database"
+      user: "db_user"
+    - service: "api-service"
+      user: "api_key_user"
+    - service: "s3-bucket"
+      user: "backup-bot"
+```
+
+#### JSON Format
+```json
+{
+  "runtime_config": {
+    "allowed_secrets": [
+      {
+        "service": "my-app",
+        "user": "admin"
+      },
+      {
+        "service": "database",
+        "user": "db_user"
+      }
+    ]
+  }
+}
+```
+
+### Use Cases
+
+#### 1. Database Credentials
+```yaml
+plugins:
+  db_backup:
+    url: "oci://ghcr.io/myorg/db-backup:latest"
+    runtime_config:
+      allowed_secrets:
+        - service: "postgres-prod"
+          user: "backup-user"
+        - service: "mysql-prod"
+          user: "backup-user"
+```
+
+The plugin can only access these specific database credentials, not other secrets in the keyring.
+
+#### 2. API Access
+```yaml
+plugins:
+  api_client:
+    url: "oci://ghcr.io/myorg/api-client:latest"
+    runtime_config:
+      allowed_secrets:
+        - service: "github-api"
+          user: "bot-token"
+        - service: "slack-api"
+          user: "webhook-url"
+```
+
+#### 3. Multi-Environment Credentials
+```yaml
+plugins:
+  deployment_tool:
+    url: "oci://ghcr.io/myorg/deployer:latest"
+    runtime_config:
+      allowed_secrets:
+        - service: "aws-staging"
+          user: "deploy-bot"
+        - service: "aws-production"
+          user: "deploy-bot"
+        - service: "docker-registry"
+          user: "ci-system"
+```
+
+#### 4. Service-Specific Access
+```yaml
+plugins:
+  monitoring:
+    url: "oci://ghcr.io/myorg/monitor:latest"
+    runtime_config:
+      allowed_secrets:
+        - service: "datadog"
+          user: "api-key"
+        - service: "pagerduty"
+          user: "integration-key"
+      
+  backup:
+    url: "oci://ghcr.io/myorg/backup:latest"
+    runtime_config:
+      allowed_secrets:
+        - service: "s3-backups"
+          user: "backup-bot"
+        # Note: This plugin cannot access monitoring secrets
+```
+
+### Setting Up Keyring Entries
+
+Before a plugin can access a secret, the entry must exist in the system keyring. Here's how to create keyring entries that plugins can access:
+
+#### macOS
+```bash
+# Add a secret that a plugin can access
+security add-generic-password \
+  -a "db_user" \
+  -s "database" \
+  -w "my-secret-password" \
+  -T ""
+
+# Verify it exists
+security find-generic-password -a "db_user" -s "database"
+
+# Delete if needed
+security delete-generic-password -a "db_user" -s "database"
+```
+
+#### Linux
+```bash
+# Add a secret using secret-tool
+echo "my-secret-password" | secret-tool store \
+  --label="Database credentials" \
+  service "database" \
+  username "db_user"
+
+# Verify it exists
+secret-tool lookup service "database" username "db_user"
+
+# Delete if needed
+secret-tool clear service "database" username "db_user"
+```
+
+#### Windows (Command Prompt)
+```cmd
+REM Add a secret
+cmdkey /generic:"database" /user:"db_user" /pass:"my-secret-password"
+
+REM List credentials
+cmdkey /list:"database"
+
+REM Delete if needed
+cmdkey /delete:"database"
+```
+
+#### Windows (PowerShell)
+```powershell
+# Add a secret
+$password = ConvertTo-SecureString "my-secret-password" -AsPlainText -Force
+$cred = New-Object System.Management.Automation.PSCredential("db_user", $password)
+# Note: Requires CredentialManager module or similar
+
+# For generic credentials, use cmdkey or Windows Credential Manager GUI
+```
+
+### Special Characters in Service and User Names
+
+The `allowed_secrets` field supports service and user names with special characters:
+
+```yaml
+allowed_secrets:
+  # Dots and hyphens
+  - service: "my-app.production"
+    user: "admin@example.com"
+  
+  # Underscores
+  - service: "service_with_underscore"
+    user: "user-with-dash"
+  
+  # Slashes (useful for namespacing)
+  - service: "company/project/service"
+    user: "deploy-key"
+  
+  # Dots in user names
+  - service: "api-gateway"
+    user: "user.name@domain.com"
+```
+
+**Note**: When creating keyring entries with special characters, ensure they are properly escaped or quoted according to your shell's requirements.
+
+### Complete Example
+
+```yaml
+plugins:
+  enterprise_integration:
+    url: "oci://ghcr.io/myorg/enterprise-integration:v2.1"
+    runtime_config:
+      # Network access
+      allowed_hosts:
+        - "api.enterprise.com"
+        - "*.internal.company.com"
+      
+      # Filesystem access
+      allowed_paths:
+        - "/var/lib/myapp/cache:/plugin/cache"
+        - "/etc/myapp/config:/plugin/config"
+      
+      # Keyring access (whitelist specific secrets)
+      allowed_secrets:
+        - service: "enterprise-api"
+          user: "integration-key"
+        - service: "database-prod"
+          user: "app-user"
+        - service: "s3-artifacts"
+          user: "upload-bot"
+      
+      # Environment configuration
+      env_vars:
+        ENVIRONMENT: "production"
+        LOG_LEVEL: "info"
+      
+      # Resource limits
+      memory_limit: "2GB"
+```
+
+### Security Considerations
+
+1. **Principle of Least Privilege**: Only grant access to secrets that the plugin absolutely needs. Each plugin should have its own minimal set of allowed secrets.
+
+2. **Avoid Wildcards**: Unlike `allowed_hosts`, there is no wildcard support in `allowed_secrets`. Each entry must be explicitly specified, ensuring maximum security.
+
+3. **Service Naming Convention**: Use consistent, descriptive service names:
+   - Good: `"github-api"`, `"postgres-production"`, `"aws-s3-backups"`
+   - Avoid: `"api"`, `"db"`, `"secret1"`
+
+4. **User Naming Convention**: Use role-based or purpose-based user names:
+   - Good: `"deploy-bot"`, `"backup-service"`, `"ci-system"`
+   - Avoid: Personal names like `"john"`, `"alice"`
+
+5. **Audit Secret Access**: Regularly review which plugins have access to which secrets. Remove entries that are no longer needed.
+
+6. **Environment Separation**: Use different service names for different environments:
+   ```yaml
+   # Development
+   - service: "api-dev"
+     user: "test-key"
+   
+   # Production
+   - service: "api-prod"
+     user: "production-key"
+   ```
+
+7. **Secret Rotation**: When rotating secrets, only the keyring entries need to be updated—the configuration remains unchanged:
+   ```bash
+   # Update the secret in the keyring
+   security add-generic-password -a "api-user" -s "my-service" -w "new-secret" -U
+   
+   # No config file changes needed!
+   ```
+
+### Validation and Error Handling
+
+#### Configuration Validation
+- Both `service` and `user` fields are required for each entry
+- Empty strings are not allowed for `service` or `user`
+- Duplicate entries are allowed (though redundant)
+- The `allowed_secrets` array itself can be empty `[]` (no secrets allowed)
+- The `allowed_secrets` field can be omitted entirely (no restrictions on secret access)
+
+#### Runtime Behavior
+- If a plugin attempts to access a keyring entry not in `allowed_secrets`, the access is denied
+- If an allowed keyring entry doesn't exist, the plugin receives an appropriate error
+- Keyring access failures are logged for security auditing
+
+#### Common Errors
+
+**"Secret not in allowed list"**
+- The plugin is trying to access a keyring entry that isn't whitelisted
+- Solution: Add the entry to `allowed_secrets` if it's legitimate
+
+**"Keyring entry not found"**
+- The specified service/user combination doesn't exist in the system keyring
+- Solution: Create the keyring entry using the appropriate platform tool
+
+**"Failed to access keyring"**
+- The system keyring is locked or inaccessible
+- Solution: Unlock the keyring or check permissions
+
+### Performance Notes
+
+- Secret validation is performed using hash-based lookups (O(1) complexity)
+- Configuration is parsed once at startup, not during runtime
+- Large numbers of allowed secrets have negligible performance impact
+- Keyring access itself may have platform-specific performance characteristics
+
+### Best Practices
+
+1. **Document Secret Purpose**: Add comments explaining why each secret is needed:
+   ```yaml
+   allowed_secrets:
+     # API authentication for external service
+     - service: "external-api"
+       user: "integration-token"
+     
+     # Database connection credentials
+     - service: "postgres-prod"
+       user: "app-reader"
+   ```
+
+2. **Group by Function**: Organize secrets by their purpose or system:
+   ```yaml
+   allowed_secrets:
+     # Database credentials
+     - service: "postgres-prod"
+       user: "app-user"
+     - service: "redis-cache"
+       user: "cache-client"
+     
+     # External APIs
+     - service: "github-api"
+       user: "bot-token"
+     - service: "slack-webhook"
+       user: "notifications"
+   ```
+
+3. **Test Secret Access**: Before deploying, verify that:
+   - All listed secrets exist in the keyring
+   - The plugin can successfully access them
+   - No additional secrets are needed
+
+4. **Version Control Safety**: The config file only contains service/user identifiers, never actual secrets, making it safe to commit to version control.
+
+5. **Environment-Specific Configs**: Use different configurations for different environments:
+   ```yaml
+   # config.dev.yaml
+   allowed_secrets:
+     - service: "api-dev"
+       user: "test-token"
+   
+   # config.prod.yaml
+   allowed_secrets:
+     - service: "api-prod"
+       user: "production-token"
+   ```
+
+6. **Regular Audits**: Periodically review and remove unnecessary secret permissions.
+
 ## Notes
 
 - Fields marked as `optional` can be omitted.
@@ -816,3 +1197,5 @@ plugins:
 - URL matching is case-sensitive and based on string prefix matching.
 - Keyring authentication requires platform-specific keyring services to be available and accessible.
 - Skip tools patterns use full regex syntax with automatic anchoring for precise tool filtering.
+- Allowed secrets provide fine-grained control over keyring access, implementing principle of least privilege for secret management.
+- When `allowed_secrets` is omitted, plugins may have unrestricted keyring access (depending on plugin implementation). When specified, only the listed keyring entries can be accessed.

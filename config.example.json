@@ -13,6 +13,12 @@
       "url": "oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"],
+        "allowed_secrets": [
+          {
+            "service": "myip-service",
+            "user": "api-key"
+          }
+        ],
         "skip_tools": ["debug_.*", ".*_test"]
       }
     },
@@ -34,6 +40,20 @@
           "[a-z]+_helper"
         ],
         "allowed_hosts": ["example.com"],
+        "allowed_paths": ["/tmp", "/var/log:/plugin/logs"],
+        "allowed_secrets": [
+          {
+            "service": "example-db",
+            "user": "db-user"
+          },
+          {
+            "service": "example-api",
+            "user": "api-token"
+          }
+        ],
+        "env_vars": {
+          "EXAMPLE_ENV": "production"
+        },
         "memory_limit": "256Mi"
       }
     }

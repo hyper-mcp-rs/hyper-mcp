@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, KeyringEntryId},
     naming::{
         PluginName, create_namespaced_name, create_namespaced_uri, parse_namespaced_name,
         parse_namespaced_uri,
@@ -161,6 +161,7 @@ impl PluginService {
                 [
                     host_fns::create_elicitation(ctx.clone()),
                     host_fns::create_message(ctx.clone()),
+                    host_fns::get_keyring_secret(ctx.clone()),
                     host_fns::list_roots(ctx.clone()),
                     host_fns::notify_logging_message(ctx.clone()),
                     host_fns::notify_progress(ctx.clone()),
@@ -747,11 +748,13 @@ mod host_fns {
     use extism::{EXTISM_USER_MODULE, Function, UserData, host_fn};
     use extism_convert::Json;
     use rmcp::model::{
-        CreateElicitationRequestParams, CreateElicitationResult, CreateMessageRequestParams,
-        ElicitationAction, ElicitationResponseNotificationParam, ListRootsResult,
-        LoggingMessageNotificationParam, ProgressNotificationParam,
-        ResourceUpdatedNotificationParam,
+        ContextInclusion, CreateElicitationRequestParams, CreateElicitationResult,
+        CreateMessageRequestParams, CreateMessageResult, ElicitationAction,
+        ElicitationResponseNotificationParam, ListRootsResult, LoggingMessageNotificationParam,
+        ProgressNotificationParam, RawTextContent, ResourceUpdatedNotificationParam, Role,
+        SamplingContent, SamplingMessage, SamplingMessageContent,
     };
+    use serde_json::json;
 
     #[allow(dead_code)]
     #[serde_as]
@@ -808,6 +811,14 @@ mod host_fns {
         }
     }
 
+    impl TryFrom<KeyringEntryId> for keyring::Entry {
+        type Error = keyring::Error;
+
+        fn try_from(id: KeyringEntryId) -> Result<Self, Self::Error> {
+            keyring::Entry::new(&id.service, &id.user)
+        }
+    }
+
     #[derive(Clone, Debug)]
     pub struct PluginServiceContext {
         pub handle: Handle,
@@ -830,7 +841,13 @@ mod host_fns {
                             ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).map_err(Error::from)
                         } else {
                             tracing::info!("Creating elicitation from {}", ctx.plugin_name);
-                            ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).map_err(Error::from)
+                            Ok(ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).unwrap_or_else(|err| {
+                                    tracing::error!(error = ?err, "Elicitation creation failed");
+                                    Json(CreateElicitationResult {
+                                        action: ElicitationAction::Decline,
+                                        content: Some(json!({"error": err.to_string()})),
+                                    })
+                            }))
                         }
                     };
                     if let CreateElicitationRequestParams::FormElicitationParams { .. } = elicitation_msg.inner {
@@ -840,7 +857,7 @@ mod host_fns {
                             tracing::info!("Peer does not support form elicitation, declining from {}", ctx.plugin_name);
                             Ok(Json(CreateElicitationResult {
                                 action: ElicitationAction::Decline,
-                                content: None,
+                                content: Some(json!({"error": "Peer does not support form elicitation"})),
                             }))
                         }
                     } else if let CreateElicitationRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
@@ -850,18 +867,24 @@ mod host_fns {
                             tracing::info!("Peer does not support url elicitation, declining from {}", ctx.plugin_name);
                             Ok(Json(CreateElicitationResult {
                                 action: ElicitationAction::Decline,
-                                content: None,
+                                content: Some(json!({"error": "Peer does not support url elicitation"})),
                             }))
                         }
                     } else {
-                        tracing::info!("Unknown elicitation type, declining from {}", ctx.plugin_name);
+                        tracing::warn!("Unknown elicitation type, declining from {}", ctx.plugin_name);
                         Ok(Json(CreateElicitationResult {
                             action: ElicitationAction::Decline,
-                            content: None,
+                            content: Some(json!({"error": "Unknown elicitation type"})),
                         }))
                     }
                 },
-                None => Err(anyhow::anyhow!("No peer available")),
+                None => {
+                    tracing::error!("No peer available, declining from {}", ctx.plugin_name);
+                    Ok(Json(CreateElicitationResult {
+                        action: ElicitationAction::Decline,
+                        content: Some(json!({"error": "No peer avaialable"})),
+                    }))
+                },
             }
         });
 
@@ -877,21 +900,68 @@ mod host_fns {
 
     pub fn create_message(ctx: PluginServiceContext) -> Function {
         host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParams>) -> Json<CreateMessageResult> {
-            let sampling_msg = sampling_msg.into_inner();
+            let mut sampling_msg = sampling_msg.into_inner();
             let ctx = match ctx.get()?.lock() {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
             match ctx.plugin_service.peer.get() {
                 Some(peer) => {
-                    if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.sampling.is_some() {
+                    if let Some(peer_info) = peer.peer_info() && let Some(peer_sampling) = peer_info.capabilities.sampling.clone() {
                         tracing::info!("Creating sampling message from {}", ctx.plugin_name);
-                        ctx.handle.block_on(peer.create_message(sampling_msg)).map(Json).map_err(Error::from)
+                        if peer_sampling.context.is_none() && sampling_msg.include_context.is_some() {
+                            sampling_msg.include_context = Some(ContextInclusion::None);
+                        }
+                        if peer_sampling.tools.is_none() && (sampling_msg.tools.is_some() || sampling_msg.tool_choice.is_some()) {
+                            sampling_msg.tools = None;
+                            sampling_msg.tool_choice = None;
+                        }
+                        Ok(ctx.handle.block_on(peer.create_message(sampling_msg)).map(Json).unwrap_or_else(|err| {
+                                tracing::error!(error = ?err, "Message creation failed");
+                                Json(CreateMessageResult {
+                                    message: SamplingMessage {
+                                        content: SamplingContent::Single(SamplingMessageContent::Text(RawTextContent{
+                                            text: err.to_string(),
+                                            meta: None,
+                                        })),
+                                        meta: None,
+                                        role: Role::Assistant,
+                                    },
+                                    model: "".to_string(),
+                                    stop_reason: Some("error".to_string()),
+                                })
+                        }))
                     } else {
-                        Err(anyhow::anyhow!("Peer does not support sampling"))
+                        tracing::info!("Peer does not support sampling");
+                        Ok(Json(CreateMessageResult {
+                            message: SamplingMessage {
+                                content: SamplingContent::Single(SamplingMessageContent::Text(RawTextContent{
+                                    text: "Peer does not support sampling".to_string(),
+                                    meta: None,
+                                })),
+                                meta: None,
+                                role: Role::Assistant,
+                            },
+                            model: "".to_string(),
+                            stop_reason: Some("error".to_string()),
+                        }))
                     }
                 },
-                None => Err(anyhow::anyhow!("No peer available")),
+                None => {
+                    tracing::error!("No peer available");
+                    Ok(Json(CreateMessageResult {
+                        message: SamplingMessage {
+                            content: SamplingContent::Single(SamplingMessageContent::Text(RawTextContent{
+                                text: "No peer available".to_string(),
+                                meta: None,
+                            })),
+                            meta: None,
+                            role: Role::Assistant,
+                        },
+                        model: "".to_string(),
+                        stop_reason: Some("error".to_string()),
+                    }))
+                },
             }
         });
 
@@ -901,6 +971,54 @@ mod host_fns {
             [extism::PTR],
             UserData::new(ctx),
             create_message,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
+    pub fn get_keyring_secret(ctx: PluginServiceContext) -> Function {
+        host_fn!(get_keyring_secret(ctx: PluginServiceContext; entry: Json<KeyringEntryId>) -> Vec<u8>  {
+            let entry = entry.into_inner();
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            let plugin_config = ctx.plugin_service.config.plugins.get(&ctx.plugin_name).expect("Config missing");
+            match &plugin_config.runtime_config {
+                Some(runtime_config) => match &runtime_config.allowed_secrets {
+                    Some(allowed_secrets) => if allowed_secrets.contains(&entry) {
+                        let entry: keyring::Entry = match (entry).try_into() {
+                            Ok(entry) => entry,
+                            Err(error) => {
+                                tracing::error!(error = ?error, "Unable to convert to entry in keyring");
+                                return Ok(Vec::new())
+                            }
+                        };
+                        Ok(entry.get_secret().unwrap_or_else(|err| {
+                                tracing::error!(error = ?err, "Error retrieving secret");
+                                Vec::new()
+                        }))
+                    } else {
+                        tracing::error!("{:?} not in allowed_secrets for {}", entry, ctx.plugin_name);
+                        Ok(Vec::new())
+                    },
+                    None => {
+                        tracing::error!("{:?} not in allowed_secrets for {}", entry, ctx.plugin_name);
+                        Ok(Vec::new())
+                    },
+                }
+                None => {
+                    tracing::error!("{:?} not in allowed_secrets for {}", entry, ctx.plugin_name);
+                    Ok(Vec::new())
+                },
+            }
+        });
+
+        Function::new(
+            "get_keyring_secret",
+            [extism::PTR],
+            [extism::PTR],
+            UserData::new(ctx),
+            get_keyring_secret,
         )
         .with_namespace(EXTISM_USER_MODULE)
     }
@@ -915,12 +1033,18 @@ mod host_fns {
                 Some(peer) => {
                     if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.roots.is_some() {
                         tracing::info!("Listing roots from {}", ctx.plugin_name);
-                        ctx.handle.block_on(peer.list_roots()).map(Json).map_err(Error::from)
+                        Ok(ctx.handle.block_on(peer.list_roots()).map(Json).unwrap_or_else(|err| {
+                                tracing::error!(error = ?err, "List roots failed");
+                                Json(ListRootsResult::default())
+                        }))
                     } else {
                         Ok(Json(ListRootsResult::default()))
                     }
                 },
-                None => Err(anyhow::anyhow!("No peer available")),
+                None => {
+                    tracing::error!("Peer not available");
+                    Ok(Json(ListRootsResult::default()))
+                },
             }
         });
 
@@ -941,9 +1065,15 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            if (ctx.plugin_service.logging_level() as u8) <= (log_msg.level as u8) && let Some(peer) = ctx.plugin_service.peer.get() {
-                tracing::debug!("Logging message from {}", ctx.plugin_name);
-                return ctx.handle.block_on(peer.notify_logging_message(log_msg)).map_err(Error::from);
+            if let Some(peer) = ctx.plugin_service.peer.get() {
+                if (ctx.plugin_service.logging_level() as u8) <= (log_msg.level as u8) {
+                    tracing::debug!("Logging message from {}", ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_logging_message(log_msg)).unwrap_or_else(|err| {
+                            tracing::error!(error = ?err, "Notify logging message failed");
+                        });
+                }
+            } else {
+                tracing::error!("Peer not available");
             }
             Ok(())
         });
@@ -965,13 +1095,15 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            match ctx.plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::debug!("Progress notification from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_progress(progress_msg)).map_err(Error::from)
-                },
-                None => Ok(()),
+            if let Some(peer) = ctx.plugin_service.peer.get() {
+                tracing::debug!("Progress notification from {}", ctx.plugin_name);
+                ctx.handle.block_on(peer.notify_progress(progress_msg)).unwrap_or_else(|err| {
+                    tracing::error!(error = ?err, "Notify progress failed");
+                });
+            } else {
+                tracing::error!("Peer not available");
             }
+            Ok(())
         });
 
         Function::new(
@@ -990,13 +1122,15 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            match ctx.plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_prompt_list_changed()).map_err(Error::from)
-                },
-                None => Ok(()),
+            if let Some(peer) = ctx.plugin_service.peer.get() {
+                tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+                ctx.handle.block_on(peer.notify_prompt_list_changed()).unwrap_or_else(|err| {
+                    tracing::error!(error = ?err, "Notify prompt list changed failed");
+                });
+            } else {
+                tracing::error!("Peer not available");
             }
+            Ok(())
         });
 
         Function::new(
@@ -1015,13 +1149,15 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            match ctx.plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_resource_list_changed()).map_err(Error::from)
-                },
-                None => Ok(()),
+            if let Some(peer) = ctx.plugin_service.peer.get() {
+                tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+                ctx.handle.block_on(peer.notify_resource_list_changed()).unwrap_or_else(|err| {
+                    tracing::error!(error = ?err, "Notify resource list changed failed");
+                });
+            } else {
+                tracing::error!("Peer not available");
             }
+            Ok(())
         });
 
         Function::new(
@@ -1042,13 +1178,15 @@ mod host_fns {
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
             if ctx.plugin_service.subscriptions.contains(&update_msg.uri) {
-                match ctx.plugin_service.peer.get() {
-                    Some(peer) => {
-                        tracing::info!("Notifying resource {} updated from {}", update_msg.uri, ctx.plugin_name);
-                        ctx.handle.block_on(peer.notify_resource_updated(update_msg)).map_err(Error::from)
-                    },
-                    None => Ok(()),
+                if let Some(peer) = ctx.plugin_service.peer.get() {
+                    tracing::info!("Notifying resource {} updated from {}", update_msg.uri, ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_resource_updated(update_msg)).unwrap_or_else(|err| {
+                        tracing::error!(error = ?err, "Notify resource updated failed");
+                    });
+                } else {
+                    tracing::error!("Peer not available");
                 }
+                Ok(())
             }
             else {
                 Ok(())
@@ -1071,13 +1209,15 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            match ctx.plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from)
-                },
-                None => Ok(()),
+            if let Some(peer) = ctx.plugin_service.peer.get() {
+                tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+                ctx.handle.block_on(peer.notify_tool_list_changed()).unwrap_or_else(|err| {
+                    tracing::error!(error = ?err, "Notify tool list changed failed");
+                });
+            } else {
+                tracing::error!("Peer not available");
             }
+            Ok(())
         });
 
         Function::new(
@@ -1097,13 +1237,15 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            match ctx.plugin_service.peer.get() {
-                Some(peer) => {
-                    tracing::info!("Notifying url elicitation {} completed from {}", completed_msg.elicitation_id, ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).map_err(Error::from)
-                },
-                None => Ok(()),
+            if let Some(peer) = ctx.plugin_service.peer.get() {
+                tracing::info!("Notifying url elicitation {} completed from {}", completed_msg.elicitation_id, ctx.plugin_name);
+                ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).unwrap_or_else(|err| {
+                    tracing::error!(error = ?err, "Notify url elicitation completed failed");
+                });
+            } else {
+                tracing::error!("Peer not available");
             }
+            Ok(())
         });
 
         Function::new(
@@ -1181,7 +1323,7 @@ mod tests {
         }
     }
 
-    async fn create_temp_config_file(content: &str) -> anyhow::Result<(TempDir, PathBuf)> {
+    async fn create_temp_config_file(content: &str) -> Result<(TempDir, PathBuf)> {
         let temp_dir = TempDir::new()?;
         let config_path = temp_dir.path().join("test_config.yaml");
         tokio::fs::write(&config_path, content).await?;
@@ -1225,16 +1367,8 @@ mod tests {
     {
         let (srv_io, cli_io) = duplex(64 * 1024);
         tokio::try_join!(
-            async {
-                serve_server(service, srv_io)
-                    .await
-                    .map_err(anyhow::Error::from)
-            },
-            async {
-                serve_client(client, cli_io)
-                    .await
-                    .map_err(anyhow::Error::from)
-            }
+            async { serve_server(service, srv_io).await.map_err(Error::from) },
+            async { serve_client(client, cli_io).await.map_err(Error::from) }
         )
         .expect("Failed to create test pair")
     }
