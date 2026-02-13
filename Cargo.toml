@@ -19,7 +19,7 @@ async-trait = "0.1"
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.4"
 backoff = { version = "0.4", features = ["tokio"] }
-aws-sdk-s3 = "1.122"
+aws-sdk-s3 = "1.123"
 axum = "0.8"
 bytesize = "2.3"
 camino = "1.2"
@@ -57,14 +57,14 @@ sigstore = { version = "0.13", features = ["cosign", "verify", "bundle"] }
 tar = "0.4"
 tokio = { version = "1.49", features = ["full"] }
 tokio-util = "0.7"
-toml = "0.9"
+toml = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5", features = ["serde"] }
 uuid = { version = "1.20", features = ["serde"] }
 
 [dev-dependencies]
-aws-sdk-s3 = { version = "1.122", features = ["test-util"] }
+aws-sdk-s3 = { version = "1.123", features = ["test-util"] }
 aws-smithy-mocks = "0.2"
 aws-smithy-runtime-api = "1.11"
 futures = "0.3"
