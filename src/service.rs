@@ -811,14 +811,6 @@ mod host_fns {
         }
     }
 
-    impl TryFrom<KeyringEntryId> for keyring::Entry {
-        type Error = keyring::Error;
-
-        fn try_from(id: KeyringEntryId) -> Result<Self, Self::Error> {
-            keyring::Entry::new(&id.service, &id.user)
-        }
-    }
-
     #[derive(Clone, Debug)]
     pub struct PluginServiceContext {
         pub handle: Handle,

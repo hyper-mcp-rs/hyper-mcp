@@ -20,7 +20,7 @@ pub enum AuthConfig {
 #[serde(tag = "type", rename_all = "lowercase")]
 enum InternalAuthConfig {
     Basic { username: String, password: String },
-    Keyring { service: String, user: String },
+    Keyring(KeyringEntryId),
     Token { token: String },
 }
 
@@ -35,12 +35,11 @@ impl<'de> Deserialize<'de> for AuthConfig {
                 Ok(AuthConfig::Basic { username, password })
             }
             InternalAuthConfig::Token { token } => Ok(AuthConfig::Token { token }),
-            InternalAuthConfig::Keyring { service, user } => {
+            InternalAuthConfig::Keyring(id) => {
                 use keyring::Entry;
                 use serde::de;
 
-                let entry =
-                    Entry::new(service.as_str(), user.as_str()).map_err(de::Error::custom)?;
+                let entry: Entry = (id).try_into().map_err(de::Error::custom)?;
                 let secret = entry.get_secret().map_err(de::Error::custom)?;
                 Ok(serde_json::from_slice::<AuthConfig>(secret.as_slice())
                     .map_err(de::Error::custom)?)
@@ -199,6 +198,14 @@ impl Serialize for AllowedPath {
 pub struct KeyringEntryId {
     pub service: String,
     pub user: String,
+}
+
+impl TryFrom<KeyringEntryId> for keyring::Entry {
+    type Error = keyring::Error;
+
+    fn try_from(id: KeyringEntryId) -> Result<Self, Self::Error> {
+        keyring::Entry::new(&id.service, &id.user)
+    }
 }
 
 #[serde_as]
@@ -775,7 +782,7 @@ plugins:
         assert!(result.is_ok());
 
         match result.unwrap() {
-            InternalAuthConfig::Keyring { service, user } => {
+            InternalAuthConfig::Keyring(KeyringEntryId { service, user }) => {
                 assert_eq!(service, "test-service");
                 assert_eq!(user, "test-user");
             }
@@ -1031,7 +1038,7 @@ plugins:
         let internal_auth: InternalAuthConfig = serde_json::from_str(json).unwrap();
 
         match internal_auth {
-            InternalAuthConfig::Keyring { service, user } => {
+            InternalAuthConfig::Keyring(KeyringEntryId { service, user }) => {
                 assert_eq!(service, "test-service");
                 assert_eq!(user, "test-user");
             }
@@ -1391,7 +1398,7 @@ plugins:
 
             // This should trigger the keyring lookup and deserialize to AuthConfig
             match internal_auth {
-                InternalAuthConfig::Keyring { service, user } => {
+                InternalAuthConfig::Keyring(KeyringEntryId { service, user }) => {
                     assert_eq!(service, service_name);
                     assert_eq!(user, user_name);
 
@@ -1963,7 +1970,7 @@ plugins:
         let internal_auth: InternalAuthConfig = serde_json::from_str(json).unwrap();
 
         match internal_auth {
-            InternalAuthConfig::Keyring { service, user } => {
+            InternalAuthConfig::Keyring(KeyringEntryId { service, user }) => {
                 assert_eq!(service, "");
                 assert_eq!(user, "test-user");
             }
