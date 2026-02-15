@@ -34,7 +34,7 @@ async fn build_auth(reference: &Reference) -> RegistryAuth {
         Err(CredentialRetrievalError::ConfigNotFound) => RegistryAuth::Anonymous,
         Err(CredentialRetrievalError::NoCredentialConfigured) => RegistryAuth::Anonymous,
         Err(e) => {
-            tracing::info!("Error retrieving docker credentials: {e}. Using anonymous auth");
+            tracing::info!(error = ?e, "Error retrieving docker credentials. Using anonymous auth");
             RegistryAuth::Anonymous
         }
         Ok(DockerCredential::UsernamePassword(username, password)) => {
@@ -48,6 +48,7 @@ async fn build_auth(reference: &Reference) -> RegistryAuth {
     }
 }
 
+#[tracing::instrument(skip(config), fields(module=module_path!()))]
 pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
     let image_reference = url
@@ -84,7 +85,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
 
     let (manifest, manifest_digest) = retry(manifest_backoff, || async {
         client.pull_manifest(&reference, &auth).await.map_err(|e| {
-            tracing::warn!("Failed to pull manifest for {}: {}", image_reference, e);
+            tracing::warn!(image = image_reference, error = ?e, "Failed to pull manifest, retrying");
             backoff::Error::transient(e)
         })
     })
@@ -99,13 +100,13 @@ pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
 
     if local_output_path.exists() {
         tracing::info!(
-            "Plugin {image_reference} already cached at: {}. Skipping downloading.",
-            local_output_path.display()
+            image = image_reference, path = ?local_output_path,
+            "Plugin already cached. Skipping downloading.",
         );
         return Ok(fs::read(local_output_path).await?);
     }
 
-    tracing::info!("Pulling {image_reference} ...");
+    tracing::info!(image = image_reference, "Pulling...");
 
     // Verify BEFORE downloading blobs
     verify_image_signature_with_cosign(config, image_reference).await?;
@@ -141,10 +142,10 @@ pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
                 .map(|_| temp_buf)
                 .map_err(|e| {
                     tracing::warn!(
-                        "Failed to pull blob {} for {}: {}",
-                        digest,
-                        image_reference,
-                        e
+                        digest = digest,
+                        image = image_reference,
+                        error = ?e,
+                        "Failed to pull blob",
                     );
                     backoff::Error::transient(e)
                 })
@@ -156,7 +157,7 @@ pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
                 fs::create_dir_all(parent).await?;
             }
             fs::write(local_output_path.clone(), &wasm).await?;
-            tracing::info!("Successfully extracted to: {}", local_output_path.display());
+            tracing::info!(path = ?local_output_path, "Successfully extracted wasm");
             return Ok(wasm);
         }
     }
@@ -207,11 +208,11 @@ async fn verify_image_signature_with_cosign(
     image_reference: &str,
 ) -> Result<()> {
     if config.insecure_skip_signature {
-        tracing::warn!("Signature verification disabled for {image_reference}");
+        tracing::warn!(image = image_reference, "Signature verification disabled");
         return Ok(());
     }
 
-    tracing::info!("Verifying signature (cosign) for {image_reference}");
+    tracing::info!(image = image_reference, "Verifying signature (cosign)");
 
     let mut args = cosign_verify_args(config)?;
     args.push(image_reference.to_string());
@@ -224,7 +225,7 @@ async fn verify_image_signature_with_cosign(
         .context("Failed to spawn cosign; is it installed and on PATH?")?;
 
     if output.status.success() {
-        tracing::info!("Cosign verification successful for {image_reference}");
+        tracing::info!(image = image_reference, "Cosign verification successful");
         return Ok(());
     }
 
@@ -288,7 +289,7 @@ fn extract_wasm_from_tar_reader<R: Read>(tar_reader: R) -> Result<Option<Vec<u8>
         let mut entry = match entry_result {
             Ok(e) => e,
             Err(e) => {
-                tracing::debug!("tar entry error: {e}");
+                tracing::debug!(error = ?e, "tar entry error");
                 continue;
             }
         };
@@ -296,7 +297,7 @@ fn extract_wasm_from_tar_reader<R: Read>(tar_reader: R) -> Result<Option<Vec<u8>
         let raw_path: PathBuf = match entry.path() {
             Ok(p) => p.into_owned(),
             Err(e) => {
-                tracing::debug!("tar entry path() error: {e}");
+                tracing::debug!(error = ?e, "tar entry path() error");
                 continue;
             }
         };
@@ -323,8 +324,8 @@ fn extract_wasm_from_tar_reader<R: Read>(tar_reader: R) -> Result<Option<Vec<u8>
 
         if !looks_like_wasm(&content) {
             tracing::debug!(
-                "Found candidate `{}`, but it does not look like wasm; skipping",
-                raw_path.display()
+                candidate = ?raw_path,
+                "Found candidate but it does not look like wasm; skipping",
             );
             continue;
         }
@@ -368,7 +369,7 @@ fn extract_wasm_from_blob(buf: &[u8]) -> Result<Option<Vec<u8>>> {
     match extract_wasm_from_tar_reader(std::io::Cursor::new(buf)) {
         Ok(found) => Ok(found),
         Err(e) => {
-            tracing::error!("not a tar (or unreadable tar): {e}");
+            tracing::error!(error = ?e, "not a tar (or unreadable tar)");
             Ok(None)
         }
     }

@@ -12,6 +12,7 @@ use url::Url;
 
 static S3_CLIENT: OnceCell<Client> = OnceCell::const_new();
 
+#[tracing::instrument(fields(module=module_path!()))]
 pub async fn load_wasm(url: &Url) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
 
@@ -89,7 +90,7 @@ async fn load_wasm_from_s3_or_cache(s3_client: &Client, url: &Url) -> Result<Vec
                 Ok(bytes.to_vec())
             }
             Err(e) => {
-                tracing::error!("Failed to collect S3 object body: {e}");
+                tracing::error!(error = ?e, "Failed to collect S3 object body");
                 Err(anyhow::anyhow!("Failed to collect S3 object body: {e}"))
             }
         },
@@ -97,7 +98,7 @@ async fn load_wasm_from_s3_or_cache(s3_client: &Client, url: &Url) -> Result<Vec
             fs::read(wasm_path).await.map_err(|e| e.into())
         }
         Err(e) => {
-            tracing::error!("Failed to get object from S3: {e}");
+            tracing::error!(error = ?e, "Failed to get object from S3");
             Err(anyhow::anyhow!("Failed to get object from S3: {e}"))
         }
     }

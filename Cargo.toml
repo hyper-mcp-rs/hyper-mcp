@@ -59,7 +59,7 @@ tar = "0.4"
 tokio = { version = "1.49", features = ["full"] }
 tokio-util = "0.7"
 toml = "1.0"
-tracing = "0.1"
+tracing = { version = "0.1", features = ["attributes"] }
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5", features = ["serde"] }

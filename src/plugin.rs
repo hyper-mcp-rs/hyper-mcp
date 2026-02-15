@@ -178,7 +178,7 @@ where
         //Cancellation requested
         _ = ct.cancelled() => {
             if let Err(e) = cancel_handle.cancel() {
-                tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
+                tracing::error!(error = ?e, "Failed to cancel plugin");
                 return Err(McpError::internal_error(
                     format!("Failed to cancel plugin {plugin_name}: {e}"),
                     None,
@@ -225,7 +225,7 @@ async fn notify_plugin(plugin: &dyn Plugin, name: &str, payload: String) -> Resu
         let mut plugin = plugin.lock().unwrap();
         let result: Result<String, extism::Error> = plugin.call(&name, payload);
         if let Err(e) = result {
-            tracing::error!("Failed to notify plugin {plugin_name}: {e}");
+            tracing::error!(error = ?e, "Failed to notify plugin");
         }
     });
     Ok(())

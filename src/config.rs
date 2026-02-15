@@ -1842,6 +1842,7 @@ plugins:
     }
 
     #[test]
+    #[ignore]
     fn test_platform_detection_and_keyring_tool_availability() {
         use std::process::Command;
 

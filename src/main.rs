@@ -24,10 +24,10 @@ async fn main() -> Result<()> {
         serve_directly_with_ct::<RoleServer, _, _, _, _>(service, stdio(), None, ct.clone());
     tokio::select! {
         res = running.waiting() => {
-            tracing::warn!("Shutting down, {:?}", res?);
+            tracing::warn!(reason = ?res?, "Shutting down");
         }
         _ = signal::ctrl_c() => {
-            tracing::warn!("SIGTERM received, shutting down");
+            tracing::warn!(reason = "SIGTERM", "Shutting down");
             ct.cancel();
         }
     }

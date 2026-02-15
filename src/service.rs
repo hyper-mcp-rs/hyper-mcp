@@ -79,6 +79,7 @@ impl PluginService {
         Ok(service)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn load_plugins(&self) -> Result<()> {
         let mut names = HashMap::new();
         let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
@@ -91,7 +92,7 @@ impl PluginService {
                 "oci" => wasm::oci::load_wasm(&plugin_cfg.url, &self.config.oci).await?,
                 "s3" => wasm::s3::load_wasm(&plugin_cfg.url).await?,
                 unsupported => {
-                    tracing::error!("Unsupported plugin URL scheme: {unsupported}");
+                    tracing::error!(scheme = unsupported, "Unsupported plugin URL scheme");
                     return Err(anyhow::anyhow!(
                         "Unsupported plugin URL scheme: {unsupported}"
                     ));
@@ -123,13 +124,16 @@ impl PluginService {
                             match std::env::var(stripped) {
                                 Ok(env_value) => {
                                     tracing::debug!(
-                                        "Resolved environment variable reference ${{{stripped}}} to actual value"
+                                        var = stripped,
+                                        "Resolved environment variable reference to actual value"
                                     );
                                     env_value
                                 }
                                 Err(_) => {
                                     tracing::warn!(
-                                        "Environment variable {stripped} not found, keeping original value {value}"
+                                        var = stripped,
+                                        value = value,
+                                        "Environment variable not found, keeping original value"
                                     );
                                     value.to_string()
                                 }
@@ -192,7 +196,7 @@ impl PluginService {
 
             names.insert(plugin_id, plugin_name.clone());
             plugins.insert(plugin_name.clone(), plugin);
-            tracing::info!("Loaded plugin {plugin_name}");
+            tracing::info!(plugin = plugin_name.to_string(), "Loaded plugin");
         }
         self.names.set(names).expect("Names already set");
         self.plugins.set(plugins).expect("Plugins already set");
@@ -209,6 +213,7 @@ impl PluginService {
 }
 
 impl ServerHandler for PluginService {
+    #[tracing::instrument(name = "tools/call", skip(self, context))]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -222,7 +227,6 @@ impl ServerHandler for PluginService {
             ));
         }
 
-        tracing::info!("got tools/call request {:?}", request);
         let (plugin_name, tool_name) = match parse_namespaced_name(request.name.to_string()) {
             Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
             Err(e) => {
@@ -244,7 +248,7 @@ impl ServerHandler for PluginService {
             .and_then(|rc| rc.skip_tools.clone())
             && skip_tools.is_match(&tool_name)
         {
-            tracing::warn!("Tool {tool_name} in skip_tools");
+            tracing::warn!(tool = tool_name, "Tool in skip_tools");
             return Err(McpError::method_not_found::<CallToolRequestMethod>());
         }
 
@@ -268,12 +272,12 @@ impl ServerHandler for PluginService {
         plugin.call_tool(request, context).await
     }
 
+    #[tracing::instrument(name = "completion/complete", skip(self, context))]
     async fn complete(
         &self,
         request: CompleteRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CompleteResult, McpError> {
-        tracing::info!("got completion/complete request {:?}", request);
         let (plugin_name, request) = match request.r#ref {
             Reference::Prompt(PromptReference { name, title }) => {
                 let (plugin_name, prompt_name) = match parse_namespaced_name(name.to_string()) {
@@ -297,7 +301,7 @@ impl ServerHandler for PluginService {
                     .and_then(|rc| rc.skip_prompts.clone())
                     && skip_prompts.is_match(&prompt_name)
                 {
-                    tracing::warn!("Prompt {prompt_name} in skip_prompts");
+                    tracing::warn!(prompt = prompt_name, "Prompt in skip_prompts");
                     return Err(McpError::method_not_found::<CompleteRequestMethod>());
                 }
                 (
@@ -335,7 +339,7 @@ impl ServerHandler for PluginService {
                     .and_then(|rc| rc.skip_resource_templates.clone())
                     && skip_resource_templates.is_match(&resource_uri)
                 {
-                    tracing::warn!("Resource {resource_uri} in skip_resources");
+                    tracing::warn!(resource = resource_uri, "Resource in skip_resources");
                     return Err(McpError::method_not_found::<CompleteRequestMethod>());
                 }
                 (
@@ -363,6 +367,7 @@ impl ServerHandler for PluginService {
         plugin.complete(request, context).await
     }
 
+    #[tracing::instrument(skip(self))]
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             server_info: Implementation {
@@ -389,12 +394,12 @@ impl ServerHandler for PluginService {
         }
     }
 
+    #[tracing::instrument(name = "prompts/get", skip(self, context))]
     async fn get_prompt(
         &self,
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
-        tracing::info!("got prompts/get request {:?}", request);
         let (plugin_name, prompt_name) = match parse_namespaced_name(request.name.to_string()) {
             Ok((plugin_name, prompt_name)) => (plugin_name, prompt_name),
             Err(e) => {
@@ -416,7 +421,7 @@ impl ServerHandler for PluginService {
             .and_then(|rc| rc.skip_prompts.clone())
             && skip_prompts.is_match(&prompt_name)
         {
-            tracing::warn!("Prompt {prompt_name} in skip_prompts");
+            tracing::warn!(prompt = prompt_name, "Prompt in skip_prompts");
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         }
 
@@ -439,12 +444,12 @@ impl ServerHandler for PluginService {
         plugin.get_prompt(request, context).await
     }
 
+    #[tracing::instrument(name = "prompts/list", skip(self, context))]
     async fn list_prompts(
         &self,
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        tracing::info!("got prompts/list request {:?}", request);
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
                 "Plugins not initialized".to_string(),
@@ -473,8 +478,8 @@ impl ServerHandler for PluginService {
                 let prompt_name = prompt.name.as_ref() as &str;
                 if skip_prompts.is_match(prompt_name) {
                     tracing::info!(
-                        "Skipping prompt {} as requested in skip_prompts",
-                        prompt.name
+                        prompt = prompt.name,
+                        "Skipping prompt as requested in skip_prompts"
                     );
                     continue;
                 }
@@ -487,12 +492,12 @@ impl ServerHandler for PluginService {
         Ok(list_prompts_result)
     }
 
+    #[tracing::instrument(name = "resources/list", skip(self, context))]
     async fn list_resources(
         &self,
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        tracing::info!("got resources/list request {:?}", request);
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
                 "Plugins not initialized".to_string(),
@@ -520,8 +525,8 @@ impl ServerHandler for PluginService {
             for resource in plugin_resources.resources {
                 if skip_resources.is_match(resource.uri.as_str()) {
                     tracing::info!(
-                        "Skipping resource {} as requested in skip_resources",
-                        resource.uri
+                        resource = resource.uri,
+                        "Skipping resource as requested in skip_resources",
                     );
                     continue;
                 }
@@ -538,12 +543,12 @@ impl ServerHandler for PluginService {
         Ok(list_resources_result)
     }
 
+    #[tracing::instrument(name = "resources/templates/list", skip(self, context))]
     async fn list_resource_templates(
         &self,
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        tracing::info!("got resources/templates/list request {:?}", request);
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
                 "Plugins not initialized".to_string(),
@@ -571,8 +576,8 @@ impl ServerHandler for PluginService {
             for resource_template in plugin_resource_templates.resource_templates {
                 if skip_resource_templates.is_match(resource_template.uri_template.as_str()) {
                     tracing::info!(
-                        "Skipping resource template {} as requested in skip_resources",
-                        resource_template.uri_template
+                        resource_template = resource_template.uri_template,
+                        "Skipping resource template as requested in skip_resources",
                     );
                     continue;
                 }
@@ -592,6 +597,7 @@ impl ServerHandler for PluginService {
         Ok(list_resource_templates_result)
     }
 
+    #[tracing::instrument(name = "tools/list", skip(self, context))]
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParams>,
@@ -604,8 +610,6 @@ impl ServerHandler for PluginService {
                 None,
             ));
         }
-
-        tracing::info!("got tools/list request {:?}", request);
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
                 "Plugins not initialized".to_string(),
@@ -631,7 +635,10 @@ impl ServerHandler for PluginService {
             for tool in plugin_tools.tools {
                 let tool_name = tool.name.as_ref() as &str;
                 if skip_tools.is_match(tool_name) {
-                    tracing::info!("Skipping tool {} as requested in skip_tools", tool.name);
+                    tracing::info!(
+                        tool = tool.name.to_string(),
+                        "Skipping tool as requested in skip_tools"
+                    );
                     continue;
                 }
                 let mut new_tool = tool.clone();
@@ -644,34 +651,36 @@ impl ServerHandler for PluginService {
         Ok(list_tools_result)
     }
 
+    #[tracing::instrument(name = "notifications/initialized", skip(self, context))]
     fn on_initialized(
         &self,
         context: NotificationContext<RoleServer>,
     ) -> impl Future<Output = ()> + Send + '_ {
-        tracing::info!("client initialized");
         self.peer.set(context.peer).expect("Peer already set");
         std::future::ready(())
     }
 
+    #[tracing::instrument(name = "notifications/roots/list_changed", skip(self, context))]
     async fn on_roots_list_changed(&self, context: NotificationContext<RoleServer>) -> () {
-        tracing::info!("got roots/list_changed notification");
+        let span = tracing::info_span!("got roots/list_changed notification");
+        let _span = span.enter();
         let Some(plugins) = self.plugins.get() else {
             tracing::error!("Plugins not initialized");
             return;
         };
         for (plugin_name, plugin) in plugins.iter() {
             if let Err(e) = plugin.on_roots_list_changed(context.clone()).await {
-                tracing::error!("Failed to notify plugin {plugin_name} of roots list change: {e}");
+                tracing::error!(plugin = plugin_name.to_string(), error = ?e, "Failed to notify plugin of roots list change");
             }
         }
     }
 
+    #[tracing::instrument(name = "resources/read", skip(self, context))]
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
-        tracing::info!("got resources/read request {:?}", request);
         let (plugin_name, resource_uri) = match parse_namespaced_uri(request.uri.to_string()) {
             Ok((plugin_name, resource_uri)) => (plugin_name, resource_uri),
             Err(e) => {
@@ -693,7 +702,7 @@ impl ServerHandler for PluginService {
             .and_then(|rc| rc.skip_resources.clone())
             && skip_resources.is_match(&resource_uri)
         {
-            tracing::warn!("Resource {resource_uri} in skip_resources");
+            tracing::warn!(resource = resource_uri, "Resource in skip_resources");
             return Err(McpError::method_not_found::<ReadResourceRequestMethod>());
         }
 
@@ -715,6 +724,7 @@ impl ServerHandler for PluginService {
         plugin.read_resource(request, context).await
     }
 
+    #[tracing::instrument(name = "logging/setLevel", skip(self, _context))]
     fn set_level(
         &self,
         request: SetLevelRequestParams,
@@ -724,6 +734,7 @@ impl ServerHandler for PluginService {
         std::future::ready(Ok(()))
     }
 
+    #[tracing::instrument(name = "resources/subscribe", skip(self, _context))]
     fn subscribe(
         &self,
         request: SubscribeRequestParams,
@@ -733,6 +744,7 @@ impl ServerHandler for PluginService {
         std::future::ready(Ok(()))
     }
 
+    #[tracing::instrument(name = "resources/unsubscribe", skip(self, _context))]
     fn unsubscribe(
         &self,
         request: UnsubscribeRequestParams,
@@ -825,14 +837,14 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("elicitation/create", elicitation = ?elicitation_msg, plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             match ctx.plugin_service.peer.get() {
                 Some(peer) => {
                     let peer_create_elicitation = || {
                         if let Some(timeout) = elicitation_msg.timeout {
-                            tracing::info!("Creating elicitation from {} with timeout {:?}", ctx.plugin_name, timeout);
                             ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).map_err(Error::from)
                         } else {
-                            tracing::info!("Creating elicitation from {}", ctx.plugin_name);
                             Ok(ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).unwrap_or_else(|err| {
                                     tracing::error!(error = ?err, "Elicitation creation failed");
                                     Json(CreateElicitationResult {
@@ -846,7 +858,7 @@ mod host_fns {
                         if peer.supported_elicitation_modes().contains(&ElicitationMode::Form) {
                             peer_create_elicitation()
                         } else {
-                            tracing::info!("Peer does not support form elicitation, declining from {}", ctx.plugin_name);
+                            tracing::info!("Peer does not support form elicitation, declining");
                             Ok(Json(CreateElicitationResult {
                                 action: ElicitationAction::Decline,
                                 content: Some(json!({"error": "Peer does not support form elicitation"})),
@@ -856,14 +868,14 @@ mod host_fns {
                         if peer.supported_elicitation_modes().contains(&ElicitationMode::Url) {
                             peer_create_elicitation()
                         } else {
-                            tracing::info!("Peer does not support url elicitation, declining from {}", ctx.plugin_name);
+                            tracing::info!("Peer does not support url elicitation, declining");
                             Ok(Json(CreateElicitationResult {
                                 action: ElicitationAction::Decline,
                                 content: Some(json!({"error": "Peer does not support url elicitation"})),
                             }))
                         }
                     } else {
-                        tracing::warn!("Unknown elicitation type, declining from {}", ctx.plugin_name);
+                        tracing::warn!("Unknown elicitation type, declining");
                         Ok(Json(CreateElicitationResult {
                             action: ElicitationAction::Decline,
                             content: Some(json!({"error": "Unknown elicitation type"})),
@@ -871,7 +883,7 @@ mod host_fns {
                     }
                 },
                 None => {
-                    tracing::error!("No peer available, declining from {}", ctx.plugin_name);
+                    tracing::error!("No peer available, declining");
                     Ok(Json(CreateElicitationResult {
                         action: ElicitationAction::Decline,
                         content: Some(json!({"error": "No peer avaialable"})),
@@ -897,10 +909,11 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("sampling/createMessage", sampling = ?sampling_msg, plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             match ctx.plugin_service.peer.get() {
                 Some(peer) => {
                     if let Some(peer_info) = peer.peer_info() && let Some(peer_sampling) = peer_info.capabilities.sampling.clone() {
-                        tracing::info!("Creating sampling message from {}", ctx.plugin_name);
                         if peer_sampling.context.is_none() && sampling_msg.include_context.is_some() {
                             sampling_msg.include_context = Some(ContextInclusion::None);
                         }
@@ -974,6 +987,8 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("get_keyring_secret", entry_id = ?entry, plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             let plugin_config = ctx.plugin_service.config.plugins.get(&ctx.plugin_name).expect("Config missing");
             match &plugin_config.runtime_config {
                 Some(runtime_config) => match &runtime_config.allowed_secrets {
@@ -990,16 +1005,16 @@ mod host_fns {
                                 Vec::new()
                         }))
                     } else {
-                        tracing::error!("{:?} not in allowed_secrets for {}", entry, ctx.plugin_name);
+                        tracing::error!(entry = ?entry, "not in allowed_secrets");
                         Ok(Vec::new())
                     },
                     None => {
-                        tracing::error!("{:?} not in allowed_secrets for {}", entry, ctx.plugin_name);
+                        tracing::error!(entry = ?entry, "not in allowed_secrets");
                         Ok(Vec::new())
                     },
                 }
                 None => {
-                    tracing::error!("{:?} not in allowed_secrets for {}", entry, ctx.plugin_name);
+                    tracing::error!(entry = ?entry, "not in allowed_secrets");
                     Ok(Vec::new())
                 },
             }
@@ -1021,10 +1036,11 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("roots/list", plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             match ctx.plugin_service.peer.get() {
                 Some(peer) => {
                     if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.roots.is_some() {
-                        tracing::info!("Listing roots from {}", ctx.plugin_name);
                         Ok(ctx.handle.block_on(peer.list_roots()).map(Json).unwrap_or_else(|err| {
                                 tracing::error!(error = ?err, "List roots failed");
                                 Json(ListRootsResult::default())
@@ -1057,9 +1073,10 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("notifications/message", log = ?log_msg, plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             if let Some(peer) = ctx.plugin_service.peer.get() {
                 if (ctx.plugin_service.logging_level() as u8) <= (log_msg.level as u8) {
-                    tracing::debug!("Logging message from {}", ctx.plugin_name);
                     ctx.handle.block_on(peer.notify_logging_message(log_msg)).unwrap_or_else(|err| {
                             tracing::error!(error = ?err, "Notify logging message failed");
                         });
@@ -1087,8 +1104,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("notifications/progress", progress = ?progress_msg, plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             if let Some(peer) = ctx.plugin_service.peer.get() {
-                tracing::debug!("Progress notification from {}", ctx.plugin_name);
                 ctx.handle.block_on(peer.notify_progress(progress_msg)).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify progress failed");
                 });
@@ -1114,8 +1132,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("notifications/prompts/list_changed", plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             if let Some(peer) = ctx.plugin_service.peer.get() {
-                tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
                 ctx.handle.block_on(peer.notify_prompt_list_changed()).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify prompt list changed failed");
                 });
@@ -1141,8 +1160,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("notifications/resources/list_changed", plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             if let Some(peer) = ctx.plugin_service.peer.get() {
-                tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
                 ctx.handle.block_on(peer.notify_resource_list_changed()).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify resource list changed failed");
                 });
@@ -1169,9 +1189,10 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("notifications/resources/updated", update = ?update_msg, plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             if ctx.plugin_service.subscriptions.contains(&update_msg.uri) {
                 if let Some(peer) = ctx.plugin_service.peer.get() {
-                    tracing::info!("Notifying resource {} updated from {}", update_msg.uri, ctx.plugin_name);
                     ctx.handle.block_on(peer.notify_resource_updated(update_msg)).unwrap_or_else(|err| {
                         tracing::error!(error = ?err, "Notify resource updated failed");
                     });
@@ -1201,8 +1222,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("notifications/tools/list_changed", plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             if let Some(peer) = ctx.plugin_service.peer.get() {
-                tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
                 ctx.handle.block_on(peer.notify_tool_list_changed()).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify tool list changed failed");
                 });
@@ -1229,8 +1251,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
+            let span = tracing::info_span!("notifications/elicitation/complete", completed = ?completed_msg, plugin = ctx.plugin_name.to_string());
+            let _span = span.enter();
             if let Some(peer) = ctx.plugin_service.peer.get() {
-                tracing::info!("Notifying url elicitation {} completed from {}", completed_msg.elicitation_id, ctx.plugin_name);
                 ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify url elicitation completed failed");
                 });

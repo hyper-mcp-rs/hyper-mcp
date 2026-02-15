@@ -47,6 +47,7 @@ impl Authenticator for RequestBuilder {
     }
 }
 
+#[tracing::instrument(skip(auths), fields(module=module_path!()))]
 pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
     if !(url.scheme() == "http" || url.scheme() == "https") {
@@ -138,7 +139,7 @@ pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> R
         match resp.status() {
             StatusCode::NOT_MODIFIED | StatusCode::OK => Ok(resp),
             s => {
-                tracing::warn!("Unexpected status {} fetching {}, retrying...", s, url);
+                tracing::warn!(status = s.to_string(), "Unexpected status, retrying...");
                 Err(backoff::Error::transient(anyhow!(
                     "Unexpected status {s} fetching {url}"
                 )))
