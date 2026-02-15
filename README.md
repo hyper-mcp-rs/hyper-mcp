@@ -49,7 +49,7 @@ Built with security-first mindset:
 
 1. Create your config file:
    - Linux: `$HOME/.config/hyper-mcp/config.json`
-   - Windows: `{FOLDERID_RoamingAppData}`. Eg: `C:\Users\Alice\AppData\Roaming`
+   - Windows: `{FOLDERID_RoamingAppData}\hyper-mcp\config.json`. Eg: `C:\Users\Alice\AppData\Roaming\hyper-mcp\config.json`
    - macOS: `$HOME/Library/Application Support/hyper-mcp/config.json`
 
 ```json
