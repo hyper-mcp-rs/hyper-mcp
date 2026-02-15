@@ -44,8 +44,7 @@ fn _install_global_tracing() {
             std::fs::create_dir_all(&log_dir).expect("Failed to create log directory");
 
             // Rolling daily log file
-            let file_appender =
-                tracing_appender::rolling::daily(&log_dir, format!("mcp-server.log"));
+            let file_appender = tracing_appender::rolling::daily(&log_dir, "mcp-server.log");
 
             // Non-blocking writer (important for stdio MCP)
             let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
