@@ -12,7 +12,7 @@ use url::Url;
 
 static S3_CLIENT: OnceCell<Client> = OnceCell::const_new();
 
-#[tracing::instrument(fields(module=module_path!()))]
+#[tracing::instrument(skip_all)]
 pub async fn load_wasm(url: &Url) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
 

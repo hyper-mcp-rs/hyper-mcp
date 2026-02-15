@@ -1,8 +1,7 @@
 use anyhow::Result;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, convert::TryFrom, fmt, str::FromStr};
+use std::{collections::HashSet, convert::TryFrom, fmt, str::FromStr, sync::LazyLock};
 use url::Url;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -59,11 +58,11 @@ impl From<PluginNameReservedError> for PluginNameError {
     }
 }
 
-static PLUGIN_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
+static PLUGIN_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[A-Za-z0-9]+(?:[_][A-Za-z0-9]+)*$").expect("Failed to compile plugin name regex")
 });
 
-static RESERVED_PLUGIN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+static RESERVED_PLUGIN_NAMES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     let mut set = HashSet::new();
     set.insert("hyper_mcp");
     set

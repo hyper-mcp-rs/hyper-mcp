@@ -1,11 +1,11 @@
-use once_cell::sync::OnceCell;
-use tracing_subscriber::EnvFilter;
+use std::sync::OnceLock;
+use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan};
 
 #[cfg(not(test))]
-static LOGGING: OnceCell<tracing_appender::non_blocking::WorkerGuard> = OnceCell::new();
+static LOGGING: OnceLock<tracing_appender::non_blocking::WorkerGuard> = OnceLock::new();
 
 #[cfg(test)]
-static LOGGING: OnceCell<()> = OnceCell::new();
+static LOGGING: OnceLock<()> = OnceLock::new();
 
 #[ctor::ctor]
 fn _install_global_tracing() {
@@ -16,7 +16,8 @@ fn _install_global_tracing() {
             )
             .with_target(true)
             .with_line_number(true)
-            .with_ansi(false);
+            .with_ansi(false)
+            .with_span_events(FmtSpan::CLOSE);
 
         #[cfg(test)]
         {
@@ -28,13 +29,23 @@ fn _install_global_tracing() {
         #[cfg(not(test))]
         {
             // Cross-platform log directory
-            let proj = directories::ProjectDirs::from("ai", "hyper-mcp", "hyper-mcp")
-                .expect("Failed to determine project directories");
-            let log_dir = proj.data_dir().join("logs");
+            let log_dir = std::env::var("HYPER_MCP_LOG_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    dirs::config_dir()
+                        .map(|mut path| {
+                            path.push("hyper-mcp");
+                            path.push("logs");
+                            path
+                        })
+                        .expect("Unable to determine log directory")
+                });
+
             std::fs::create_dir_all(&log_dir).expect("Failed to create log directory");
 
             // Rolling daily log file
-            let file_appender = tracing_appender::rolling::daily(&log_dir, "mcp-server.log");
+            let file_appender =
+                tracing_appender::rolling::daily(&log_dir, format!("mcp-server.log"));
 
             // Non-blocking writer (important for stdio MCP)
             let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);

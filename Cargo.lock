@@ -2819,7 +2819,6 @@ dependencies = [
  "hex",
  "keyring",
  "oci-client 0.16.0",
- "once_cell",
  "percent-encoding",
  "regex",
  "reqwest 0.13.2",

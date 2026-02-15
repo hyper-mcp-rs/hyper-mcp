@@ -14,6 +14,8 @@ use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let span = tracing::info_span!("process", pid = std::process::id());
+    let _span = span.enter();
     let cli = cli::Cli::parse();
     tracing::debug!("Loading config from {:?}", cli);
     let config = config::load_config(&cli).await?;

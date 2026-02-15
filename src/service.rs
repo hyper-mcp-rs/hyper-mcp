@@ -30,11 +30,20 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     ops::Deref,
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::{runtime::Handle, sync::SetOnce};
 use uuid::Uuid;
+
+static CALL_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_call_id() -> u64 {
+    CALL_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 #[derive(Debug)]
 pub struct PluginServiceInner {
@@ -79,7 +88,7 @@ impl PluginService {
         Ok(service)
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip_all)]
     async fn load_plugins(&self) -> Result<()> {
         let mut names = HashMap::new();
         let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
@@ -100,7 +109,7 @@ impl PluginService {
             };
             let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
             if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
-                tracing::info!("runtime_cfg: {runtime_cfg:?}");
+                tracing::info!(plugin = plugin_name.to_string(), runtime_config = ?runtime_cfg);
                 if let Some(hosts) = &runtime_cfg.allowed_hosts {
                     for host in hosts {
                         manifest = manifest.with_allowed_host(host);
@@ -213,12 +222,14 @@ impl PluginService {
 }
 
 impl ServerHandler for PluginService {
-    #[tracing::instrument(name = "tools/call", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(request = ?request);
+
         // Check if the request has been cancelled
         if context.ct.is_cancelled() {
             return Err(McpError::internal_error(
@@ -272,12 +283,21 @@ impl ServerHandler for PluginService {
         plugin.call_tool(request, context).await
     }
 
-    #[tracing::instrument(name = "completion/complete", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn complete(
         &self,
         request: CompleteRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CompleteResult, McpError> {
+        tracing::info!(request = ?request);
+
+        // Check if the request has been cancelled
+        if context.ct.is_cancelled() {
+            return Err(McpError::internal_error(
+                "Request cancelled".to_string(),
+                None,
+            ));
+        }
         let (plugin_name, request) = match request.r#ref {
             Reference::Prompt(PromptReference { name, title }) => {
                 let (plugin_name, prompt_name) = match parse_namespaced_name(name.to_string()) {
@@ -367,7 +387,7 @@ impl ServerHandler for PluginService {
         plugin.complete(request, context).await
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             server_info: Implementation {
@@ -394,12 +414,21 @@ impl ServerHandler for PluginService {
         }
     }
 
-    #[tracing::instrument(name = "prompts/get", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn get_prompt(
         &self,
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
+        tracing::info!(request = ?request);
+
+        // Check if the request has been cancelled
+        if context.ct.is_cancelled() {
+            return Err(McpError::internal_error(
+                "Request cancelled".to_string(),
+                None,
+            ));
+        }
         let (plugin_name, prompt_name) = match parse_namespaced_name(request.name.to_string()) {
             Ok((plugin_name, prompt_name)) => (plugin_name, prompt_name),
             Err(e) => {
@@ -444,12 +473,21 @@ impl ServerHandler for PluginService {
         plugin.get_prompt(request, context).await
     }
 
-    #[tracing::instrument(name = "prompts/list", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn list_prompts(
         &self,
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
+        tracing::info!(request = ?request);
+
+        // Check if the request has been cancelled
+        if context.ct.is_cancelled() {
+            return Err(McpError::internal_error(
+                "Request cancelled".to_string(),
+                None,
+            ));
+        }
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
                 "Plugins not initialized".to_string(),
@@ -492,12 +530,21 @@ impl ServerHandler for PluginService {
         Ok(list_prompts_result)
     }
 
-    #[tracing::instrument(name = "resources/list", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn list_resources(
         &self,
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
+        tracing::info!(request = ?request);
+
+        // Check if the request has been cancelled
+        if context.ct.is_cancelled() {
+            return Err(McpError::internal_error(
+                "Request cancelled".to_string(),
+                None,
+            ));
+        }
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
                 "Plugins not initialized".to_string(),
@@ -543,12 +590,22 @@ impl ServerHandler for PluginService {
         Ok(list_resources_result)
     }
 
-    #[tracing::instrument(name = "resources/templates/list", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn list_resource_templates(
         &self,
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
+        tracing::info!(request = ?request);
+
+        // Check if the request has been cancelled
+        if context.ct.is_cancelled() {
+            return Err(McpError::internal_error(
+                "Request cancelled".to_string(),
+                None,
+            ));
+        }
+
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
                 "Plugins not initialized".to_string(),
@@ -597,12 +654,14 @@ impl ServerHandler for PluginService {
         Ok(list_resource_templates_result)
     }
 
-    #[tracing::instrument(name = "tools/list", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        tracing::info!(request = ?request);
+
         // Check if the request has been cancelled
         if context.ct.is_cancelled() {
             return Err(McpError::internal_error(
@@ -651,7 +710,7 @@ impl ServerHandler for PluginService {
         Ok(list_tools_result)
     }
 
-    #[tracing::instrument(name = "notifications/initialized", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     fn on_initialized(
         &self,
         context: NotificationContext<RoleServer>,
@@ -660,10 +719,8 @@ impl ServerHandler for PluginService {
         std::future::ready(())
     }
 
-    #[tracing::instrument(name = "notifications/roots/list_changed", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn on_roots_list_changed(&self, context: NotificationContext<RoleServer>) -> () {
-        let span = tracing::info_span!("got roots/list_changed notification");
-        let _span = span.enter();
         let Some(plugins) = self.plugins.get() else {
             tracing::error!("Plugins not initialized");
             return;
@@ -675,12 +732,14 @@ impl ServerHandler for PluginService {
         }
     }
 
-    #[tracing::instrument(name = "resources/read", skip(self, context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
+        tracing::info!(request = ?request);
+
         let (plugin_name, resource_uri) = match parse_namespaced_uri(request.uri.to_string()) {
             Ok((plugin_name, resource_uri)) => (plugin_name, resource_uri),
             Err(e) => {
@@ -724,32 +783,35 @@ impl ServerHandler for PluginService {
         plugin.read_resource(request, context).await
     }
 
-    #[tracing::instrument(name = "logging/setLevel", skip(self, _context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     fn set_level(
         &self,
         request: SetLevelRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
+        tracing::info!(request = ?request);
         self.set_logging_level(request.level);
         std::future::ready(Ok(()))
     }
 
-    #[tracing::instrument(name = "resources/subscribe", skip(self, _context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     fn subscribe(
         &self,
         request: SubscribeRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
+        tracing::info!(request = ?request);
         self.subscriptions.insert(request.uri);
         std::future::ready(Ok(()))
     }
 
-    #[tracing::instrument(name = "resources/unsubscribe", skip(self, _context))]
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     fn unsubscribe(
         &self,
         request: UnsubscribeRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
+        tracing::info!(request = ?request);
         self.subscriptions.remove(&request.uri);
         std::future::ready(Ok(()))
     }
@@ -837,8 +899,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("elicitation/create", elicitation = ?elicitation_msg, plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("create_elicitation", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(elicitation = ?elicitation_msg, plugin = ctx.plugin_name.to_string());
             match ctx.plugin_service.peer.get() {
                 Some(peer) => {
                     let peer_create_elicitation = || {
@@ -909,8 +972,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("sampling/createMessage", sampling = ?sampling_msg, plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("sampling/createMessage", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(sampling = ?sampling_msg, plugin = ctx.plugin_name.to_string());
             match ctx.plugin_service.peer.get() {
                 Some(peer) => {
                     if let Some(peer_info) = peer.peer_info() && let Some(peer_sampling) = peer_info.capabilities.sampling.clone() {
@@ -987,8 +1051,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("get_keyring_secret", entry_id = ?entry, plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("get_keyring_secret", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(entry_id = ?entry, plugin = ctx.plugin_name.to_string());
             let plugin_config = ctx.plugin_service.config.plugins.get(&ctx.plugin_name).expect("Config missing");
             match &plugin_config.runtime_config {
                 Some(runtime_config) => match &runtime_config.allowed_secrets {
@@ -1036,8 +1101,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("roots/list", plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("roots/list", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(plugin = ctx.plugin_name.to_string());
             match ctx.plugin_service.peer.get() {
                 Some(peer) => {
                     if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.roots.is_some() {
@@ -1073,8 +1139,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("notifications/message", log = ?log_msg, plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("notifications/message", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(log = ?log_msg, plugin = ctx.plugin_name.to_string());
             if let Some(peer) = ctx.plugin_service.peer.get() {
                 if (ctx.plugin_service.logging_level() as u8) <= (log_msg.level as u8) {
                     ctx.handle.block_on(peer.notify_logging_message(log_msg)).unwrap_or_else(|err| {
@@ -1104,8 +1171,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("notifications/progress", progress = ?progress_msg, plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("notifications/progress", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(progress = ?progress_msg, plugin = ctx.plugin_name.to_string());
             if let Some(peer) = ctx.plugin_service.peer.get() {
                 ctx.handle.block_on(peer.notify_progress(progress_msg)).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify progress failed");
@@ -1132,8 +1200,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("notifications/prompts/list_changed", plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("notifications/prompts/list_changed", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(plugin = ctx.plugin_name.to_string());
             if let Some(peer) = ctx.plugin_service.peer.get() {
                 ctx.handle.block_on(peer.notify_prompt_list_changed()).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify prompt list changed failed");
@@ -1160,8 +1229,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("notifications/resources/list_changed", plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("notifications/resources/list_changed", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(plugin = ctx.plugin_name.to_string());
             if let Some(peer) = ctx.plugin_service.peer.get() {
                 ctx.handle.block_on(peer.notify_resource_list_changed()).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify resource list changed failed");
@@ -1189,8 +1259,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("notifications/resources/updated", update = ?update_msg, plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("notifications/resources/updated", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(update = ?update_msg, plugin = ctx.plugin_name.to_string());
             if ctx.plugin_service.subscriptions.contains(&update_msg.uri) {
                 if let Some(peer) = ctx.plugin_service.peer.get() {
                     ctx.handle.block_on(peer.notify_resource_updated(update_msg)).unwrap_or_else(|err| {
@@ -1222,8 +1293,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("notifications/tools/list_changed", plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("notifications/tools/list_changed", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(plugin = ctx.plugin_name.to_string());
             if let Some(peer) = ctx.plugin_service.peer.get() {
                 ctx.handle.block_on(peer.notify_tool_list_changed()).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify tool list changed failed");
@@ -1251,8 +1323,9 @@ mod host_fns {
                 Ok(v) => v.clone(),
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
-            let span = tracing::info_span!("notifications/elicitation/complete", completed = ?completed_msg, plugin = ctx.plugin_name.to_string());
+            let span = tracing::info_span!("notifications/elicitation/complete", call = next_call_id());
             let _span = span.enter();
+            tracing::info!(completed = ?completed_msg, plugin = ctx.plugin_name.to_string());
             if let Some(peer) = ctx.plugin_service.peer.get() {
                 ctx.handle.block_on(peer.notify_url_elicitation_completed(completed_msg)).unwrap_or_else(|err| {
                     tracing::error!(error = ?err, "Notify url elicitation completed failed");

@@ -47,7 +47,7 @@ impl Authenticator for RequestBuilder {
     }
 }
 
-#[tracing::instrument(skip(auths), fields(module=module_path!()))]
+#[tracing::instrument(skip_all)]
 pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
     if !(url.scheme() == "http" || url.scheme() == "https") {

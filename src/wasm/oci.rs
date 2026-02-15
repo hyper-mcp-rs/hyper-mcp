@@ -48,7 +48,7 @@ async fn build_auth(reference: &Reference) -> RegistryAuth {
     }
 }
 
-#[tracing::instrument(skip(config), fields(module=module_path!()))]
+#[tracing::instrument(skip_all)]
 pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
     let _guard = DOWNLOAD_LOCKS.lock(url).await;
     let image_reference = url
