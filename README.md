@@ -99,6 +99,45 @@ $ hyper-mcp
 - If you want to debug, use `RUST_LOG=debug`.
 - If you're loading unsigned OCI plugin, you need to set `insecure_skip_signature` flag or env var `HYPER_MCP_INSECURE_SKIP_SIGNATURE` to `true`
 
+## Output Logging
+
+hyper-mcp automatically logs all output to daily rolling log files for debugging and monitoring purposes.
+
+**Log Location:**
+- Linux: `$HOME/.config/hyper-mcp/logs/mcp-server.log`
+- Windows: `{FOLDERID_RoamingAppData}\hyper-mcp\logs\mcp-server.log`
+- macOS: `$HOME/Library/Application Support/hyper-mcp/logs/mcp-server.log`
+
+**Custom Log Path:**
+
+You can override the default log directory by setting the `HYPER_MCP_LOG_PATH` environment variable:
+
+```sh
+export HYPER_MCP_LOG_PATH=/path/to/your/logs
+hyper-mcp
+```
+
+**Log Levels:**
+
+Control the verbosity of logs using the `RUST_LOG` environment variable:
+
+```sh
+# Info level (default)
+RUST_LOG=info hyper-mcp
+
+# Debug level (verbose, useful for troubleshooting)
+RUST_LOG=debug hyper-mcp
+
+# Warn level (only warnings and errors)
+RUST_LOG=warn hyper-mcp
+```
+
+**Features:**
+- Daily log rotation (new file created each day)
+- Non-blocking writes to prevent performance impact
+- Includes timestamps, line numbers, and target information
+- Safe for use with stdio transport (logs don't interfere with MCP communication)
+
 ## Using with Cursor IDE
 
 You can configure hyper-mcp either globally for all projects or specifically for individual projects.
