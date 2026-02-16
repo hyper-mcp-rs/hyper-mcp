@@ -99,6 +99,8 @@ $ hyper-mcp
 - If you want to debug, use `RUST_LOG=debug`.
 - If you're loading unsigned OCI plugin, you need to set `insecure_skip_signature` flag or env var `HYPER_MCP_INSECURE_SKIP_SIGNATURE` to `true`
 
+> **Running in SSE/streamable-http**: To do this, wrap `hyper-mcp` in one of the many proxies that supports the network transports **AND** that creates an instance of `hyper-mcp` per client connection.
+
 ## Output Logging
 
 hyper-mcp automatically logs all output to daily rolling log files for debugging and monitoring purposes.
@@ -184,7 +186,6 @@ These plugins use the v1 plugin interface. While still supported, new plugins sh
 - [qdrant](https://github.com/hyper-mcp-rs/qdrant-plugin): keeping & retrieving memories to Qdrant vector search engine (Rust)
 - [gitlab](https://github.com/hyper-mcp-rs/gitlab-plugin): GitLab plugin (Rust)
 - [meme_generator](https://github.com/hyper-mcp-rs/meme-generator-plugin): Meme generator (Rust)
-- [context7](https://github.com/hyper-mcp-rs/context7-plugin): Lookup library documentation (Rust)
 - [think](https://github.com/hyper-mcp-rs/think-plugin): Think tool(Rust)
 - [maven](https://github.com/hyper-mcp-rs/maven-plugin): Maven plugin (Rust)
 - [serper](https://github.com/hyper-mcp-rs/serper-plugin): Serper web search plugin (Rust)
@@ -193,6 +194,7 @@ These plugins use the v1 plugin interface. While still supported, new plugins sh
 These plugins use the v2 plugin interface. New plugins should use this interface.
 
 - [rstime](https://github.com/hyper-mcp-rs/rstime-plugin): Get current time and do time calculations (Rust)
+- [context7](https://github.com/hyper-mcp-rs/context7-plugin): Lookup library documentation (Rust)
 
 
 ### Community-built plugins
