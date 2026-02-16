@@ -62,7 +62,7 @@ tracing = { version = "0.1", features = ["attributes"] }
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5", features = ["serde"] }
-uuid = { version = "1.20", features = ["serde"] }
+uuid = { version = "1.21", features = ["serde"] }
 
 [dev-dependencies]
 aws-sdk-s3 = { version = "1.123", features = ["test-util"] }
