@@ -258,12 +258,44 @@ jobs:
             dist/checksums-${{ matrix.target }}.txt
           if-no-files-found: ignore
 
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate CycloneDX SBOM
+        run: cargo cyclonedx -f json --all-features --override-filename temp
+
+      - name: Clean SBOM
+        run: jq '
+          del(.metadata.component."bom-ref")
+          | del(.metadata.component.purl)
+          | del(.metadata.component.components[0]."bom-ref")
+          | del(.metadata.component.components[0].purl)
+          ' temp.json > sbom.cdx.json
+
+      - name: Upload sbom artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cdx-json
+          path: sbom.cdx.json
+          if-no-files-found: error
+
   # 4) Create the GitHub nightly release once, attach all artifacts, and include the immutable nightly digest.
   publish-nightly-release:
     name: Publish nightly GitHub Release
     needs:
       - build-nightly-binaries
       - create-multiarch-manifests
+      - sbom
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -284,6 +316,12 @@ jobs:
           set -euo pipefail
           mkdir -p out
           find dist -type f -maxdepth 3 -print -exec cp {} out/ \;
+
+      - name: Download sbom artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-cdx-json
+          path: .
 
       - name: Write release notes (with immutable digest)
         id: notes
@@ -331,3 +369,4 @@ jobs:
           body_path: ${{ steps.notes.outputs.body_path }}
           files: |
             out/*
+            sbom.cdx.json
