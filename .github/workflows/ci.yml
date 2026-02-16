@@ -190,11 +190,35 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: RUST_BACKTRACE=1 cargo test --workspace --all-features --locked
 
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate CycloneDX SBOM
+        run: cargo cyclonedx -f json --all-features --override-filename temp
+
+      - name: Clean SBOM
+        run: jq '
+          del(.metadata.component."bom-ref")
+          | del(.metadata.component.purl)
+          | del(.metadata.component.components[0]."bom-ref")
+          | del(.metadata.component.components[0].purl)
+          ' temp.json > sbom.cdx.json
+
   # Summary job to check if all required jobs passed
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [clippy, formatting, tests]
+    needs: [clippy, formatting, tests, sbom]
 
     steps:
       - name: All jobs succeeded
