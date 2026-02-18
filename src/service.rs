@@ -909,7 +909,7 @@ impl ServerHandler for PluginService {
 /// > finish. The current `main.rs` uses the default multi-threaded runtime, so
 /// > this is not an issue.
 mod host_fns {
-    use crate::oauth2::{AccessToken, OauthCredentials, TokenClient, http_client};
+    use crate::oauth2::{AccessToken, HTTP_CLIENT, OauthCredentials, TokenClient};
 
     use super::*;
     use extism::{EXTISM_USER_MODULE, FromBytes, Function, ToBytes, UserData, host_fn};
@@ -1165,7 +1165,7 @@ mod host_fns {
             peer: Option<&Peer<RoleServer>>,
         ) -> Result<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
             let client = TokenClient::from(credentials);
-            let http_client = http_client()?;
+            let http_client = &*HTTP_CLIENT;
             if credentials.device_authorization_url.is_none() {
                 let mut exchange = client.exchange_client_credentials();
                 if let Some(scopes) = &credentials.scopes {
@@ -1176,7 +1176,7 @@ mod host_fns {
                         exchange = exchange.add_extra_param(k, v);
                     }
                 }
-                exchange.request(&http_client).map_err(Error::new)
+                exchange.request(http_client).map_err(Error::new)
             } else {
                 match peer {
                     Some(peer) => {
@@ -1193,7 +1193,7 @@ mod host_fns {
                             }
                         }
                         let details: StandardDeviceAuthorizationResponse =
-                            exchange.request(&http_client).map_err(Error::new)?;
+                            exchange.request(http_client).map_err(Error::new)?;
                         let duration = Duration::from_secs(60 * 3);
                         let elicitation_msg = if peer
                             .supported_elicitation_modes()
@@ -1265,7 +1265,7 @@ mod host_fns {
                         client
                             .exchange_device_access_token(&details)
                             .request(
-                                &http_client,
+                                http_client,
                                 std::thread::sleep,
                                 Some(Duration::from_secs(5)),
                             )
@@ -1281,10 +1281,10 @@ mod host_fns {
             refresh_token: &RefreshToken,
         ) -> Result<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
             let client = TokenClient::from(credentials);
-            let http_client = http_client()?;
+            let http_client = &*HTTP_CLIENT;
             client
                 .exchange_refresh_token(refresh_token)
-                .request(&http_client)
+                .request(http_client)
                 .map_err(Error::new)
         }
 

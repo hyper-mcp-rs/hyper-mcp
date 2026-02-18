@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     hash::Hash,
+    sync::LazyLock,
     time::{Duration, SystemTime},
 };
 
@@ -163,13 +164,14 @@ impl From<&OauthCredentials> for TokenClient {
     }
 }
 
-pub fn http_client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::ClientBuilder::new()
+pub static HTTP_CLIENT: LazyLock<reqwest::blocking::Client> = LazyLock::new(|| {
+    reqwest::blocking::ClientBuilder::new()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
-        .build()?)
-}
+        .build()
+        .expect("Failed to build OAuth HTTP client")
+});
 
 #[cfg(test)]
 mod tests {
@@ -740,7 +742,9 @@ mod tests {
 
     #[test]
     fn http_client_builds_successfully() {
-        let client = http_client();
-        assert!(client.is_ok());
+        // Verify the lazily-initialized static is accessible and consistent
+        let client = &*HTTP_CLIENT;
+        let client2 = &*HTTP_CLIENT;
+        assert!(std::ptr::eq(client, client2));
     }
 }
