@@ -551,12 +551,21 @@ impl ServerHandler for PluginService {
             ));
         };
 
+        let futures: Vec<_> = plugins
+            .iter()
+            .map(|(plugin_name, plugin)| {
+                let request = request.clone();
+                let context = context.clone();
+                async move { (plugin_name, plugin.list_prompts(request, context).await) }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
         let mut list_prompts_result = ListPromptsResult::default();
 
-        for (plugin_name, plugin) in plugins.iter() {
-            let plugin_prompts = plugin
-                .list_prompts(request.clone(), context.clone())
-                .await?;
+        for (plugin_name, plugin_prompts) in results {
+            let plugin_prompts = plugin_prompts?;
             let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
@@ -608,12 +617,21 @@ impl ServerHandler for PluginService {
             ));
         };
 
+        let futures: Vec<_> = plugins
+            .iter()
+            .map(|(plugin_name, plugin)| {
+                let request = request.clone();
+                let context = context.clone();
+                async move { (plugin_name, plugin.list_resources(request, context).await) }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
         let mut list_resources_result = ListResourcesResult::default();
 
-        for (plugin_name, plugin) in plugins.iter() {
-            let plugin_resources = plugin
-                .list_resources(request.clone(), context.clone())
-                .await?;
+        for (plugin_name, plugin_resources) in results {
+            let plugin_resources = plugin_resources?;
             let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
@@ -669,12 +687,26 @@ impl ServerHandler for PluginService {
             ));
         };
 
+        let futures: Vec<_> = plugins
+            .iter()
+            .map(|(plugin_name, plugin)| {
+                let request = request.clone();
+                let context = context.clone();
+                async move {
+                    (
+                        plugin_name,
+                        plugin.list_resource_templates(request, context).await,
+                    )
+                }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
         let mut list_resource_templates_result = ListResourceTemplatesResult::default();
 
-        for (plugin_name, plugin) in plugins.iter() {
-            let plugin_resource_templates = plugin
-                .list_resource_templates(request.clone(), context.clone())
-                .await?;
+        for (plugin_name, plugin_resource_templates) in results {
+            let plugin_resource_templates = plugin_resource_templates?;
             let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
@@ -732,10 +764,21 @@ impl ServerHandler for PluginService {
             ));
         };
 
+        let futures: Vec<_> = plugins
+            .iter()
+            .map(|(plugin_name, plugin)| {
+                let request = request.clone();
+                let context = context.clone();
+                async move { (plugin_name, plugin.list_tools(request, context).await) }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
         let mut list_tools_result = ListToolsResult::default();
 
-        for (plugin_name, plugin) in plugins.iter() {
-            let plugin_tools = plugin.list_tools(request.clone(), context.clone()).await?;
+        for (plugin_name, plugin_tools) in results {
+            let plugin_tools = plugin_tools?;
             let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
