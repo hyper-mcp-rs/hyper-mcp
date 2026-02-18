@@ -97,20 +97,61 @@ impl PluginService {
         let mut names = HashMap::new();
         let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
 
+        // Phase 1: Download all WASM data in parallel.
+        let mut download_set = tokio::task::JoinSet::new();
+
         for (plugin_name, plugin_cfg) in &self.config.plugins {
-            let wasm_data = match plugin_cfg.url.scheme() {
-                "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
-                "http" => wasm::http::load_wasm(&plugin_cfg.url, &None).await?,
-                "https" => wasm::http::load_wasm(&plugin_cfg.url, &self.config.auths).await?,
-                "oci" => wasm::oci::load_wasm(&plugin_cfg.url, &self.config.oci).await?,
-                "s3" => wasm::s3::load_wasm(&plugin_cfg.url).await?,
-                unsupported => {
-                    tracing::error!(scheme = unsupported, "Unsupported plugin URL scheme");
-                    return Err(anyhow::anyhow!(
-                        "Unsupported plugin URL scheme: {unsupported}"
-                    ));
+            let plugin_name = plugin_name.clone();
+            let url = plugin_cfg.url.clone();
+            let auths = self.config.auths.clone();
+            let oci_config = self.config.oci.clone();
+
+            download_set.spawn(async move {
+                let wasm_data = match url.scheme() {
+                    "file" => tokio::fs::read(url.path())
+                        .await
+                        .map_err(anyhow::Error::from),
+                    "http" => wasm::http::load_wasm(&url, &None).await,
+                    "https" => wasm::http::load_wasm(&url, &auths).await,
+                    "oci" => wasm::oci::load_wasm(&url, &oci_config).await,
+                    "s3" => wasm::s3::load_wasm(&url).await,
+                    unsupported => {
+                        tracing::error!(scheme = unsupported, "Unsupported plugin URL scheme");
+                        Err(anyhow::anyhow!(
+                            "Unsupported plugin URL scheme: {unsupported}"
+                        ))
+                    }
+                };
+                (plugin_name, wasm_data)
+            });
+        }
+
+        let mut downloaded: HashMap<PluginName, Vec<u8>> = HashMap::new();
+        while let Some(result) = download_set.join_next().await {
+            match result {
+                Ok((plugin_name, Ok(data))) => {
+                    downloaded.insert(plugin_name, data);
                 }
+                Ok((plugin_name, Err(e))) => {
+                    tracing::error!(
+                        plugin = plugin_name.to_string(),
+                        error = %e,
+                        "Failed to download plugin WASM data, skipping"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Plugin download task failed");
+                }
+            }
+        }
+
+        // Phase 2: Build manifests and create plugins (sequential, CPU-bound).
+        for (plugin_name, plugin_cfg) in &self.config.plugins {
+            let Some(wasm_data) = downloaded.remove(plugin_name) else {
+                // Download was skipped due to an error in phase 1
+                continue;
             };
+
             let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
             if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
                 tracing::info!(plugin = plugin_name.to_string(), runtime_config = ?runtime_cfg);
@@ -1842,8 +1883,20 @@ plugins:
         cli.config_file = Some(config_path);
         let config = load_config(&cli).await.unwrap();
 
+        // A nonexistent file plugin is gracefully skipped during parallel
+        // download, so the service should still create successfully with no
+        // plugins loaded.
         let result = PluginService::new(&config).await;
-        assert!(result.is_err(), "Should fail with nonexistent plugin file");
+        assert!(
+            result.is_ok(),
+            "Service should start successfully, skipping the missing plugin"
+        );
+        let service = result.unwrap();
+        let plugins = service.plugins.get().expect("Plugins should be set");
+        assert!(
+            plugins.is_empty(),
+            "No plugins should be loaded when the file doesn't exist"
+        );
     }
 
     #[tokio::test]
