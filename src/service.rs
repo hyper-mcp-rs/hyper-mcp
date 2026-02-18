@@ -173,7 +173,7 @@ impl PluginService {
                 plugin_name: plugin_name.clone(),
                 plugin_service: self.clone(),
             };
-            let extism_plugin = extism::Plugin::new(
+            let extism_plugin = match extism::Plugin::new(
                 &manifest,
                 [
                     host_fns::create_elicitation(ctx.clone()),
@@ -190,8 +190,18 @@ impl PluginService {
                     host_fns::notify_url_elicitation_completed(ctx.clone()),
                 ],
                 true,
-            )
-            .unwrap();
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(
+                        plugin = plugin_name.to_string(),
+                        error = ?e,
+                        url = %plugin_cfg.url,
+                        "Failed to create extism plugin, skipping"
+                    );
+                    continue;
+                }
+            };
 
             let plugin_id = extism_plugin.id;
             let plugin: Box<dyn Plugin> = if extism_plugin.function_exists("call")
@@ -749,7 +759,7 @@ impl ServerHandler for PluginService {
             Ok((plugin_name, resource_uri)) => (plugin_name, resource_uri),
             Err(e) => {
                 return Err(McpError::invalid_request(
-                    format!("Failed to parse prompt name: {e}"),
+                    format!("Failed to parse resource uri: {e}"),
                     None,
                 ));
             }
@@ -822,6 +832,41 @@ impl ServerHandler for PluginService {
     }
 }
 
+/// Host functions exposed to WASM plugins via Extism.
+///
+/// # `block_on` usage and safety
+///
+/// Every function in this module is registered as an Extism host function and is
+/// therefore called **synchronously** by the WASM runtime. Because Extism's
+/// `Plugin::call` is a blocking operation, all plugin invocations are dispatched
+/// via [`tokio::task::spawn_blocking`] (see [`call_plugin`](super::call_plugin)).
+/// This means host functions execute on tokio's blocking thread pool, **not** on
+/// an async worker thread.
+///
+/// Within that blocking context, host functions need to call async methods on the
+/// MCP [`Peer`] (e.g., `peer.create_message()`, `peer.notify_progress()`). Since
+/// we are not inside an async context, we use
+/// [`Handle::block_on`](tokio::runtime::Handle::block_on) to drive those futures
+/// to completion. This is safe because:
+///
+/// 1. **We are on a blocking thread, not an async worker.** `Handle::block_on`
+///    would panic if called from within an async task, but `spawn_blocking`
+///    threads are explicitly permitted to block.
+///
+/// 2. **The handle refers to the multi-threaded tokio runtime** started by
+///    `#[tokio::main]` in `main.rs`. The async work submitted via `block_on` is
+///    executed on the runtime's worker threads, which are distinct from the
+///    blocking thread we are currently on, so no deadlock can occur.
+///
+/// 3. **Each host function captures a [`Handle`] at plugin-load time** (via
+///    [`PluginServiceContext`]), ensuring the runtime is always available for the
+///    lifetime of the plugin.
+///
+/// > **Caveat:** If the tokio runtime were changed to `current_thread` flavor,
+/// > `block_on` from a `spawn_blocking` thread could stall because the single
+/// > worker thread may itself be blocked waiting for the `spawn_blocking` task to
+/// > finish. The current `main.rs` uses the default multi-threaded runtime, so
+/// > this is not an issue.
 mod host_fns {
     use crate::oauth2::{AccessToken, OauthCredentials, TokenClient, http_client};
 
