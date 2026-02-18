@@ -68,6 +68,9 @@ pub struct OauthCredentials {
     pub client_id: ClientId,
     pub client_secret: Option<ClientSecret>,
     pub device_authorization_url: Option<DeviceAuthorizationUrl>,
+    /// Timeout in seconds for the device authorization flow. Defaults to 180 (3 minutes).
+    /// Excluded from Hash/PartialEq since it is behavioral, not identity.
+    pub device_auth_timeout_secs: Option<u64>,
     pub extra_params: Option<HashMap<String, String>>,
     pub scopes: Option<Vec<Scope>>,
     pub token_endpoint_url: TokenUrl,
@@ -201,6 +204,7 @@ mod tests {
             client_secret: client_secret.map(|s| ClientSecret::new(s.to_string())),
             device_authorization_url: device_auth_url
                 .map(|u| DeviceAuthorizationUrl::new(u.to_string()).unwrap()),
+            device_auth_timeout_secs: None,
             extra_params,
             scopes: scopes.map(|v| v.into_iter().map(|s| Scope::new(s.to_string())).collect()),
             token_endpoint_url: TokenUrl::new(token_url.to_string()).unwrap(),
@@ -705,6 +709,68 @@ mod tests {
         let json = serde_json::to_string(&creds).unwrap();
         let back: OauthCredentials = serde_json::from_str(&json).unwrap();
         assert_eq!(creds, back);
+    }
+
+    #[test]
+    fn credentials_serde_roundtrip_with_timeout() {
+        let mut creds = make_creds(
+            "cid",
+            Some("secret"),
+            Some(AuthType::RequestBody),
+            Some("https://example.com/device"),
+            None,
+            None,
+            "https://example.com/token",
+        );
+        creds.device_auth_timeout_secs = Some(300);
+        let json = serde_json::to_string(&creds).unwrap();
+        let back: OauthCredentials = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.device_auth_timeout_secs, Some(300));
+        assert_eq!(creds, back);
+    }
+
+    #[test]
+    fn credentials_timeout_excluded_from_equality() {
+        let mut a = make_creds(
+            "cid",
+            None,
+            None,
+            None,
+            None,
+            None,
+            "https://example.com/token",
+        );
+        let mut b = a.clone();
+        a.device_auth_timeout_secs = Some(60);
+        b.device_auth_timeout_secs = Some(600);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn credentials_timeout_excluded_from_hash() {
+        let mut a = make_creds(
+            "cid",
+            None,
+            None,
+            None,
+            None,
+            None,
+            "https://example.com/token",
+        );
+        let mut b = a.clone();
+        a.device_auth_timeout_secs = Some(60);
+        b.device_auth_timeout_secs = Some(600);
+        assert_eq!(hash_of(&a), hash_of(&b));
+    }
+
+    #[test]
+    fn credentials_timeout_none_deserializes_from_missing_field() {
+        let json = r#"{
+            "client_id": "cid",
+            "token_endpoint_url": "https://example.com/token"
+        }"#;
+        let creds: OauthCredentials = serde_json::from_str(json).unwrap();
+        assert_eq!(creds.device_auth_timeout_secs, None);
     }
 
     // ── TokenClient from OauthCredentials ────────────────────────────

@@ -1194,7 +1194,9 @@ mod host_fns {
                         }
                         let details: StandardDeviceAuthorizationResponse =
                             exchange.request(http_client).map_err(Error::new)?;
-                        let duration = Duration::from_secs(60 * 3);
+                        let duration = Duration::from_secs(
+                            credentials.device_auth_timeout_secs.unwrap_or(60 * 3),
+                        );
                         let elicitation_msg = if peer
                             .supported_elicitation_modes()
                             .contains(&ElicitationMode::Url)
