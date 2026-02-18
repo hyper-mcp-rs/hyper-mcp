@@ -32,6 +32,7 @@ docker_credential = "1.3"
 extism = "1.13"
 extism-convert = "1.13"
 flate2 = "1.1"
+futures = "0.3"
 hex = "0.4"
 keyring = { version = "3.6", features = [
     "apple-native",
@@ -68,14 +69,12 @@ uuid = { version = "1.21", features = ["serde"] }
 aws-sdk-s3 = { version = "1.123", features = ["test-util"] }
 aws-smithy-mocks = "0.2"
 aws-smithy-runtime-api = "1.11"
-futures = "0.3"
 rmcp = { version = "0.15", features = [
     "client",
     "transport-async-rw",
 ] }
 tempfile = "3.25"
 tokio-test = "0.4"
-tokio-util = "0.7"
 
 [[bin]]
 name = "hyper-mcp"
