@@ -208,6 +208,14 @@ impl TryFrom<KeyringEntryId> for keyring::Entry {
     }
 }
 
+impl TryFrom<&KeyringEntryId> for keyring::Entry {
+    type Error = keyring::Error;
+
+    fn try_from(id: &KeyringEntryId) -> Result<Self, Self::Error> {
+        keyring::Entry::new(&id.service, &id.user)
+    }
+}
+
 #[serde_as]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct RuntimeConfig {
