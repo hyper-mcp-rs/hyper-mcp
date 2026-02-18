@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod logging;
 mod naming;
+mod oauth2;
 mod plugin;
 mod service;
 mod wasm;

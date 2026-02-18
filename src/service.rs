@@ -4,12 +4,14 @@ use crate::{
         PluginName, create_namespaced_name, create_namespaced_uri, parse_namespaced_name,
         parse_namespaced_uri,
     },
+    oauth2::{AccessToken, OauthCredentials},
     plugin::{Plugin, PluginV1, PluginV2},
     wasm,
 };
-use anyhow::{Error, Result};
-use dashmap::DashSet;
+use anyhow::{Error, Result, anyhow};
+use dashmap::{DashMap, DashSet};
 use extism::{Manifest, Wasm};
+use oauth2::RefreshToken;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::{
@@ -21,7 +23,7 @@ use rmcp::{
         Reference, Resource, ResourceReference, ResourceTemplate, ServerCapabilities, ServerInfo,
         SetLevelRequestParams, SubscribeRequestParams, UnsubscribeRequestParams,
     },
-    service::{ElicitationMode, NotificationContext, Peer, RequestContext, RoleServer},
+    service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -52,6 +54,7 @@ pub struct PluginServiceInner {
     names: SetOnce<HashMap<Uuid, PluginName>>,
     peer: SetOnce<Peer<RoleServer>>,
     plugins: SetOnce<HashMap<PluginName, Box<dyn Plugin>>>,
+    tokens: DashMap<OauthCredentials, (AccessToken, Option<RefreshToken>)>,
     subscriptions: DashSet<String>,
 }
 
@@ -80,6 +83,7 @@ impl PluginService {
             names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),
+            tokens: DashMap::new(),
             subscriptions: DashSet::new(),
         });
         let service = Self(inner);
@@ -174,6 +178,7 @@ impl PluginService {
                 [
                     host_fns::create_elicitation(ctx.clone()),
                     host_fns::create_message(ctx.clone()),
+                    host_fns::get_access_token(ctx.clone()),
                     host_fns::get_keyring_secret(ctx.clone()),
                     host_fns::list_roots(ctx.clone()),
                     host_fns::notify_logging_message(ctx.clone()),
@@ -818,15 +823,25 @@ impl ServerHandler for PluginService {
 }
 
 mod host_fns {
+    use crate::oauth2::{AccessToken, OauthCredentials, TokenClient, http_client};
+
     use super::*;
-    use extism::{EXTISM_USER_MODULE, Function, UserData, host_fn};
+    use extism::{EXTISM_USER_MODULE, FromBytes, Function, ToBytes, UserData, host_fn};
     use extism_convert::Json;
-    use rmcp::model::{
-        ContextInclusion, CreateElicitationRequestParams, CreateElicitationResult,
-        CreateMessageRequestParams, CreateMessageResult, ElicitationAction,
-        ElicitationResponseNotificationParam, ListRootsResult, LoggingMessageNotificationParam,
-        ProgressNotificationParam, RawTextContent, ResourceUpdatedNotificationParam, Role,
-        SamplingContent, SamplingMessage, SamplingMessageContent,
+    use oauth2::{
+        EmptyExtraTokenFields, StandardDeviceAuthorizationResponse, StandardTokenResponse,
+        TokenResponse, basic::BasicTokenType,
+    };
+    use rmcp::{
+        model::{
+            ContextInclusion, CreateElicitationRequestParams, CreateElicitationResult,
+            CreateMessageRequestParams, CreateMessageResult, ElicitationAction,
+            ElicitationResponseNotificationParam, ElicitationSchema, ListRootsResult,
+            LoggingMessageNotificationParam, ProgressNotificationParam, RawTextContent,
+            ResourceUpdatedNotificationParam, Role, SamplingContent, SamplingMessage,
+            SamplingMessageContent,
+        },
+        service::ElicitationMode,
     };
     use serde_json::json;
 
@@ -906,7 +921,13 @@ mod host_fns {
                 Some(peer) => {
                     let peer_create_elicitation = || {
                         if let Some(timeout) = elicitation_msg.timeout {
-                            ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).map_err(Error::from)
+                            Ok(ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).unwrap_or_else(|err| {
+                                tracing::error!(error = ?err, "Elicitation creation failed");
+                                Json(CreateElicitationResult {
+                                    action: ElicitationAction::Decline,
+                                    content: Some(json!({"error": err.to_string()})),
+                                })
+                            }))
                         } else {
                             Ok(ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).unwrap_or_else(|err| {
                                     tracing::error!(error = ?err, "Elicitation creation failed");
@@ -1044,6 +1065,213 @@ mod host_fns {
         .with_namespace(EXTISM_USER_MODULE)
     }
 
+    #[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
+    #[encoding(Json)]
+    enum AccessTokenResult {
+        AccessToken(AccessToken),
+        Error(String),
+    }
+
+    pub fn get_access_token(ctx: PluginServiceContext) -> Function {
+        fn create_access_token(
+            credentials: &OauthCredentials,
+            handle: Handle,
+            peer: Option<&Peer<RoleServer>>,
+        ) -> Result<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
+            let client = TokenClient::from(credentials);
+            let http_client = http_client()?;
+            if credentials.device_authorization_url.is_none() {
+                let mut exchange = client.exchange_client_credentials();
+                if let Some(scopes) = &credentials.scopes {
+                    exchange = exchange.add_scopes((*scopes).clone());
+                }
+                if let Some(extra_params) = &credentials.extra_params {
+                    for (k, v) in (*extra_params).clone() {
+                        exchange = exchange.add_extra_param(k, v);
+                    }
+                }
+                exchange.request(&http_client).map_err(Error::new)
+            } else {
+                match peer {
+                    Some(peer) => {
+                        if peer.supported_elicitation_modes().is_empty() {
+                            return Err(anyhow!("Peer does not support elicitation"));
+                        }
+                        let mut exchange = client.exchange_device_code().map_err(Error::new)?;
+                        if let Some(scopes) = &credentials.scopes {
+                            exchange = exchange.add_scopes((*scopes).clone());
+                        }
+                        if let Some(extra_params) = &credentials.extra_params {
+                            for (k, v) in (*extra_params).clone() {
+                                exchange = exchange.add_extra_param(k, v);
+                            }
+                        }
+                        let details: StandardDeviceAuthorizationResponse =
+                            exchange.request(&http_client).map_err(Error::new)?;
+                        let duration = Duration::from_secs(60 * 3);
+                        let elicitation_msg = if peer
+                            .supported_elicitation_modes()
+                            .contains(&ElicitationMode::Url)
+                        {
+                            CreateElicitationRequestParams::UrlElicitationParams {
+                                elicitation_id: Uuid::new_v4().to_string(),
+                                message: match details.verification_uri_complete() {
+                                    Some(_) => format!(
+                                        "Open this url in your browser; you have {} minutes to complete",
+                                        duration.as_secs() / 60
+                                    ),
+                                    None => format!(
+                                        "Open this url in your browser and enter the code: {}; you have {} minutes to complete",
+                                        details.user_code().secret(),
+                                        duration.as_secs() / 60
+                                    ),
+                                },
+                                meta: None,
+                                url: match details.verification_uri_complete() {
+                                    Some(uri) => uri.secret().clone(),
+                                    None => details.verification_uri().to_string(),
+                                },
+                            }
+                        } else if peer
+                            .supported_elicitation_modes()
+                            .contains(&ElicitationMode::Form)
+                        {
+                            CreateElicitationRequestParams::FormElicitationParams {
+                                message: match details.verification_uri_complete() {
+                                    Some(uri) => format!(
+                                        "Open this URL in your browser:\n{}; you have {} minutes to complete",
+                                        uri.secret(),
+                                        duration.as_secs() / 60
+                                    ),
+                                    None => format!(
+                                        "Open this URL in your browser:\n{}\nand enter the code: {}; you have {} minutes to complete",
+                                        details.verification_uri(),
+                                        details.user_code().secret(),
+                                        duration.as_secs() / 60
+                                    ),
+                                },
+                                meta: None,
+                                requested_schema: ElicitationSchema::builder()
+                                    .required_bool("completed")
+                                    .build()
+                                    .map_err(|s| anyhow!(s))?,
+                            }
+                        } else {
+                            return Err(anyhow!("No known elicitation modes supported by peer"));
+                        };
+                        match handle
+                            .block_on(
+                                peer.create_elicitation_with_timeout(
+                                    elicitation_msg,
+                                    Some(duration),
+                                ),
+                            )?
+                            .action
+                        {
+                            ElicitationAction::Accept => {}
+                            ElicitationAction::Cancel => {
+                                return Err(anyhow!("Peer cancelled elicitation"));
+                            }
+                            ElicitationAction::Decline => {
+                                return Err(anyhow!("Peer declined elicitation"));
+                            }
+                        };
+                        client
+                            .exchange_device_access_token(&details)
+                            .request(
+                                &http_client,
+                                std::thread::sleep,
+                                Some(Duration::from_secs(5)),
+                            )
+                            .map_err(Error::new)
+                    }
+                    None => Err(anyhow!("No peer available")),
+                }
+            }
+        }
+
+        fn refresh_access_token(
+            credentials: &OauthCredentials,
+            refresh_token: &RefreshToken,
+        ) -> Result<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
+            let client = TokenClient::from(credentials);
+            let http_client = http_client()?;
+            client
+                .exchange_refresh_token(refresh_token)
+                .request(&http_client)
+                .map_err(Error::new)
+        }
+
+        host_fn!(get_access_token(ctx: PluginServiceContext; credentials: Json<OauthCredentials>) -> Json<AccessTokenResult> {
+            let credentials = credentials.into_inner();
+            let ctx = match ctx.get()?.lock() {
+                Ok(v) => v.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            let span = tracing::info_span!("get_access_token", call = next_call_id());
+            let _span = span.enter();
+            tracing::info!(plugin = ctx.plugin_name.to_string());
+
+            Ok(match ctx.plugin_service.tokens.entry(credentials.clone()) {
+                dashmap::Entry::Occupied(mut entry) => {
+                    let (access_token, refresh_token) = entry.get();
+                    if !access_token.is_expired() {
+                        AccessTokenResult::AccessToken(access_token.clone())
+                    } else {
+                        let token_response = match refresh_token {
+                            Some(refresh_token) => match refresh_access_token(&credentials, refresh_token) {
+                                    Ok(token_response) => token_response,
+                                    Err(e) => {
+                                        tracing::warn!(error = ?e, "Error refreshing access token, attempting creation");
+                                        match create_access_token(&credentials, ctx.handle, ctx.plugin_service.peer.get()) {
+                                            Ok(response) => response,
+                                            Err(e) => {
+                                                entry.remove();
+                                                tracing::error!(error = ?e, "Error creating access token");
+                                                return Ok(AccessTokenResult::Error("Error creating access token".to_string()));
+                                            }
+                                        }
+                                    }
+                                }
+                            None => match create_access_token(&credentials, ctx.handle, ctx.plugin_service.peer.get()) {
+                                Ok(response) => response,
+                                Err(e) => {
+                                    entry.remove();
+                                    tracing::error!(error = ?e, "Error creating access token");
+                                    return Ok(AccessTokenResult::Error("Error creating access token".to_string()));
+                                }
+                            }
+                        };
+                        let access_token = AccessToken::from(&token_response);
+                        entry.insert((access_token.clone(), token_response.refresh_token().cloned()));
+                        AccessTokenResult::AccessToken(access_token)
+                    }
+                }
+                dashmap::Entry::Vacant(v) => {
+                    let token_response = match create_access_token(&credentials, ctx.handle, ctx.plugin_service.peer.get()) {
+                        Ok(response) => response,
+                        Err(e) => {
+                            tracing::error!(error = ?e, "Error creating access token");
+                            return Ok(AccessTokenResult::Error("Error creating access token".to_string()));
+                        }
+                    };
+                    let access_token = AccessToken::from(&token_response);
+                    v.insert((access_token.clone(), token_response.refresh_token().cloned()));
+                    AccessTokenResult::AccessToken(access_token)
+                }
+            })
+        });
+
+        Function::new(
+            "get_access_token",
+            [extism::PTR],
+            [extism::PTR],
+            UserData::new(ctx),
+            get_access_token,
+        )
+        .with_namespace(EXTISM_USER_MODULE)
+    }
+
     pub fn get_keyring_secret(ctx: PluginServiceContext) -> Function {
         host_fn!(get_keyring_secret(ctx: PluginServiceContext; entry: Json<KeyringEntryId>) -> Vec<u8>  {
             let entry = entry.into_inner();
@@ -1081,7 +1309,7 @@ mod host_fns {
                 None => {
                     tracing::error!(entry = ?entry, "not in allowed_secrets");
                     Ok(Vec::new())
-                },
+                }
             }
         });
 
@@ -1441,6 +1669,7 @@ mod tests {
             names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),
+            tokens: DashMap::new(),
             subscriptions: DashSet::new(),
         }))
     }

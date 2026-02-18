@@ -38,6 +38,7 @@ keyring = { version = "3.6", features = [
     "linux-native",
     "windows-native",
 ] }
+oauth2 = "5.0"
 oci-client = "0.16"
 percent-encoding = "2.3"
 rmcp = { version = "0.15", features = [
