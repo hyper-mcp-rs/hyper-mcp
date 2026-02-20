@@ -106,6 +106,12 @@ impl PluginService {
             let auths = self.config.auths.clone();
             let oci_config = self.config.oci.clone();
 
+            tracing::info!(
+                plugin = plugin_name.to_string(),
+                url = url.to_string(),
+                "Downloading wasm for plugin"
+            );
+
             download_set.spawn(async move {
                 let wasm_data = match url.scheme() {
                     "file" => tokio::fs::read(url.path())
@@ -147,6 +153,7 @@ impl PluginService {
 
         // Phase 2: Build manifests and create plugins (sequential, CPU-bound).
         for (plugin_name, plugin_cfg) in &self.config.plugins {
+            tracing::info!(plugin = plugin_name.to_string(), "Loading plugin");
             let Some(wasm_data) = downloaded.remove(plugin_name) else {
                 // Download was skipped due to an error in phase 1
                 continue;
@@ -154,7 +161,6 @@ impl PluginService {
 
             let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
             if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
-                tracing::info!(plugin = plugin_name.to_string(), runtime_config = ?runtime_cfg);
                 if let Some(hosts) = &runtime_cfg.allowed_hosts {
                     for host in hosts {
                         manifest = manifest.with_allowed_host(host);

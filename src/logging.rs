@@ -1,3 +1,4 @@
+use std::panic;
 use std::sync::OnceLock;
 use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan};
 
@@ -6,6 +7,35 @@ static LOGGING: OnceLock<tracing_appender::non_blocking::WorkerGuard> = OnceLock
 
 #[cfg(test)]
 static LOGGING: OnceLock<()> = OnceLock::new();
+
+/// Installs a custom panic hook that logs panics via `tracing::error!`
+/// so they appear in the rolling log file instead of being silently
+/// swallowed on stderr (which is unusable in a stdio MCP transport).
+pub fn install_panic_hook() {
+    let default_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic payload".to_string()
+        };
+
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+
+        tracing::error!(
+            panic.payload = %payload,
+            panic.location = %location,
+            "A panic occurred"
+        );
+
+        default_hook(info);
+    }));
+}
 
 #[ctor::ctor]
 fn _install_global_tracing() {
@@ -55,4 +85,6 @@ fn _install_global_tracing() {
             guard
         }
     });
+
+    install_panic_hook();
 }
