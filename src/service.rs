@@ -955,7 +955,7 @@ mod host_fns {
     use crate::oauth2::{AccessToken, HTTP_CLIENT, OauthCredentials, TokenClient};
 
     use super::*;
-    use extism::{EXTISM_USER_MODULE, FromBytes, Function, ToBytes, UserData, host_fn};
+    use extism::{EXTISM_USER_MODULE, Function, UserData, host_fn};
     use extism_convert::Json;
     use oauth2::{
         EmptyExtraTokenFields, StandardDeviceAuthorizationResponse, StandardTokenResponse,
@@ -1194,13 +1194,6 @@ mod host_fns {
         .with_namespace(EXTISM_USER_MODULE)
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
-    #[encoding(Json)]
-    enum AccessTokenResult {
-        AccessToken(AccessToken),
-        Error(String),
-    }
-
     pub fn get_access_token(ctx: PluginServiceContext) -> Function {
         fn create_access_token(
             credentials: &OauthCredentials,
@@ -1333,7 +1326,7 @@ mod host_fns {
                 .map_err(Error::new)
         }
 
-        host_fn!(get_access_token(ctx: PluginServiceContext; credentials: Json<OauthCredentials>) -> Json<AccessTokenResult> {
+        host_fn!(get_access_token(ctx: PluginServiceContext; credentials: Json<OauthCredentials>) -> Json<Option<AccessToken>> {
             let credentials = credentials.into_inner();
             let ctx = match ctx.get()?.lock() {
                 Ok(v) => v.clone(),
@@ -1347,7 +1340,7 @@ mod host_fns {
                 dashmap::Entry::Occupied(mut entry) => {
                     let (access_token, refresh_token) = entry.get();
                     if !access_token.is_expired() {
-                        AccessTokenResult::AccessToken(access_token.clone())
+                        Some(access_token.clone())
                     } else {
                         let token_response = match refresh_token {
                             Some(refresh_token) => match refresh_access_token(&credentials, refresh_token) {
@@ -1359,7 +1352,7 @@ mod host_fns {
                                             Err(e) => {
                                                 entry.remove();
                                                 tracing::error!(error = ?e, "Error creating access token");
-                                                return Ok(AccessTokenResult::Error("Error creating access token".to_string()));
+                                                return Ok(None);
                                             }
                                         }
                                     }
@@ -1369,13 +1362,13 @@ mod host_fns {
                                 Err(e) => {
                                     entry.remove();
                                     tracing::error!(error = ?e, "Error creating access token");
-                                    return Ok(AccessTokenResult::Error("Error creating access token".to_string()));
+                                    return Ok(None);
                                 }
                             }
                         };
                         let access_token = AccessToken::from(&token_response);
                         entry.insert((access_token.clone(), token_response.refresh_token().cloned()));
-                        AccessTokenResult::AccessToken(access_token)
+                        Some(access_token)
                     }
                 }
                 dashmap::Entry::Vacant(v) => {
@@ -1383,12 +1376,12 @@ mod host_fns {
                         Ok(response) => response,
                         Err(e) => {
                             tracing::error!(error = ?e, "Error creating access token");
-                            return Ok(AccessTokenResult::Error("Error creating access token".to_string()));
+                            return Ok(None);
                         }
                     };
                     let access_token = AccessToken::from(&token_response);
                     v.insert((access_token.clone(), token_response.refresh_token().cloned()));
-                    AccessTokenResult::AccessToken(access_token)
+                    Some(access_token)
                 }
             })
         });
