@@ -19,6 +19,7 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum AuthType {
     RequestBody,
     BasicAuth,
