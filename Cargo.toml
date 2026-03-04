@@ -56,7 +56,7 @@ serde_with = "3.17"
 sha2 = "0.10"
 sigstore = { version = "0.13", features = ["cosign", "verify", "bundle"] }
 tar = "0.4"
-tokio = { version = "1.49", features = ["full"] }
+tokio = { version = "1.50", features = ["full"] }
 tokio-util = "0.7"
 toml = "1.0"
 tracing = { version = "0.1", features = ["attributes"] }
