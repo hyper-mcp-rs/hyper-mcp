@@ -195,6 +195,7 @@ These plugins use the v2 plugin interface. New plugins should use this interface
 
 - [rstime](https://github.com/hyper-mcp-rs/rstime-plugin): Get current time and do time calculations (Rust)
 - [context7](https://github.com/hyper-mcp-rs/context7-plugin): Lookup library documentation (Rust)
+- [defuddle](htps://github.com/hyper-mcp-rs/defuddle-plugin): Get the main content of any page as Markdown (Rust)
 
 
 ### Community-built plugins
