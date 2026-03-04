@@ -19,9 +19,9 @@ use rmcp::{
         CompleteRequestParams, CompleteResult, GetPromptRequestMethod, GetPromptRequestParams,
         GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
         ListResourcesResult, ListToolsResult, LoggingLevel, PaginatedRequestParams,
-        PromptReference, ReadResourceRequestMethod, ReadResourceRequestParams, ReadResourceResult,
-        Reference, Resource, ResourceReference, ResourceTemplate, ServerCapabilities, ServerInfo,
-        SetLevelRequestParams, SubscribeRequestParams, UnsubscribeRequestParams,
+        ReadResourceRequestMethod, ReadResourceRequestParams, ReadResourceResult, Reference,
+        Resource, ResourceTemplate, ServerCapabilities, ServerInfo, SetLevelRequestParams,
+        SubscribeRequestParams, UnsubscribeRequestParams,
     },
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
@@ -325,11 +325,12 @@ impl ServerHandler for PluginService {
             return Err(McpError::method_not_found::<CallToolRequestMethod>());
         }
 
-        let request = CallToolRequestParams {
-            meta: request.meta,
-            name: std::borrow::Cow::Owned(tool_name.clone()),
-            arguments: request.arguments,
-            task: request.task,
+        let request = {
+            let mut nr = CallToolRequestParams::new(tool_name.clone());
+            nr.meta = request.meta;
+            nr.arguments = request.arguments;
+            nr.task = request.task;
+            nr
         };
 
         let Some(plugins) = self.plugins.get() else {
@@ -361,16 +362,17 @@ impl ServerHandler for PluginService {
             ));
         }
         let (plugin_name, request) = match request.r#ref {
-            Reference::Prompt(PromptReference { name, title }) => {
-                let (plugin_name, prompt_name) = match parse_namespaced_name(name.to_string()) {
-                    Ok((plugin_name, prompt_name)) => (plugin_name, prompt_name),
-                    Err(e) => {
-                        return Err(McpError::invalid_request(
-                            format!("Failed to parse prompt name: {e}"),
-                            None,
-                        ));
-                    }
-                };
+            Reference::Prompt(mut prompt_ref) => {
+                let (plugin_name, prompt_name) =
+                    match parse_namespaced_name(prompt_ref.name.to_string()) {
+                        Ok((plugin_name, prompt_name)) => (plugin_name, prompt_name),
+                        Err(e) => {
+                            return Err(McpError::invalid_request(
+                                format!("Failed to parse prompt name: {e}"),
+                                None,
+                            ));
+                        }
+                    };
                 let plugin_config = match self.config.plugins.get(&plugin_name) {
                     Some(config) => config,
                     None => {
@@ -386,29 +388,26 @@ impl ServerHandler for PluginService {
                     tracing::warn!(prompt = prompt_name, "Prompt in skip_prompts");
                     return Err(McpError::method_not_found::<CompleteRequestMethod>());
                 }
-                (
-                    plugin_name,
-                    CompleteRequestParams {
-                        meta: request.meta,
-                        r#ref: Reference::Prompt(PromptReference {
-                            name: prompt_name,
-                            title,
-                        }),
-                        argument: request.argument,
-                        context: request.context,
-                    },
-                )
+                prompt_ref.name = prompt_name;
+                let mut new_request =
+                    CompleteRequestParams::new(Reference::Prompt(prompt_ref), request.argument);
+                new_request.meta = request.meta;
+                if let Some(ctx) = request.context {
+                    new_request = new_request.with_context(ctx);
+                }
+                (plugin_name, new_request)
             }
-            Reference::Resource(ResourceReference { uri }) => {
-                let (plugin_name, resource_uri) = match parse_namespaced_uri(uri.to_string()) {
-                    Ok((plugin_name, resource_uri)) => (plugin_name, resource_uri),
-                    Err(e) => {
-                        return Err(McpError::invalid_request(
-                            format!("Failed to parse prompt name: {e}"),
-                            None,
-                        ));
-                    }
-                };
+            Reference::Resource(mut resource_ref) => {
+                let (plugin_name, resource_uri) =
+                    match parse_namespaced_uri(resource_ref.uri.to_string()) {
+                        Ok((plugin_name, resource_uri)) => (plugin_name, resource_uri),
+                        Err(e) => {
+                            return Err(McpError::invalid_request(
+                                format!("Failed to parse prompt name: {e}"),
+                                None,
+                            ));
+                        }
+                    };
                 let plugin_config = match self.config.plugins.get(&plugin_name) {
                     Some(config) => config,
                     None => {
@@ -424,15 +423,14 @@ impl ServerHandler for PluginService {
                     tracing::warn!(resource = resource_uri, "Resource in skip_resources");
                     return Err(McpError::method_not_found::<CompleteRequestMethod>());
                 }
-                (
-                    plugin_name,
-                    CompleteRequestParams {
-                        meta: request.meta,
-                        r#ref: Reference::Resource(ResourceReference { uri: resource_uri }),
-                        argument: request.argument,
-                        context: request.context,
-                    },
-                )
+                resource_ref.uri = resource_uri;
+                let mut new_request =
+                    CompleteRequestParams::new(Reference::Resource(resource_ref), request.argument);
+                new_request.meta = request.meta;
+                if let Some(ctx) = request.context {
+                    new_request = new_request.with_context(ctx);
+                }
+                (plugin_name, new_request)
             }
         };
 
@@ -451,16 +449,8 @@ impl ServerHandler for PluginService {
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            server_info: Implementation {
-                name: "hyper-mcp".to_string(),
-                title: Some("Hyper MCP".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                website_url: Some("https://github.com/hyper-mcp-rs/hyper-mcp".to_string()),
-
-                ..Default::default()
-            },
-            capabilities: ServerCapabilities::builder()
+        ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_completions()
                 .enable_logging()
                 .enable_prompts()
@@ -471,9 +461,12 @@ impl ServerHandler for PluginService {
                 .enable_tools()
                 .enable_tool_list_changed()
                 .build(),
-
-            ..Default::default()
-        }
+        )
+        .with_server_info(
+            Implementation::new("hyper-mcp", env!("CARGO_PKG_VERSION"))
+                .with_title("Hyper MCP")
+                .with_website_url("https://github.com/hyper-mcp-rs/hyper-mcp"),
+        )
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
@@ -516,10 +509,11 @@ impl ServerHandler for PluginService {
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         }
 
-        let request = GetPromptRequestParams {
-            meta: request.meta,
-            name: prompt_name.clone(),
-            arguments: request.arguments,
+        let request = {
+            let mut nr = GetPromptRequestParams::new(prompt_name.clone());
+            nr.meta = request.meta;
+            nr.arguments = request.arguments;
+            nr
         };
 
         let Some(plugins) = self.plugins.get() else {
@@ -870,10 +864,7 @@ impl ServerHandler for PluginService {
             return Err(McpError::method_not_found::<ReadResourceRequestMethod>());
         }
 
-        let request = ReadResourceRequestParams {
-            meta: None,
-            uri: resource_uri.clone(),
-        };
+        let request = ReadResourceRequestParams::new(resource_uri.clone());
 
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
@@ -972,9 +963,8 @@ mod host_fns {
             ContextInclusion, CreateElicitationRequestParams, CreateElicitationResult,
             CreateMessageRequestParams, CreateMessageResult, ElicitationAction,
             ElicitationResponseNotificationParam, ElicitationSchema, ListRootsResult,
-            LoggingMessageNotificationParam, ProgressNotificationParam, RawTextContent,
-            ResourceUpdatedNotificationParam, Role, SamplingContent, SamplingMessage,
-            SamplingMessageContent,
+            LoggingMessageNotificationParam, ProgressNotificationParam,
+            ResourceUpdatedNotificationParam, SamplingMessage,
         },
         service::ElicitationMode,
     };
@@ -1143,49 +1133,25 @@ mod host_fns {
                         }
                         Ok(ctx.handle.block_on(peer.create_message(sampling_msg)).map(Json).unwrap_or_else(|err| {
                                 tracing::error!(error = ?err, "Message creation failed");
-                                Json(CreateMessageResult {
-                                    message: SamplingMessage {
-                                        content: SamplingContent::Single(SamplingMessageContent::Text(RawTextContent{
-                                            text: err.to_string(),
-                                            meta: None,
-                                        })),
-                                        meta: None,
-                                        role: Role::Assistant,
-                                    },
-                                    model: "".to_string(),
-                                    stop_reason: Some("error".to_string()),
-                                })
+                                Json(CreateMessageResult::new(
+                                    SamplingMessage::assistant_text(err.to_string()),
+                                    "".to_string(),
+                                ).with_stop_reason("error"))
                         }))
                     } else {
                         tracing::info!("Peer does not support sampling");
-                        Ok(Json(CreateMessageResult {
-                            message: SamplingMessage {
-                                content: SamplingContent::Single(SamplingMessageContent::Text(RawTextContent{
-                                    text: "Peer does not support sampling".to_string(),
-                                    meta: None,
-                                })),
-                                meta: None,
-                                role: Role::Assistant,
-                            },
-                            model: "".to_string(),
-                            stop_reason: Some("error".to_string()),
-                        }))
+                        Ok(Json(CreateMessageResult::new(
+                            SamplingMessage::assistant_text("Peer does not support sampling"),
+                            "".to_string(),
+                        ).with_stop_reason("error")))
                     }
                 },
                 None => {
                     tracing::error!("No peer available");
-                    Ok(Json(CreateMessageResult {
-                        message: SamplingMessage {
-                            content: SamplingContent::Single(SamplingMessageContent::Text(RawTextContent{
-                                text: "No peer available".to_string(),
-                                meta: None,
-                            })),
-                            meta: None,
-                            role: Role::Assistant,
-                        },
-                        model: "".to_string(),
-                        stop_reason: Some("error".to_string()),
-                    }))
+                    Ok(Json(CreateMessageResult::new(
+                        SamplingMessage::assistant_text("No peer available"),
+                        "".to_string(),
+                    ).with_stop_reason("error")))
                 },
             }
         });
@@ -1712,8 +1678,8 @@ mod tests {
     use rmcp::{
         ClientHandler,
         model::{
-            ArgumentInfo, ClientInfo, CompletionContext, Extensions, Meta, ProtocolVersion,
-            RequestId, Tool,
+            ArgumentInfo, ClientInfo, CompletionContext, Extensions, Meta, PromptReference,
+            ProtocolVersion, RequestId, ResourceReference, Tool,
         },
         service::{RoleClient, RunningService, Service, serve_client, serve_server},
     };
@@ -2285,12 +2251,7 @@ plugins:
             create_test_pair(create_test_service(config), ClientInfo::default()).await;
 
         // Test calling tool with invalid format (missing plugin name separator)
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("invalid_tool_name"),
-            arguments: None,
-            task: None,
-        };
+        let request = CallToolRequestParams::new("invalid_tool_name");
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -2305,12 +2266,7 @@ plugins:
         }
 
         // Test with empty tool name
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed(""),
-            arguments: None,
-            task: None,
-        };
+        let request = CallToolRequestParams::new("");
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -2326,12 +2282,7 @@ plugins:
             create_test_pair(create_test_service(config), ClientInfo::default()).await;
 
         // Test calling tool on nonexistent plugin
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("nonexistent_plugin-some_tool"),
-            arguments: None,
-            task: None,
-        };
+        let request = CallToolRequestParams::new("nonexistent_plugin-some_tool");
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -2382,19 +2333,14 @@ plugins:
         assert!(!plugins.is_empty(), "Should have loaded plugin");
 
         // Test calling the time tool with get_time_utc operation
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("time_plugin-time"),
-            arguments: Some({
-                let mut map = serde_json::Map::new();
-                map.insert(
-                    "name".to_string(),
-                    serde_json::Value::String("get_time_utc".to_string()),
-                );
-                map
-            }),
-            task: None,
-        };
+        let request = CallToolRequestParams::new("time_plugin-time").with_arguments({
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "name".to_string(),
+                serde_json::Value::String("get_time_utc".to_string()),
+            );
+            map
+        });
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -2411,23 +2357,18 @@ plugins:
         );
 
         // Test calling with parse_time operation
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("time_plugin-time"),
-            arguments: Some({
-                let mut map = serde_json::Map::new();
-                map.insert(
-                    "name".to_string(),
-                    serde_json::Value::String("parse_time".to_string()),
-                );
-                map.insert(
-                    "time_rfc2822".to_string(),
-                    serde_json::Value::String("Wed, 18 Feb 2015 23:16:09 GMT".to_string()),
-                );
-                map
-            }),
-            task: None,
-        };
+        let request = CallToolRequestParams::new("time_plugin-time").with_arguments({
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "name".to_string(),
+                serde_json::Value::String("parse_time".to_string()),
+            );
+            map.insert(
+                "time_rfc2822".to_string(),
+                serde_json::Value::String("Wed, 18 Feb 2015 23:16:09 GMT".to_string()),
+            );
+            map
+        });
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -2483,19 +2424,14 @@ plugins:
         assert!(!plugins.is_empty(), "Should have loaded plugin");
 
         // Test calling the skipped time tool
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("time_plugin-time"),
-            arguments: Some({
-                let mut map = serde_json::Map::new();
-                map.insert(
-                    "name".to_string(),
-                    serde_json::Value::String("get_time_utc".to_string()),
-                );
-                map
-            }),
-            task: None,
-        };
+        let request = CallToolRequestParams::new("time_plugin-time").with_arguments({
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "name".to_string(),
+                serde_json::Value::String("get_time_utc".to_string()),
+            );
+            map
+        });
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -2621,19 +2557,14 @@ plugins:
             peer: server.peer().clone(),
         };
 
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("time_plugin-time"),
-            arguments: Some({
-                let mut map = serde_json::Map::new();
-                map.insert(
-                    "name".to_string(),
-                    serde_json::Value::String("get_time_utc".to_string()),
-                );
-                map
-            }),
-            task: None,
-        };
+        let request = CallToolRequestParams::new("time_plugin-time").with_arguments({
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "name".to_string(),
+                serde_json::Value::String("get_time_utc".to_string()),
+            );
+            map
+        });
 
         // Cancel the token before executing call_tool to force cancellation path
         cancellation_token.cancel();
@@ -2799,12 +2730,8 @@ plugins:
         let initial_count = initial_result.tools.len();
 
         // Call add_tool
-        let add_tool_request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
-            arguments: Some(serde_json::Map::new()),
-            task: None,
-        };
+        let add_tool_request = CallToolRequestParams::new("tool_list_changed_plugin-add_tool")
+            .with_arguments(serde_json::Map::new());
 
         let result = server
             .service()
@@ -2868,12 +2795,8 @@ plugins:
         // Call add_tool three times
         for i in 1..=3 {
             let ctx = create_test_ctx(&server);
-            let add_tool_request = CallToolRequestParams {
-                meta: None,
-                name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
-                arguments: Some(serde_json::Map::new()),
-                task: None,
-            };
+            let add_tool_request = CallToolRequestParams::new("tool_list_changed_plugin-add_tool")
+                .with_arguments(serde_json::Map::new());
 
             let result = server.service().call_tool(add_tool_request, ctx).await;
             assert!(result.is_ok(), "add_tool call {} should succeed", i);
@@ -2941,24 +2864,16 @@ plugins:
 
         // Add a tool
         let ctx = create_test_ctx(&server);
-        let add_tool_request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
-            arguments: Some(serde_json::Map::new()),
-            task: None,
-        };
+        let add_tool_request = CallToolRequestParams::new("tool_list_changed_plugin-add_tool")
+            .with_arguments(serde_json::Map::new());
 
         let result = server.service().call_tool(add_tool_request, ctx).await;
         assert!(result.is_ok(), "add_tool should succeed");
 
         // Call the newly created tool_1
         let ctx2 = create_test_ctx(&server);
-        let tool_request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-tool_1"),
-            arguments: Some(serde_json::Map::new()),
-            task: None,
-        };
+        let tool_request = CallToolRequestParams::new("tool_list_changed_plugin-tool_1")
+            .with_arguments(serde_json::Map::new());
 
         let result = server.service().call_tool(tool_request, ctx2).await;
         assert!(result.is_ok(), "tool_1 should be callable after creation");
@@ -3000,12 +2915,8 @@ plugins:
         let ctx = create_test_ctx(&server);
 
         // Call add_tool and verify response format
-        let add_tool_request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
-            arguments: Some(serde_json::Map::new()),
-            task: None,
-        };
+        let add_tool_request = CallToolRequestParams::new("tool_list_changed_plugin-add_tool")
+            .with_arguments(serde_json::Map::new());
 
         let result = server.service().call_tool(add_tool_request, ctx).await;
         assert!(result.is_ok());
@@ -3055,12 +2966,8 @@ plugins:
         // Add 5 tools and verify tool_count in responses
         for expected_count in 1..=5 {
             let ctx = create_test_ctx(&server);
-            let add_tool_request = CallToolRequestParams {
-                meta: None,
-                name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
-                arguments: Some(serde_json::Map::new()),
-                task: None,
-            };
+            let add_tool_request = CallToolRequestParams::new("tool_list_changed_plugin-add_tool")
+                .with_arguments(serde_json::Map::new());
 
             let result = server.service().call_tool(add_tool_request, ctx).await;
             assert!(result.is_ok());
@@ -3109,12 +3016,8 @@ plugins:
 
         // Try to call a tool that doesn't exist yet (tool_5 when only tool_1 exists)
         let ctx = create_test_ctx(&server);
-        let invalid_tool_request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-tool_5"),
-            arguments: Some(serde_json::Map::new()),
-            task: None,
-        };
+        let invalid_tool_request = CallToolRequestParams::new("tool_list_changed_plugin-tool_5")
+            .with_arguments(serde_json::Map::new());
 
         let result = server.service().call_tool(invalid_tool_request, ctx).await;
         assert!(
@@ -3168,12 +3071,8 @@ plugins:
             serde_json::Value::String("should_be_ignored".to_string()),
         );
 
-        let add_tool_request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
-            arguments: Some(args),
-            task: None,
-        };
+        let add_tool_request =
+            CallToolRequestParams::new("tool_list_changed_plugin-add_tool").with_arguments(args);
 
         let result = server.service().call_tool(add_tool_request, ctx).await;
         assert!(
@@ -3232,12 +3131,8 @@ plugins:
 
         // Add tool_1
         let ctx = create_test_ctx(&server);
-        let add_tool_request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
-            arguments: Some(serde_json::Map::new()),
-            task: None,
-        };
+        let add_tool_request = CallToolRequestParams::new("tool_list_changed_plugin-add_tool")
+            .with_arguments(serde_json::Map::new());
         let _ = server.service().call_tool(add_tool_request, ctx).await;
 
         // Get updated tools
@@ -3292,12 +3187,8 @@ plugins:
         // Add two tools
         for _ in 0..2 {
             let ctx = create_test_ctx(&server);
-            let add_tool_request = CallToolRequestParams {
-                meta: None,
-                name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
-                arguments: Some(serde_json::Map::new()),
-                task: None,
-            };
+            let add_tool_request = CallToolRequestParams::new("tool_list_changed_plugin-add_tool")
+                .with_arguments(serde_json::Map::new());
             let _ = server.service().call_tool(add_tool_request, ctx).await;
         }
 
@@ -3641,12 +3532,7 @@ plugins:
         .await;
 
         // Test calling get_time with UTC (default)
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Owned("rstime-get_time".to_string()),
-            arguments: None,
-            task: None,
-        };
+        let request = CallToolRequestParams::new("rstime-get_time");
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -3717,12 +3603,7 @@ plugins:
             serde_json::Value::String("America/New_York".to_string()),
         );
 
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Owned("rstime-get_time".to_string()),
-            arguments: Some(args),
-            task: None,
-        };
+        let request = CallToolRequestParams::new("rstime-get_time").with_arguments(args);
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -3780,12 +3661,7 @@ plugins:
             serde_json::Value::String("Wed, 18 Feb 2015 23:16:09 GMT".to_string()),
         );
 
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Owned("rstime-parse_time".to_string()),
-            arguments: Some(args),
-            task: None,
-        };
+        let request = CallToolRequestParams::new("rstime-parse_time").with_arguments(args);
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -3856,12 +3732,7 @@ plugins:
             serde_json::Value::String("invalid timestamp".to_string()),
         );
 
-        let request = CallToolRequestParams {
-            meta: None,
-            name: std::borrow::Cow::Owned("rstime-parse_time".to_string()),
-            arguments: Some(args),
-            task: None,
-        };
+        let request = CallToolRequestParams::new("rstime-parse_time").with_arguments(args);
 
         let ctx = create_test_ctx(&server);
         let result = server.service().call_tool(request, ctx).await;
@@ -3911,11 +3782,7 @@ plugins:
         .await;
 
         // Test getting the prompt without timezone argument
-        let request = GetPromptRequestParams {
-            meta: None,
-            name: "rstime-get_time_with_timezone".to_string(),
-            arguments: None,
-        };
+        let request = GetPromptRequestParams::new("rstime-get_time_with_timezone");
 
         let ctx = create_test_ctx(&server);
         let result = server.service().get_prompt(request, ctx).await;
@@ -3966,11 +3833,8 @@ plugins:
             serde_json::Value::String("Europe/London".to_string()),
         );
 
-        let request = GetPromptRequestParams {
-            meta: None,
-            name: "rstime-get_time_with_timezone".to_string(),
-            arguments: Some(args),
-        };
+        let request =
+            GetPromptRequestParams::new("rstime-get_time_with_timezone").with_arguments(args);
 
         let ctx = create_test_ctx(&server);
         let result = server.service().get_prompt(request, ctx).await;
@@ -4034,11 +3898,9 @@ plugins:
         // Resource URIs are namespaced with plugin name inserted into the path
         // Format: scheme://host/plugin-name/rest-of-path
         // With allowed_hosts configured, the plugin can make HTTP requests
-        let request = ReadResourceRequestParams {
-            meta: None,
-            uri: "https://www.timezoneconverter.com/rstime/cgi-bin/zoneinfo?tz=America/New_York"
-                .to_string(),
-        };
+        let request = ReadResourceRequestParams::new(
+            "https://www.timezoneconverter.com/rstime/cgi-bin/zoneinfo?tz=America/New_York",
+        );
 
         let ctx = create_test_ctx(&server);
         let result = server.service().read_resource(request, ctx).await;
@@ -4101,17 +3963,17 @@ plugins:
             value: "Ame".to_string(),
         };
 
-        let complete_request = CompleteRequestParams {
-            meta: None,
-            r#ref: Reference::Prompt(PromptReference {
-                name: "rstime-get_time_with_timezone".to_string(),
-                title: None,
-            }),
-            argument: argument_info,
-            context: Some(CompletionContext {
-                arguments: Some(HashMap::new()),
-            }),
-        };
+        let prompt_ref: PromptReference = serde_json::from_value(serde_json::json!({
+            "type": "ref/prompt",
+            "name": "rstime-get_time_with_timezone"
+        }))
+        .unwrap();
+        let complete_request =
+            CompleteRequestParams::new(Reference::Prompt(prompt_ref), argument_info).with_context(
+                CompletionContext {
+                    arguments: Some(HashMap::new()),
+                },
+            );
 
         let ctx = create_test_ctx(&server);
         let result = server.service().complete(complete_request, ctx).await;
@@ -4219,12 +4081,13 @@ plugins:
             value: "Eur".to_string(),
         };
 
-        let complete_request = CompleteRequestParams {
-            meta: None,
-            r#ref: Reference::Resource(ResourceReference { uri: resource_uri }),
-            argument: argument_info,
-            context: None,
-        };
+        let resource_ref: ResourceReference = serde_json::from_value(serde_json::json!({
+            "type": "ref/resource",
+            "uri": resource_uri
+        }))
+        .unwrap();
+        let complete_request =
+            CompleteRequestParams::new(Reference::Resource(resource_ref), argument_info);
 
         let ctx = create_test_ctx(&server);
         let result = server.service().complete(complete_request, ctx).await;
