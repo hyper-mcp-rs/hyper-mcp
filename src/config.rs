@@ -319,20 +319,69 @@ mod tests {
 
     #[test]
     fn test_load_valid_yaml_config() {
+        use std::io::Write;
+
         let rt = Runtime::new().unwrap();
 
-        // Read the test fixture file
-        let path = Path::new("tests/fixtures/valid_config.yaml");
+        // Create temp directories so allowed_paths host validation passes
+        let base = TempDir::new().unwrap();
+        let b = base.path();
+        for d in &["tmp", "var/log", "home/user/data"] {
+            std::fs::create_dir_all(b.join(d)).unwrap();
+        }
+        let p = |s: &str| -> String { b.join(s).to_str().unwrap().to_string() };
+
+        // Generate the fixture YAML dynamically with real paths
+        let yaml_content = format!(
+            r#"plugins:
+  test_plugin:
+    url: "file:///path/to/plugin"
+    runtime_config:
+      skip_tools:
+        - "tool1"
+        - "tool2"
+      allowed_hosts:
+        - "example.com"
+        - "localhost"
+      allowed_paths:
+        - "{tmp}"
+        - "{var_log}:/plugin/logs"
+        - "{home_user_data}"
+      env_vars:
+        DEBUG: "true"
+        LOG_LEVEL: "info"
+      memory_limit: "1GB"
+
+  another_plugin:
+    url: "https://example.com/plugin"
+    runtime_config:
+      allowed_hosts:
+        - "api.example.com"
+
+  minimal_plugin:
+    url: "http://localhost:3000/plugin"
+"#,
+            tmp = p("tmp"),
+            var_log = p("var/log"),
+            home_user_data = p("home/user/data"),
+        );
+
+        let mut tmp_file = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
+        tmp_file.write_all(yaml_content.as_bytes()).unwrap();
+        tmp_file.flush().unwrap();
 
         let cli = Cli {
-            config_file: Some(path.to_path_buf()),
-
+            config_file: Some(tmp_file.path().to_path_buf()),
             ..Default::default()
         };
 
         // Load the config
         let config_result = rt.block_on(load_config(&cli));
-        assert!(config_result.is_ok(), "Failed to load valid YAML config");
+        assert!(
+            config_result.is_ok(),
+            "Failed to load valid YAML config: {:?}",
+            config_result.err()
+        );
 
         let config = config_result.unwrap();
         assert_eq!(config.plugins.len(), 3, "Expected 3 plugins in the config");
@@ -365,17 +414,17 @@ mod tests {
 
         // Verify allowed_paths structure
         let allowed_paths = runtime_config.allowed_paths.as_ref().unwrap();
-        assert_eq!(allowed_paths[0].host.as_str(), "/tmp");
-        assert_eq!(allowed_paths[0].plugin.as_str(), "/tmp");
+        assert_eq!(allowed_paths[0].host.as_str(), p("tmp"));
+        assert_eq!(allowed_paths[0].plugin.as_str(), p("tmp"));
 
         #[cfg(not(windows))]
         {
-            assert_eq!(allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(allowed_paths[1].host.as_str(), p("var/log"));
             assert_eq!(allowed_paths[1].plugin.as_str(), "/plugin/logs");
         }
 
-        assert_eq!(allowed_paths[2].host.as_str(), "/home/user/data");
-        assert_eq!(allowed_paths[2].plugin.as_str(), "/home/user/data");
+        assert_eq!(allowed_paths[2].host.as_str(), p("home/user/data"));
+        assert_eq!(allowed_paths[2].plugin.as_str(), p("home/user/data"));
 
         assert_eq!(runtime_config.env_vars.as_ref().unwrap().len(), 2);
         assert_eq!(
@@ -2409,20 +2458,45 @@ allowed_hosts:
 
     #[test]
     fn test_skip_tools_examples_integration() {
+        use std::io::Write;
+
         let rt = Runtime::new().unwrap();
 
-        // Load the skip_tools examples config
-        let path = Path::new("tests/fixtures/skip_tools_examples.yaml");
-        let cli = Cli {
-            config_file: Some(path.to_path_buf()),
+        // Create temp directories so allowed_paths host validation passes
+        let base = TempDir::new().unwrap();
+        let b = base.path();
+        for d in &["tmp", "var/log", "home/user/data"] {
+            std::fs::create_dir_all(b.join(d)).unwrap();
+        }
+        let p = |s: &str| -> String { b.join(s).to_str().unwrap().to_string() };
 
+        // Read the original fixture and replace the allowed_paths host paths
+        let original = std::fs::read_to_string("tests/fixtures/skip_tools_examples.yaml").unwrap();
+        let patched = original
+            .replace("\"/tmp\"", &format!("\"{}\"", p("tmp")))
+            .replace(
+                "\"/var/log:/plugin/logs\"",
+                &format!("\"{}:/plugin/logs\"", p("var/log")),
+            )
+            .replace(
+                "\"/home/user/data\"",
+                &format!("\"{}\"", p("home/user/data")),
+            );
+
+        let mut tmp_file = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
+        tmp_file.write_all(patched.as_bytes()).unwrap();
+        tmp_file.flush().unwrap();
+
+        let cli = Cli {
+            config_file: Some(tmp_file.path().to_path_buf()),
             ..Default::default()
         };
 
         let config_result = rt.block_on(load_config(&cli));
         assert!(
             config_result.is_ok(),
-            "Failed to load skip_tools examples config"
+            "Failed to load skip_tools examples config: {:?}",
+            config_result.err()
         );
 
         let config = config_result.unwrap();
@@ -2569,17 +2643,17 @@ allowed_hosts:
 
         // Verify allowed_paths structure
         let full_allowed_paths = full_runtime.allowed_paths.as_ref().unwrap();
-        assert_eq!(full_allowed_paths[0].host.as_str(), "/tmp");
-        assert_eq!(full_allowed_paths[0].plugin.as_str(), "/tmp");
+        assert_eq!(full_allowed_paths[0].host.as_str(), p("tmp"));
+        assert_eq!(full_allowed_paths[0].plugin.as_str(), p("tmp"));
 
         #[cfg(not(windows))]
         {
-            assert_eq!(full_allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(full_allowed_paths[1].host.as_str(), p("var/log"));
             assert_eq!(full_allowed_paths[1].plugin.as_str(), "/plugin/logs");
         }
 
-        assert_eq!(full_allowed_paths[2].host.as_str(), "/home/user/data");
-        assert_eq!(full_allowed_paths[2].plugin.as_str(), "/home/user/data");
+        assert_eq!(full_allowed_paths[2].host.as_str(), p("home/user/data"));
+        assert_eq!(full_allowed_paths[2].plugin.as_str(), p("home/user/data"));
 
         assert_eq!(full_runtime.env_vars.as_ref().unwrap().len(), 2);
         assert_eq!(
@@ -3158,19 +3232,222 @@ allowed_hosts:
 
     #[test]
     fn test_allowed_paths_examples_integration() {
+        use std::io::Write;
+
         let rt = Runtime::new().unwrap();
 
-        // Load the allowed_paths examples config
-        let path = Path::new("tests/fixtures/allowed_paths_examples.yaml");
+        // Create a temp directory tree with all host paths the fixture needs
+        let base = TempDir::new().unwrap();
+        let b = base.path();
+
+        let host_dirs: &[&str] = &[
+            "tmp",
+            "var/log",
+            "home/user/data",
+            "host/tmp",
+            "home/user",
+            "opt/app",
+            "local/data",
+            "shared/files",
+            "relative/path",
+            "host/data",
+            "shared",
+            "local",
+            "path/with spaces",
+            "host/path with spaces",
+            "my documents",
+            "path/with-dashes",
+            "path_with_underscores",
+            "path.with.dots",
+            "path/with-special",
+            "very/deeply/nested/path/structure",
+            "another/deep/path",
+            "a/b/c/d/e/f/g",
+            "usr/local/share",
+            "etc/config",
+            "var/lib/data",
+            "home/user/.config",
+            "root",
+            "home",
+            "usr",
+            "var",
+        ];
+        for d in host_dirs {
+            std::fs::create_dir_all(b.join(d)).unwrap();
+        }
+
+        let p = |suffix: &str| -> String { b.join(suffix).to_str().unwrap().to_string() };
+
+        // Generate the YAML fixture dynamically with real temp paths
+        let yaml_content = format!(
+            r#"plugins:
+  single_paths_plugin:
+    url: "file:///path/to/single_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{tmp}"
+        - "{var_log}"
+        - "{home_user_data}"
+
+  mapped_paths_plugin:
+    url: "https://example.com/mapped_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{host_tmp}:/plugin/tmp"
+        - "{var_log}:/plugin/logs"
+        - "{home_user_data}:/plugin/user/data"
+
+  mixed_paths_plugin:
+    url: "http://localhost:3000/mixed_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{tmp}"
+        - "{var_log}:/plugin/logs"
+        - "{home_user}"
+        - "{opt_app}:/plugin/app"
+
+  relative_paths_plugin:
+    url: "file:///path/to/relative_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{local_data}"
+        - "{shared_files}"
+        - "{relative_path}"
+
+  mapped_relative_plugin:
+    url: "https://api.example.com/relative_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{host_data}:/plugin/data"
+        - "{shared}:/plugin/shared"
+        - "{local}:remote"
+
+  paths_with_spaces_plugin:
+    url: "file:///path/to/spaces_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{path_with_spaces}"
+        - "{host_path_with_spaces}:/plugin/path with spaces"
+        - "{my_documents}"
+
+  special_chars_plugin:
+    url: "https://example.com/special_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{path_with_dashes}"
+        - "{path_with_underscores}"
+        - "{path_with_dots}"
+        - "{path_with_special}:/plugin/with_underscores"
+
+  empty_paths_plugin:
+    url: "file:///path/to/empty_plugin"
+    runtime_config:
+      allowed_paths: []
+      allowed_hosts:
+        - "example.com"
+
+  no_paths_plugin:
+    url: "https://example.com/no_paths_plugin"
+    runtime_config:
+      allowed_hosts:
+        - "localhost"
+      memory_limit: "512MB"
+
+  full_config_plugin:
+    url: "https://secure.example.com/full_plugin"
+    runtime_config:
+      skip_tools:
+        - "admin_.*"
+        - ".*_dangerous"
+      allowed_hosts:
+        - "api.example.com"
+        - "cdn.example.com"
+      allowed_paths:
+        - "{tmp}"
+        - "{var_log}:/plugin/logs"
+        - "{home_user_data}"
+        - "{opt_app}:/plugin/app"
+      env_vars:
+        ENVIRONMENT: "production"
+        LOG_LEVEL: "info"
+        DATA_DIR: "/var/app/data"
+      memory_limit: "4GB"
+
+  nested_paths_plugin:
+    url: "file:///path/to/nested_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{deeply_nested}"
+        - "{another_deep}:/plugin/deep/path"
+        - "{abcdefg}"
+
+  multi_mapping_plugin:
+    url: "https://example.com/multi_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{usr_local_share}:/plugin/shared"
+        - "{etc_config}:/plugin/config"
+        - "{var_lib_data}:/plugin/data"
+        - "{home_user_config}:/plugin/user/config"
+
+  root_user_paths_plugin:
+    url: "file:///path/to/root_user_plugin"
+    runtime_config:
+      allowed_paths:
+        - "{base_root}"
+        - "{root}"
+        - "{home}"
+        - "{usr}"
+        - "{var}:/plugin/var"
+"#,
+            tmp = p("tmp"),
+            var_log = p("var/log"),
+            home_user_data = p("home/user/data"),
+            host_tmp = p("host/tmp"),
+            home_user = p("home/user"),
+            opt_app = p("opt/app"),
+            local_data = p("local/data"),
+            shared_files = p("shared/files"),
+            relative_path = p("relative/path"),
+            host_data = p("host/data"),
+            shared = p("shared"),
+            local = p("local"),
+            path_with_spaces = p("path/with spaces"),
+            host_path_with_spaces = p("host/path with spaces"),
+            my_documents = p("my documents"),
+            path_with_dashes = p("path/with-dashes"),
+            path_with_underscores = p("path_with_underscores"),
+            path_with_dots = p("path.with.dots"),
+            path_with_special = p("path/with-special"),
+            deeply_nested = p("very/deeply/nested/path/structure"),
+            another_deep = p("another/deep/path"),
+            abcdefg = p("a/b/c/d/e/f/g"),
+            usr_local_share = p("usr/local/share"),
+            etc_config = p("etc/config"),
+            var_lib_data = p("var/lib/data"),
+            home_user_config = p("home/user/.config"),
+            base_root = b.to_str().unwrap(),
+            root = p("root"),
+            home = p("home"),
+            usr = p("usr"),
+            var = p("var"),
+        );
+
+        // Write to a temp file with .yaml suffix and load the config from it
+        let mut tmp_file = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
+        tmp_file.write_all(yaml_content.as_bytes()).unwrap();
+        tmp_file.flush().unwrap();
+
         let cli = Cli {
-            config_file: Some(path.to_path_buf()),
+            config_file: Some(tmp_file.path().to_path_buf()),
             ..Default::default()
         };
 
         let config_result = rt.block_on(load_config(&cli));
         assert!(
             config_result.is_ok(),
-            "Failed to load allowed_paths examples config"
+            "Failed to load allowed_paths examples config: {:?}",
+            config_result.err()
         );
 
         let config = config_result.unwrap();
@@ -3190,12 +3467,12 @@ allowed_hosts:
             .as_ref()
             .unwrap();
         assert_eq!(single_paths.len(), 3);
-        assert_eq!(single_paths[0].host.as_str(), "/tmp");
-        assert_eq!(single_paths[0].plugin.as_str(), "/tmp");
-        assert_eq!(single_paths[1].host.as_str(), "/var/log");
-        assert_eq!(single_paths[1].plugin.as_str(), "/var/log");
-        assert_eq!(single_paths[2].host.as_str(), "/home/user/data");
-        assert_eq!(single_paths[2].plugin.as_str(), "/home/user/data");
+        assert_eq!(single_paths[0].host.as_str(), p("tmp"));
+        assert_eq!(single_paths[0].plugin.as_str(), p("tmp"));
+        assert_eq!(single_paths[1].host.as_str(), p("var/log"));
+        assert_eq!(single_paths[1].plugin.as_str(), p("var/log"));
+        assert_eq!(single_paths[2].host.as_str(), p("home/user/data"));
+        assert_eq!(single_paths[2].plugin.as_str(), p("home/user/data"));
 
         // Test mapped_paths_plugin
         let mapped_plugin = &config.plugins[&PluginName::try_from("mapped_paths_plugin").unwrap()];
@@ -3210,11 +3487,11 @@ allowed_hosts:
 
         #[cfg(not(windows))]
         {
-            assert_eq!(mapped_paths[0].host.as_str(), "/host/tmp");
+            assert_eq!(mapped_paths[0].host.as_str(), p("host/tmp"));
             assert_eq!(mapped_paths[0].plugin.as_str(), "/plugin/tmp");
-            assert_eq!(mapped_paths[1].host.as_str(), "/var/log");
+            assert_eq!(mapped_paths[1].host.as_str(), p("var/log"));
             assert_eq!(mapped_paths[1].plugin.as_str(), "/plugin/logs");
-            assert_eq!(mapped_paths[2].host.as_str(), "/home/user/data");
+            assert_eq!(mapped_paths[2].host.as_str(), p("home/user/data"));
             assert_eq!(mapped_paths[2].plugin.as_str(), "/plugin/user/data");
         }
 
@@ -3228,19 +3505,19 @@ allowed_hosts:
             .as_ref()
             .unwrap();
         assert_eq!(mixed_paths.len(), 4);
-        assert_eq!(mixed_paths[0].host.as_str(), "/tmp");
-        assert_eq!(mixed_paths[0].plugin.as_str(), "/tmp");
+        assert_eq!(mixed_paths[0].host.as_str(), p("tmp"));
+        assert_eq!(mixed_paths[0].plugin.as_str(), p("tmp"));
 
         #[cfg(not(windows))]
         {
-            assert_eq!(mixed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(mixed_paths[1].host.as_str(), p("var/log"));
             assert_eq!(mixed_paths[1].plugin.as_str(), "/plugin/logs");
-            assert_eq!(mixed_paths[3].host.as_str(), "/opt/app");
+            assert_eq!(mixed_paths[3].host.as_str(), p("opt/app"));
             assert_eq!(mixed_paths[3].plugin.as_str(), "/plugin/app");
         }
 
-        assert_eq!(mixed_paths[2].host.as_str(), "/home/user");
-        assert_eq!(mixed_paths[2].plugin.as_str(), "/home/user");
+        assert_eq!(mixed_paths[2].host.as_str(), p("home/user"));
+        assert_eq!(mixed_paths[2].plugin.as_str(), p("home/user"));
 
         // Test relative_paths_plugin
         let relative_plugin =
@@ -3253,12 +3530,12 @@ allowed_hosts:
             .as_ref()
             .unwrap();
         assert_eq!(relative_paths.len(), 3);
-        assert_eq!(relative_paths[0].host.as_str(), "./local/data");
-        assert_eq!(relative_paths[0].plugin.as_str(), "./local/data");
-        assert_eq!(relative_paths[1].host.as_str(), "../shared/files");
-        assert_eq!(relative_paths[1].plugin.as_str(), "../shared/files");
-        assert_eq!(relative_paths[2].host.as_str(), "relative/path");
-        assert_eq!(relative_paths[2].plugin.as_str(), "relative/path");
+        assert_eq!(relative_paths[0].host.as_str(), p("local/data"));
+        assert_eq!(relative_paths[0].plugin.as_str(), p("local/data"));
+        assert_eq!(relative_paths[1].host.as_str(), p("shared/files"));
+        assert_eq!(relative_paths[1].plugin.as_str(), p("shared/files"));
+        assert_eq!(relative_paths[2].host.as_str(), p("relative/path"));
+        assert_eq!(relative_paths[2].plugin.as_str(), p("relative/path"));
 
         // Test mapped_relative_plugin
         let mapped_relative =
@@ -3274,11 +3551,11 @@ allowed_hosts:
 
         #[cfg(not(windows))]
         {
-            assert_eq!(mapped_rel_paths[0].host.as_str(), "./host/data");
-            assert_eq!(mapped_rel_paths[0].plugin.as_str(), "./plugin/data");
-            assert_eq!(mapped_rel_paths[1].host.as_str(), "../shared");
+            assert_eq!(mapped_rel_paths[0].host.as_str(), p("host/data"));
+            assert_eq!(mapped_rel_paths[0].plugin.as_str(), "/plugin/data");
+            assert_eq!(mapped_rel_paths[1].host.as_str(), p("shared"));
             assert_eq!(mapped_rel_paths[1].plugin.as_str(), "/plugin/shared");
-            assert_eq!(mapped_rel_paths[2].host.as_str(), "local");
+            assert_eq!(mapped_rel_paths[2].host.as_str(), p("local"));
             assert_eq!(mapped_rel_paths[2].plugin.as_str(), "remote");
         }
 
@@ -3293,17 +3570,17 @@ allowed_hosts:
             .as_ref()
             .unwrap();
         assert_eq!(spaces_paths.len(), 3);
-        assert_eq!(spaces_paths[0].host.as_str(), "/path/with spaces");
-        assert_eq!(spaces_paths[0].plugin.as_str(), "/path/with spaces");
+        assert_eq!(spaces_paths[0].host.as_str(), p("path/with spaces"));
+        assert_eq!(spaces_paths[0].plugin.as_str(), p("path/with spaces"));
 
         #[cfg(not(windows))]
         {
-            assert_eq!(spaces_paths[1].host.as_str(), "/host/path with spaces");
+            assert_eq!(spaces_paths[1].host.as_str(), p("host/path with spaces"));
             assert_eq!(spaces_paths[1].plugin.as_str(), "/plugin/path with spaces");
         }
 
-        assert_eq!(spaces_paths[2].host.as_str(), "/my documents");
-        assert_eq!(spaces_paths[2].plugin.as_str(), "/my documents");
+        assert_eq!(spaces_paths[2].host.as_str(), p("my documents"));
+        assert_eq!(spaces_paths[2].plugin.as_str(), p("my documents"));
 
         // Test special_chars_plugin
         let special_plugin =
@@ -3316,16 +3593,16 @@ allowed_hosts:
             .as_ref()
             .unwrap();
         assert_eq!(special_paths.len(), 4);
-        assert_eq!(special_paths[0].host.as_str(), "/path/with-dashes");
-        assert_eq!(special_paths[0].plugin.as_str(), "/path/with-dashes");
-        assert_eq!(special_paths[1].host.as_str(), "/path_with_underscores");
-        assert_eq!(special_paths[1].plugin.as_str(), "/path_with_underscores");
-        assert_eq!(special_paths[2].host.as_str(), "/path.with.dots");
-        assert_eq!(special_paths[2].plugin.as_str(), "/path.with.dots");
+        assert_eq!(special_paths[0].host.as_str(), p("path/with-dashes"));
+        assert_eq!(special_paths[0].plugin.as_str(), p("path/with-dashes"));
+        assert_eq!(special_paths[1].host.as_str(), p("path_with_underscores"));
+        assert_eq!(special_paths[1].plugin.as_str(), p("path_with_underscores"));
+        assert_eq!(special_paths[2].host.as_str(), p("path.with.dots"));
+        assert_eq!(special_paths[2].plugin.as_str(), p("path.with.dots"));
 
         #[cfg(not(windows))]
         {
-            assert_eq!(special_paths[3].host.as_str(), "/path/with-special");
+            assert_eq!(special_paths[3].host.as_str(), p("path/with-special"));
             assert_eq!(special_paths[3].plugin.as_str(), "/plugin/with_underscores");
         }
 
@@ -3362,19 +3639,19 @@ allowed_hosts:
         assert_eq!(full_runtime.allowed_paths.as_ref().unwrap().len(), 4);
 
         let full_paths = full_runtime.allowed_paths.as_ref().unwrap();
-        assert_eq!(full_paths[0].host.as_str(), "/tmp");
-        assert_eq!(full_paths[0].plugin.as_str(), "/tmp");
+        assert_eq!(full_paths[0].host.as_str(), p("tmp"));
+        assert_eq!(full_paths[0].plugin.as_str(), p("tmp"));
 
         #[cfg(not(windows))]
         {
-            assert_eq!(full_paths[1].host.as_str(), "/var/log");
+            assert_eq!(full_paths[1].host.as_str(), p("var/log"));
             assert_eq!(full_paths[1].plugin.as_str(), "/plugin/logs");
-            assert_eq!(full_paths[3].host.as_str(), "/opt/app");
+            assert_eq!(full_paths[3].host.as_str(), p("opt/app"));
             assert_eq!(full_paths[3].plugin.as_str(), "/plugin/app");
         }
 
-        assert_eq!(full_paths[2].host.as_str(), "/home/user/data");
-        assert_eq!(full_paths[2].plugin.as_str(), "/home/user/data");
+        assert_eq!(full_paths[2].host.as_str(), p("home/user/data"));
+        assert_eq!(full_paths[2].plugin.as_str(), p("home/user/data"));
         assert_eq!(full_runtime.env_vars.as_ref().unwrap().len(), 3);
         assert_eq!(
             *full_runtime.memory_limit.as_ref().unwrap(),
@@ -3393,21 +3670,21 @@ allowed_hosts:
         assert_eq!(nested_paths.len(), 3);
         assert_eq!(
             nested_paths[0].host.as_str(),
-            "/very/deeply/nested/path/structure"
+            p("very/deeply/nested/path/structure")
         );
         assert_eq!(
             nested_paths[0].plugin.as_str(),
-            "/very/deeply/nested/path/structure"
+            p("very/deeply/nested/path/structure")
         );
 
         #[cfg(not(windows))]
         {
-            assert_eq!(nested_paths[1].host.as_str(), "/another/deep/path");
+            assert_eq!(nested_paths[1].host.as_str(), p("another/deep/path"));
             assert_eq!(nested_paths[1].plugin.as_str(), "/plugin/deep/path");
         }
 
-        assert_eq!(nested_paths[2].host.as_str(), "/a/b/c/d/e/f/g");
-        assert_eq!(nested_paths[2].plugin.as_str(), "/a/b/c/d/e/f/g");
+        assert_eq!(nested_paths[2].host.as_str(), p("a/b/c/d/e/f/g"));
+        assert_eq!(nested_paths[2].plugin.as_str(), p("a/b/c/d/e/f/g"));
 
         // Test multi_mapping_plugin
         let multi_plugin = &config.plugins[&PluginName::try_from("multi_mapping_plugin").unwrap()];
@@ -3422,13 +3699,13 @@ allowed_hosts:
 
         #[cfg(not(windows))]
         {
-            assert_eq!(multi_paths[0].host.as_str(), "/usr/local/share");
+            assert_eq!(multi_paths[0].host.as_str(), p("usr/local/share"));
             assert_eq!(multi_paths[0].plugin.as_str(), "/plugin/shared");
-            assert_eq!(multi_paths[1].host.as_str(), "/etc/config");
+            assert_eq!(multi_paths[1].host.as_str(), p("etc/config"));
             assert_eq!(multi_paths[1].plugin.as_str(), "/plugin/config");
-            assert_eq!(multi_paths[2].host.as_str(), "/var/lib/data");
+            assert_eq!(multi_paths[2].host.as_str(), p("var/lib/data"));
             assert_eq!(multi_paths[2].plugin.as_str(), "/plugin/data");
-            assert_eq!(multi_paths[3].host.as_str(), "/home/user/.config");
+            assert_eq!(multi_paths[3].host.as_str(), p("home/user/.config"));
             assert_eq!(multi_paths[3].plugin.as_str(), "/plugin/user/config");
         }
 
@@ -3442,20 +3719,33 @@ allowed_hosts:
             .as_ref()
             .unwrap();
         assert_eq!(root_paths.len(), 5);
-        assert_eq!(root_paths[0].host.as_str(), "/");
-        assert_eq!(root_paths[0].plugin.as_str(), "/");
-        assert_eq!(root_paths[1].host.as_str(), "/root");
-        assert_eq!(root_paths[1].plugin.as_str(), "/root");
-        assert_eq!(root_paths[2].host.as_str(), "/home");
-        assert_eq!(root_paths[2].plugin.as_str(), "/home");
-        assert_eq!(root_paths[3].host.as_str(), "/usr");
-        assert_eq!(root_paths[3].plugin.as_str(), "/usr");
+        assert_eq!(root_paths[0].host.as_str(), b.to_str().unwrap());
+        assert_eq!(root_paths[0].plugin.as_str(), b.to_str().unwrap());
+        assert_eq!(root_paths[1].host.as_str(), p("root"));
+        assert_eq!(root_paths[1].plugin.as_str(), p("root"));
+        assert_eq!(root_paths[2].host.as_str(), p("home"));
+        assert_eq!(root_paths[2].plugin.as_str(), p("home"));
+        assert_eq!(root_paths[3].host.as_str(), p("usr"));
+        assert_eq!(root_paths[3].plugin.as_str(), p("usr"));
 
         #[cfg(not(windows))]
         {
-            assert_eq!(root_paths[4].host.as_str(), "/var");
+            assert_eq!(root_paths[4].host.as_str(), p("var"));
             assert_eq!(root_paths[4].plugin.as_str(), "/plugin/var");
         }
+    }
+
+    #[test]
+    fn test_allowed_path_nonexistent_host_errors() {
+        // Deserializing a path that does not exist on disk must produce an error
+        let json = r#""/no/such/path/exists/here""#;
+        let result: std::result::Result<AllowedPath, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "Expected error for nonexistent host path");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("does not exist"),
+            "Error message should mention the path does not exist, got: {msg}"
+        );
     }
 
     #[test]
