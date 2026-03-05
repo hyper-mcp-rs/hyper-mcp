@@ -17,11 +17,11 @@ use rmcp::{
     model::{
         CallToolRequestMethod, CallToolRequestParams, CallToolResult, CompleteRequestMethod,
         CompleteRequestParams, CompleteResult, GetPromptRequestMethod, GetPromptRequestParams,
-        GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
-        ListResourcesResult, ListToolsResult, LoggingLevel, PaginatedRequestParams,
-        ReadResourceRequestMethod, ReadResourceRequestParams, ReadResourceResult, Reference,
-        Resource, ResourceTemplate, ServerCapabilities, ServerInfo, SetLevelRequestParams,
-        SubscribeRequestParams, UnsubscribeRequestParams,
+        GetPromptResult, Implementation, InitializeRequestParams, InitializeResult,
+        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+        LoggingLevel, PaginatedRequestParams, ReadResourceRequestMethod, ReadResourceRequestParams,
+        ReadResourceResult, Reference, Resource, ResourceTemplate, ServerCapabilities, ServerInfo,
+        SetLevelRequestParams, SubscribeRequestParams, UnsubscribeRequestParams,
     },
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
@@ -449,7 +449,7 @@ impl ServerHandler for PluginService {
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+        let server_info = ServerInfo::new(
             ServerCapabilities::builder()
                 .enable_completions()
                 .enable_logging()
@@ -466,7 +466,9 @@ impl ServerHandler for PluginService {
             Implementation::new("hyper-mcp", env!("CARGO_PKG_VERSION"))
                 .with_title("Hyper MCP")
                 .with_website_url("https://github.com/hyper-mcp-rs/hyper-mcp"),
-        )
+        );
+        tracing::info!(server_info = ?server_info);
+        server_info
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
@@ -527,6 +529,28 @@ impl ServerHandler for PluginService {
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         };
         plugin.get_prompt(request, context).await
+    }
+
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, McpError> {
+        tracing::info!(request = ?request);
+        if context.peer.peer_info().is_none() {
+            context.peer.set_peer_info(request.clone());
+        }
+        let mut server_info = self.get_info();
+        if request.protocol_version != server_info.protocol_version {
+            tracing::warn!(
+                client_version = ?request.protocol_version,
+                hyper_mcp_version = ?server_info.protocol_version,
+                "Incompatible versions, downgrading to client version"
+            );
+            server_info.protocol_version = request.protocol_version;
+        }
+        Ok(server_info)
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
@@ -829,6 +853,12 @@ impl ServerHandler for PluginService {
                 tracing::error!(plugin = plugin_name.to_string(), error = ?e, "Failed to notify plugin of roots list change");
             }
         }
+    }
+
+    #[tracing::instrument(skip_all, fields(call = next_call_id()))]
+    async fn ping(&self, _context: RequestContext<RoleServer>) -> Result<(), McpError> {
+        tracing::debug!("Ping received");
+        Ok(())
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
