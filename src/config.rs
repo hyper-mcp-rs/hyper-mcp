@@ -165,12 +165,20 @@ impl<'de> Deserialize<'de> for AllowedPath {
             .splitn(2, if cfg!(windows) { ";" } else { ":" })
             .map(str::trim);
         match path_iter.next() {
-            Some(host) => Ok(AllowedPath {
-                host: Utf8PathBuf::from(host),
-                plugin: Utf8PathBuf::from(
-                    path_iter.next().filter(|p| !p.is_empty()).unwrap_or(host),
-                ),
-            }),
+            Some(host) => {
+                if !Utf8PathBuf::from(host).exists() {
+                    return Err(de::Error::custom(format!(
+                        "host path {} does not exist",
+                        host
+                    )));
+                }
+                Ok(AllowedPath {
+                    host: Utf8PathBuf::from(host),
+                    plugin: Utf8PathBuf::from(
+                        path_iter.next().filter(|p| !p.is_empty()).unwrap_or(host),
+                    ),
+                })
+            }
             None => Err(de::Error::custom("Missing host path")),
         }
     }
@@ -306,6 +314,7 @@ pub async fn load_config(cli: &Cli) -> Result<Config> {
 mod tests {
     use super::*;
     use std::path::Path;
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
     #[test]
@@ -2594,10 +2603,12 @@ allowed_hosts:
         // Test deserialization with host:plugin mapping on Unix
         #[cfg(not(windows))]
         {
-            let json = r#""/host/path:/plugin/path""#;
-            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+            let dir = TempDir::new().unwrap();
+            let host = dir.path().to_str().unwrap();
+            let json = format!(r#""{}:/plugin/path""#, host);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(allowed_path.host.as_str(), "/host/path");
+            assert_eq!(allowed_path.host.as_str(), host);
             assert_eq!(allowed_path.plugin.as_str(), "/plugin/path");
         }
     }
@@ -2620,10 +2631,12 @@ allowed_hosts:
         // Test that whitespace is trimmed around paths
         #[cfg(not(windows))]
         {
-            let json = r#""  /host/path  :  /plugin/path  ""#;
-            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+            let dir = TempDir::new().unwrap();
+            let host = dir.path().to_str().unwrap();
+            let json = format!(r#""  {}  :  /plugin/path  ""#, host);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(allowed_path.host.as_str(), "/host/path");
+            assert_eq!(allowed_path.host.as_str(), host);
             assert_eq!(allowed_path.plugin.as_str(), "/plugin/path");
         }
     }
@@ -2703,8 +2716,10 @@ allowed_hosts:
         // Test that serialization and deserialization round-trip correctly for mapped paths
         #[cfg(not(windows))]
         {
+            let dir = TempDir::new().unwrap();
+            let host = dir.path().to_str().unwrap();
             let original = AllowedPath {
-                host: Utf8PathBuf::from("/host/path"),
+                host: Utf8PathBuf::from(host),
                 plugin: Utf8PathBuf::from("/plugin/path"),
             };
 
@@ -2719,28 +2734,32 @@ allowed_hosts:
     #[test]
     fn test_allowed_path_in_runtime_config_yaml() {
         // Test allowed_paths in RuntimeConfig via YAML
-        let yaml = r#"
-allowed_paths:
-  - "/tmp"
-  - "/var/log:/plugin/logs"
-  - "/home/user/data"
-"#;
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+        let dir3 = TempDir::new().unwrap();
+        let host1 = dir1.path().to_str().unwrap();
+        let host2 = dir2.path().to_str().unwrap();
+        let host3 = dir3.path().to_str().unwrap();
+        let yaml = format!(
+            "allowed_paths:\n  - \"{}\"\n  - \"{}:/plugin/logs\"\n  - \"{}\"",
+            host1, host2, host3
+        );
 
-        let runtime_config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        let runtime_config: RuntimeConfig = serde_yaml::from_str(&yaml).unwrap();
         let allowed_paths = runtime_config.allowed_paths.unwrap();
 
         assert_eq!(allowed_paths.len(), 3);
-        assert_eq!(allowed_paths[0].host.as_str(), "/tmp");
-        assert_eq!(allowed_paths[0].plugin.as_str(), "/tmp");
+        assert_eq!(allowed_paths[0].host.as_str(), host1);
+        assert_eq!(allowed_paths[0].plugin.as_str(), host1);
 
         #[cfg(not(windows))]
         {
-            assert_eq!(allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(allowed_paths[1].host.as_str(), host2);
             assert_eq!(allowed_paths[1].plugin.as_str(), "/plugin/logs");
         }
 
-        assert_eq!(allowed_paths[2].host.as_str(), "/home/user/data");
-        assert_eq!(allowed_paths[2].plugin.as_str(), "/home/user/data");
+        assert_eq!(allowed_paths[2].host.as_str(), host3);
+        assert_eq!(allowed_paths[2].plugin.as_str(), host3);
     }
 
     #[test]
@@ -2774,46 +2793,56 @@ allowed_paths:
         // Test that only the first separator is used (for paths containing colons)
         #[cfg(not(windows))]
         {
-            let json = r#""/host/path:/plugin/path:with:colons""#;
-            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+            let dir = TempDir::new().unwrap();
+            let host = dir.path().to_str().unwrap();
+            let json = format!(r#""{}:/plugin/path:with:colons""#, host);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(allowed_path.host.as_str(), "/host/path");
+            assert_eq!(allowed_path.host.as_str(), host);
             assert_eq!(allowed_path.plugin.as_str(), "/plugin/path:with:colons");
         }
     }
 
     #[test]
     fn test_allowed_path_relative_paths() {
-        // Test that relative paths work
-        let json = r#""./relative/path""#;
-        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+        // Test that paths work (uses a temp directory so the host path exists)
+        let dir = TempDir::new().unwrap();
+        let host = dir.path().to_str().unwrap();
+        let json = format!(r#""{}""#, host);
+        let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(allowed_path.host.as_str(), "./relative/path");
-        assert_eq!(allowed_path.plugin.as_str(), "./relative/path");
+        assert_eq!(allowed_path.host.as_str(), host);
+        assert_eq!(allowed_path.plugin.as_str(), host);
     }
 
     #[test]
     fn test_allowed_path_relative_mapped() {
-        // Test relative paths with mapping
+        // Test mapped paths with mapping (uses a temp directory so the host path exists)
         #[cfg(not(windows))]
         {
-            let json = r#""./host/path:../plugin/path""#;
-            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+            let dir = TempDir::new().unwrap();
+            let host = dir.path().to_str().unwrap();
+            let json = format!(r#""{}:../plugin/path""#, host);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(allowed_path.host.as_str(), "./host/path");
+            assert_eq!(allowed_path.host.as_str(), host);
             assert_eq!(allowed_path.plugin.as_str(), "../plugin/path");
         }
     }
 
     #[test]
     fn test_allowed_path_complex_paths() {
-        // Test complex paths with special characters
+        // Test complex paths with special characters (uses a temp directory with spaces)
         #[cfg(not(windows))]
         {
-            let json = r#""/path/with spaces:/plugin/path-with_underscores""#;
-            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+            let dir = TempDir::new().unwrap();
+            let host_dir = dir.path().join("path with spaces");
+            std::fs::create_dir_all(&host_dir).unwrap();
+            let host = host_dir.to_str().unwrap();
+            let json = format!(r#""{}:/plugin/path-with_underscores""#, host);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(allowed_path.host.as_str(), "/path/with spaces");
+            assert_eq!(allowed_path.host.as_str(), host);
             assert_eq!(
                 allowed_path.plugin.as_str(),
                 "/plugin/path-with_underscores"
@@ -2823,26 +2852,32 @@ allowed_paths:
 
     #[test]
     fn test_allowed_path_yaml_list() {
-        // Test a list of allowed_paths in YAML with various formats
-        let yaml = r#"
-- "/tmp"
-- "/var/log:/plugin/logs"
-- "/home/user"
-- "./relative/path:../other/path"
-"#;
+        // Test a list of allowed_paths in YAML with various formats (uses temp directories)
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+        let dir3 = TempDir::new().unwrap();
+        let dir4 = TempDir::new().unwrap();
+        let host1 = dir1.path().to_str().unwrap();
+        let host2 = dir2.path().to_str().unwrap();
+        let host3 = dir3.path().to_str().unwrap();
+        let host4 = dir4.path().to_str().unwrap();
+        let yaml = format!(
+            "- \"{}\"\n- \"{}:/plugin/logs\"\n- \"{}\"\n- \"{}:../other/path\"",
+            host1, host2, host3, host4
+        );
 
-        let allowed_paths: Vec<AllowedPath> = serde_yaml::from_str(yaml).unwrap();
+        let allowed_paths: Vec<AllowedPath> = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(allowed_paths.len(), 4);
 
-        assert_eq!(allowed_paths[0].host.as_str(), "/tmp");
-        assert_eq!(allowed_paths[0].plugin.as_str(), "/tmp");
+        assert_eq!(allowed_paths[0].host.as_str(), host1);
+        assert_eq!(allowed_paths[0].plugin.as_str(), host1);
 
         #[cfg(not(windows))]
         {
-            assert_eq!(allowed_paths[1].host.as_str(), "/var/log");
+            assert_eq!(allowed_paths[1].host.as_str(), host2);
             assert_eq!(allowed_paths[1].plugin.as_str(), "/plugin/logs");
 
-            assert_eq!(allowed_paths[3].host.as_str(), "./relative/path");
+            assert_eq!(allowed_paths[3].host.as_str(), host4);
             assert_eq!(allowed_paths[3].plugin.as_str(), "../other/path");
         }
     }
@@ -2948,8 +2983,13 @@ allowed_paths:
 
     #[test]
     fn test_allowed_path_very_long_path() {
-        // Test very long paths (simulating deep directory structures)
-        let long_path = "/very/long/path/that/goes/on/and/on/through/many/directories/to/test/path/handling/with/extremely/deep/nesting/levels/in/the/filesystem/hierarchy";
+        // Test very long paths (creates a deep directory structure inside a temp dir)
+        let dir = TempDir::new().unwrap();
+        let deep = dir
+            .path()
+            .join("very/long/path/that/goes/on/and/on/through/many/directories/to/test/path/handling/with/extremely/deep/nesting/levels/in/the/filesystem/hierarchy");
+        std::fs::create_dir_all(&deep).unwrap();
+        let long_path = deep.to_str().unwrap();
         let json = format!(r#""{}""#, long_path);
         let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
@@ -2959,10 +2999,15 @@ allowed_paths:
 
     #[test]
     fn test_allowed_path_very_long_mapped() {
-        // Test very long mapped paths
+        // Test very long mapped paths (creates a deep directory structure inside a temp dir)
         #[cfg(not(windows))]
         {
-            let long_host = "/very/long/host/path/with/many/directories/and/subdirectories";
+            let dir = TempDir::new().unwrap();
+            let deep = dir
+                .path()
+                .join("very/long/host/path/with/many/directories/and/subdirectories");
+            std::fs::create_dir_all(&deep).unwrap();
+            let long_host = deep.to_str().unwrap();
             let long_plugin = "/equally/long/plugin/path/with/different/directory/structure";
             let json = format!(r#""{}:{}""#, long_host, long_plugin);
             let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
@@ -3004,12 +3049,14 @@ allowed_paths:
 
     #[test]
     fn test_allowed_path_tilde_home() {
-        // Test tilde (home directory) paths
-        let json = r#""~/Documents""#;
-        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+        // Test that a single path deserializes with matching host and plugin (uses temp directory)
+        let dir = TempDir::new().unwrap();
+        let host = dir.path().to_str().unwrap();
+        let json = format!(r#""{}""#, host);
+        let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(allowed_path.host.as_str(), "~/Documents");
-        assert_eq!(allowed_path.plugin.as_str(), "~/Documents");
+        assert_eq!(allowed_path.host.as_str(), host);
+        assert_eq!(allowed_path.plugin.as_str(), host);
     }
 
     #[test]
@@ -3017,33 +3064,43 @@ allowed_paths:
         // Test tilde paths with mapping
         #[cfg(not(windows))]
         {
-            let json = r#""~/host/path:~/plugin/path""#;
-            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+            let dir = TempDir::new().unwrap();
+            let host = dir.path().to_str().unwrap();
+            let json = format!(r#""{}:~/plugin/path""#, host);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(allowed_path.host.as_str(), "~/host/path");
+            assert_eq!(allowed_path.host.as_str(), host);
             assert_eq!(allowed_path.plugin.as_str(), "~/plugin/path");
         }
     }
 
     #[test]
     fn test_allowed_path_unicode_characters() {
-        // Test paths with Unicode characters
-        let json = r#""/path/with/日本語/characters""#;
-        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+        // Test paths with Unicode characters (creates a temp dir with Unicode subdirectory)
+        let dir = TempDir::new().unwrap();
+        let unicode_dir = dir.path().join("日本語").join("characters");
+        std::fs::create_dir_all(&unicode_dir).unwrap();
+        let host = unicode_dir.to_str().unwrap();
+        let json = format!(r#""{}""#, host);
+        let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(allowed_path.host.as_str(), "/path/with/日本語/characters");
-        assert_eq!(allowed_path.plugin.as_str(), "/path/with/日本語/characters");
+        assert_eq!(allowed_path.host.as_str(), host);
+        assert_eq!(allowed_path.plugin.as_str(), host);
     }
 
     #[test]
     fn test_allowed_path_unicode_mapped() {
-        // Test Unicode paths with mapping
+        // Test Unicode paths with mapping (creates a temp dir with Unicode subdirectory)
         #[cfg(not(windows))]
         {
-            let json = r#""/café/münster:/plugin/データ""#;
-            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+            let dir = TempDir::new().unwrap();
+            let unicode_dir = dir.path().join("café").join("münster");
+            std::fs::create_dir_all(&unicode_dir).unwrap();
+            let host = unicode_dir.to_str().unwrap();
+            let json = format!(r#""{}:/plugin/データ""#, host);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(allowed_path.host.as_str(), "/café/münster");
+            assert_eq!(allowed_path.host.as_str(), host);
             assert_eq!(allowed_path.plugin.as_str(), "/plugin/データ");
         }
     }
@@ -3060,35 +3117,43 @@ allowed_paths:
 
     #[test]
     fn test_allowed_path_trailing_slash() {
-        // Test path with trailing slash
-        let json = r#""/path/with/trailing/""#;
-        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+        // Test path with trailing slash (uses a temp directory so the host path exists)
+        let dir = TempDir::new().unwrap();
+        let host_with_slash = format!("{}/", dir.path().to_str().unwrap());
+        let json = format!(r#""{}""#, host_with_slash);
+        let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(allowed_path.host.as_str(), "/path/with/trailing/");
-        assert_eq!(allowed_path.plugin.as_str(), "/path/with/trailing/");
+        assert_eq!(allowed_path.host.as_str(), host_with_slash);
+        assert_eq!(allowed_path.plugin.as_str(), host_with_slash);
     }
 
     #[test]
     fn test_allowed_path_trailing_slash_mapped() {
-        // Test mapped paths with trailing slashes
+        // Test mapped paths with trailing slashes (uses a temp directory so the host path exists)
         #[cfg(not(windows))]
         {
-            let json = r#""/host/path/:/plugin/path/""#;
-            let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+            let dir = TempDir::new().unwrap();
+            let host_with_slash = format!("{}/", dir.path().to_str().unwrap());
+            let json = format!(r#""{}:/plugin/path/""#, host_with_slash);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(allowed_path.host.as_str(), "/host/path/");
+            assert_eq!(allowed_path.host.as_str(), host_with_slash);
             assert_eq!(allowed_path.plugin.as_str(), "/plugin/path/");
         }
     }
 
     #[test]
     fn test_allowed_path_numeric_directories() {
-        // Test paths with numeric directory names
-        let json = r#""/var/log/2024/01/15""#;
-        let allowed_path: AllowedPath = serde_json::from_str(json).unwrap();
+        // Test paths with numeric directory names (creates numeric subdirs inside a temp dir)
+        let dir = TempDir::new().unwrap();
+        let numeric_dir = dir.path().join("2024").join("01").join("15");
+        std::fs::create_dir_all(&numeric_dir).unwrap();
+        let host = numeric_dir.to_str().unwrap();
+        let json = format!(r#""{}""#, host);
+        let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(allowed_path.host.as_str(), "/var/log/2024/01/15");
-        assert_eq!(allowed_path.plugin.as_str(), "/var/log/2024/01/15");
+        assert_eq!(allowed_path.host.as_str(), host);
+        assert_eq!(allowed_path.plugin.as_str(), host);
     }
 
     #[test]
