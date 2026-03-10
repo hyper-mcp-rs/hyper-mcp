@@ -52,7 +52,7 @@ pub struct PluginServiceInner {
     config: Config,
     logging_level: RwLock<LoggingLevel>,
     peer: SetOnce<Peer<RoleServer>>,
-    plugins: SetOnce<HashMap<PluginName, Box<dyn Plugin>>>,
+    plugins: DashMap<PluginName, Arc<dyn Plugin>>,
     tokens: DashMap<OauthCredentials, (AccessToken, Option<RefreshToken>)>,
     subscriptions: DashSet<String>,
 }
@@ -80,7 +80,7 @@ impl PluginService {
             config: config.clone(),
             logging_level: RwLock::new(LoggingLevel::Error),
             peer: SetOnce::new(),
-            plugins: SetOnce::new(),
+            plugins: DashMap::new(),
             tokens: DashMap::new(),
             subscriptions: DashSet::new(),
         });
@@ -96,7 +96,7 @@ impl PluginService {
         plugin_name: &PluginName,
         plugin_cfg: &PluginConfig,
         wasm_data: Vec<u8>,
-    ) -> Option<Box<dyn Plugin>> {
+    ) -> Option<Arc<dyn Plugin>> {
         tracing::info!(plugin = plugin_name.to_string(), "Loading plugin");
 
         let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
@@ -190,14 +190,14 @@ impl PluginService {
             }
         };
 
-        let plugin: Box<dyn Plugin> =
+        let plugin: Arc<dyn Plugin> =
             if extism_plugin.function_exists("call") && extism_plugin.function_exists("describe") {
-                Box::new(PluginV1::new(
+                Arc::new(PluginV1::new(
                     plugin_name.clone(),
                     Arc::new(Mutex::new(extism_plugin)),
                 ))
             } else {
-                Box::new(PluginV2::new(
+                Arc::new(PluginV2::new(
                     plugin_name.clone(),
                     Arc::new(Mutex::new(extism_plugin)),
                 ))
@@ -209,8 +209,6 @@ impl PluginService {
 
     #[tracing::instrument(skip_all)]
     async fn load_plugins(&self) -> Result<()> {
-        let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
-
         // Phase 1: Download all WASM data in parallel.
         let mut download_set = tokio::task::JoinSet::new();
 
@@ -272,10 +270,9 @@ impl PluginService {
                 continue;
             };
             if let Some(plugin) = self.load_plugin(plugin_name, plugin_cfg, wasm_data).await {
-                plugins.insert(plugin_name.clone(), plugin);
+                self.plugins.insert(plugin_name.clone(), plugin);
             }
         }
-        self.plugins.set(plugins).expect("Plugins already set");
         Ok(())
     }
 
@@ -283,7 +280,7 @@ impl PluginService {
         *self.logging_level.read().unwrap()
     }
 
-    pub fn set_logging_level(&self, level: LoggingLevel) {
+    fn set_logging_level(&self, level: LoggingLevel) {
         *self.logging_level.write().unwrap() = level;
     }
 }
@@ -338,17 +335,10 @@ impl ServerHandler for PluginService {
             nr
         };
 
-        let Some(plugins) = self.plugins.get() else {
-            return Err(McpError::internal_error(
-                "Plugins not initialized".to_string(),
-                None,
-            ));
-        };
-
-        let Some(plugin) = plugins.get(&plugin_name) else {
+        let Some(plugin) = self.plugins.get(&plugin_name) else {
             return Err(McpError::method_not_found::<CallToolRequestMethod>());
         };
-        plugin.call_tool(request, context).await
+        plugin.value().call_tool(request, context).await
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
@@ -439,17 +429,10 @@ impl ServerHandler for PluginService {
             }
         };
 
-        let Some(plugins) = self.plugins.get() else {
-            return Err(McpError::internal_error(
-                "Plugins not initialized".to_string(),
-                None,
-            ));
-        };
-
-        let Some(plugin) = plugins.get(&plugin_name) else {
+        let Some(plugin) = self.plugins.get(&plugin_name) else {
             return Err(McpError::method_not_found::<CallToolRequestMethod>());
         };
-        plugin.complete(request, context).await
+        plugin.value().complete(request, context).await
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
@@ -523,17 +506,10 @@ impl ServerHandler for PluginService {
             nr
         };
 
-        let Some(plugins) = self.plugins.get() else {
-            return Err(McpError::internal_error(
-                "Plugins not initialized".to_string(),
-                None,
-            ));
-        };
-
-        let Some(plugin) = plugins.get(&plugin_name) else {
+        let Some(plugin) = self.plugins.get(&plugin_name) else {
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         };
-        plugin.get_prompt(request, context).await
+        plugin.value().get_prompt(request, context).await
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
@@ -573,16 +549,12 @@ impl ServerHandler for PluginService {
                 None,
             ));
         }
-        let Some(plugins) = self.plugins.get() else {
-            return Err(McpError::internal_error(
-                "Plugins not initialized".to_string(),
-                None,
-            ));
-        };
-
-        let futures: Vec<_> = plugins
+        let futures: Vec<_> = self
+            .plugins
             .iter()
-            .map(|(plugin_name, plugin)| {
+            .map(|entry| {
+                let plugin_name = entry.key().clone();
+                let plugin = entry.value().clone();
                 let request = request.clone();
                 let context = context.clone();
                 async move { (plugin_name, plugin.list_prompts(request, context).await) }
@@ -595,7 +567,7 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin_prompts) in results {
             let plugin_prompts = plugin_prompts?;
-            let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
                     None,
@@ -616,7 +588,7 @@ impl ServerHandler for PluginService {
                     continue;
                 }
                 let mut new_prompt = prompt.clone();
-                new_prompt.name = create_namespaced_name(plugin_name, &prompt.name);
+                new_prompt.name = create_namespaced_name(&plugin_name, &prompt.name);
                 list_prompts_result.prompts.push(new_prompt);
             }
         }
@@ -639,16 +611,12 @@ impl ServerHandler for PluginService {
                 None,
             ));
         }
-        let Some(plugins) = self.plugins.get() else {
-            return Err(McpError::internal_error(
-                "Plugins not initialized".to_string(),
-                None,
-            ));
-        };
-
-        let futures: Vec<_> = plugins
+        let futures: Vec<_> = self
+            .plugins
             .iter()
-            .map(|(plugin_name, plugin)| {
+            .map(|entry| {
+                let plugin_name = entry.key().clone();
+                let plugin = entry.value().clone();
                 let request = request.clone();
                 let context = context.clone();
                 async move { (plugin_name, plugin.list_resources(request, context).await) }
@@ -661,7 +629,7 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin_resources) in results {
             let plugin_resources = plugin_resources?;
-            let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
                     None,
@@ -681,7 +649,7 @@ impl ServerHandler for PluginService {
                     continue;
                 }
                 let mut raw = resource.raw.clone();
-                raw.uri = create_namespaced_uri(plugin_name, &resource.uri)
+                raw.uri = create_namespaced_uri(&plugin_name, &resource.uri)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 list_resources_result.resources.push(Resource {
                     raw,
@@ -709,16 +677,12 @@ impl ServerHandler for PluginService {
             ));
         }
 
-        let Some(plugins) = self.plugins.get() else {
-            return Err(McpError::internal_error(
-                "Plugins not initialized".to_string(),
-                None,
-            ));
-        };
-
-        let futures: Vec<_> = plugins
+        let futures: Vec<_> = self
+            .plugins
             .iter()
-            .map(|(plugin_name, plugin)| {
+            .map(|entry| {
+                let plugin_name = entry.key().clone();
+                let plugin = entry.value().clone();
                 let request = request.clone();
                 let context = context.clone();
                 async move {
@@ -736,7 +700,7 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin_resource_templates) in results {
             let plugin_resource_templates = plugin_resource_templates?;
-            let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
                     None,
@@ -757,7 +721,7 @@ impl ServerHandler for PluginService {
                 }
                 let mut raw = resource_template.raw.clone();
                 raw.uri_template =
-                    create_namespaced_uri(plugin_name, &resource_template.uri_template)
+                    create_namespaced_uri(&plugin_name, &resource_template.uri_template)
                         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 list_resource_templates_result
                     .resource_templates
@@ -786,16 +750,12 @@ impl ServerHandler for PluginService {
                 None,
             ));
         }
-        let Some(plugins) = self.plugins.get() else {
-            return Err(McpError::internal_error(
-                "Plugins not initialized".to_string(),
-                None,
-            ));
-        };
-
-        let futures: Vec<_> = plugins
+        let futures: Vec<_> = self
+            .plugins
             .iter()
-            .map(|(plugin_name, plugin)| {
+            .map(|entry| {
+                let plugin_name = entry.key().clone();
+                let plugin = entry.value().clone();
                 let request = request.clone();
                 let context = context.clone();
                 async move { (plugin_name, plugin.list_tools(request, context).await) }
@@ -808,7 +768,7 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin_tools) in results {
             let plugin_tools = plugin_tools?;
-            let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
                     None,
@@ -830,7 +790,7 @@ impl ServerHandler for PluginService {
                 }
                 let mut new_tool = tool.clone();
                 new_tool.name =
-                    std::borrow::Cow::Owned(create_namespaced_name(plugin_name, &tool.name));
+                    std::borrow::Cow::Owned(create_namespaced_name(&plugin_name, &tool.name));
                 list_tools_result.tools.push(new_tool);
             }
         }
@@ -849,11 +809,12 @@ impl ServerHandler for PluginService {
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     async fn on_roots_list_changed(&self, context: NotificationContext<RoleServer>) -> () {
-        let Some(plugins) = self.plugins.get() else {
-            tracing::error!("Plugins not initialized");
-            return;
-        };
-        for (plugin_name, plugin) in plugins.iter() {
+        let plugins: Vec<_> = self
+            .plugins
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        for (plugin_name, plugin) in plugins {
             if let Err(e) = plugin.on_roots_list_changed(context.clone()).await {
                 tracing::error!(plugin = plugin_name.to_string(), error = ?e, "Failed to notify plugin of roots list change");
             }
@@ -901,17 +862,10 @@ impl ServerHandler for PluginService {
 
         let request = ReadResourceRequestParams::new(resource_uri.clone());
 
-        let Some(plugins) = self.plugins.get() else {
-            return Err(McpError::internal_error(
-                "Plugins not initialized".to_string(),
-                None,
-            ));
-        };
-
-        let Some(plugin) = plugins.get(&plugin_name) else {
+        let Some(plugin) = self.plugins.get(&plugin_name) else {
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         };
-        plugin.read_resource(request, context).await
+        plugin.value().read_resource(request, context).await
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
@@ -1798,7 +1752,7 @@ mod tests {
             config,
             logging_level: RwLock::new(LoggingLevel::Info),
             peer: SetOnce::new(),
-            plugins: SetOnce::new(),
+            plugins: DashMap::new(),
             tokens: DashMap::new(),
             subscriptions: DashSet::new(),
         }))
@@ -1868,10 +1822,7 @@ plugins: {}
         );
 
         let service = result.unwrap();
-        let Some(plugins) = service.plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(plugins.is_empty(), "Should have no plugins loaded");
+        assert!(service.plugins.is_empty(), "Should have no plugins loaded");
     }
 
     #[tokio::test]
@@ -1907,11 +1858,12 @@ plugins:
         );
 
         let service = result.unwrap();
-        let Some(plugins) = service.plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert_eq!(plugins.len(), 1, "Should have one plugin loaded");
-        assert!(plugins.contains_key(&PluginName::from_str("time_plugin").unwrap()));
+        assert_eq!(service.plugins.len(), 1, "Should have one plugin loaded");
+        assert!(
+            service
+                .plugins
+                .contains_key(&PluginName::from_str("time_plugin").unwrap())
+        );
     }
 
     #[tokio::test]
@@ -1936,9 +1888,8 @@ plugins:
             "Service should start successfully, skipping the missing plugin"
         );
         let service = result.unwrap();
-        let plugins = service.plugins.get().expect("Plugins should be set");
         assert!(
-            plugins.is_empty(),
+            service.plugins.is_empty(),
             "No plugins should be loaded when the file doesn't exist"
         );
     }
@@ -2090,10 +2041,10 @@ plugins:
         )
         .await;
         // Verify the service was created successfully
-        let Some(plugins) = server.service().plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(!plugins.is_empty(), "Should have loaded plugin");
+        assert!(
+            !server.service().plugins.is_empty(),
+            "Should have loaded plugin"
+        );
 
         // Test the list_tools function
         let request = None; // No pagination for this test
@@ -2208,10 +2159,10 @@ plugins:
             ClientInfo::default(),
         )
         .await;
-        let Some(plugins) = server.service().plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(!plugins.is_empty(), "Should have loaded plugin");
+        assert!(
+            !server.service().plugins.is_empty(),
+            "Should have loaded plugin"
+        );
 
         // Test the list_tools function with skip_tools configuration
         let request = None; // No pagination for this test
@@ -2248,10 +2199,10 @@ plugins:
         {
             let plugin_name: PluginName = "time_plugin".parse().unwrap();
             assert!(
-                plugins.contains_key(&plugin_name),
+                server.service().plugins.contains_key(&plugin_name),
                 "Plugin 'time_plugin' should still be loaded even with skip_tools configuration"
             );
-        } // plugins guard dropped here
+        }
 
         // Verify the plugin configuration includes skip_tools
         let plugin_name: PluginName = "time_plugin".parse().unwrap();
@@ -2361,10 +2312,10 @@ plugins:
             ClientInfo::default(),
         )
         .await;
-        let Some(plugins) = server.service().plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(!plugins.is_empty(), "Should have loaded plugin");
+        assert!(
+            !server.service().plugins.is_empty(),
+            "Should have loaded plugin"
+        );
 
         // Test calling the time tool with get_time_utc operation
         let request = CallToolRequestParams::new("time_plugin-time").with_arguments({
@@ -2452,10 +2403,10 @@ plugins:
             ClientInfo::default(),
         )
         .await;
-        let Some(plugins) = server.service().plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(!plugins.is_empty(), "Should have loaded plugin");
+        assert!(
+            !server.service().plugins.is_empty(),
+            "Should have loaded plugin"
+        );
 
         // Test calling the skipped time tool
         let request = CallToolRequestParams::new("time_plugin-time").with_arguments({
@@ -2542,13 +2493,17 @@ plugins:
         let config = load_config(&cli).await.unwrap();
 
         let service = PluginService::new(&config).await.unwrap();
-        let Some(plugins) = service.plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-
-        assert_eq!(plugins.len(), 2, "Should have loaded two plugins");
-        assert!(plugins.contains_key(&PluginName::from_str("time_plugin_1").unwrap()));
-        assert!(plugins.contains_key(&PluginName::from_str("time_plugin_2").unwrap()));
+        assert_eq!(service.plugins.len(), 2, "Should have loaded two plugins");
+        assert!(
+            service
+                .plugins
+                .contains_key(&PluginName::from_str("time_plugin_1").unwrap())
+        );
+        assert!(
+            service
+                .plugins
+                .contains_key(&PluginName::from_str("time_plugin_2").unwrap())
+        );
     }
 
     #[tokio::test]
@@ -3293,10 +3248,10 @@ plugins:
         )
         .await;
 
-        let Some(plugins) = server.service().plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(!plugins.is_empty(), "Should have loaded rstime plugin");
+        assert!(
+            !server.service().plugins.is_empty(),
+            "Should have loaded rstime plugin"
+        );
 
         let request = None;
         let ctx = create_test_ctx(&server);
@@ -3364,10 +3319,10 @@ plugins:
         )
         .await;
 
-        let Some(plugins) = server.service().plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(!plugins.is_empty(), "Should have loaded rstime plugin");
+        assert!(
+            !server.service().plugins.is_empty(),
+            "Should have loaded rstime plugin"
+        );
 
         let request = None;
         let ctx = create_test_ctx(&server);
@@ -3436,10 +3391,10 @@ plugins:
         )
         .await;
 
-        let Some(plugins) = server.service().plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(!plugins.is_empty(), "Should have loaded rstime plugin");
+        assert!(
+            !server.service().plugins.is_empty(),
+            "Should have loaded rstime plugin"
+        );
 
         let request = None;
         let ctx = create_test_ctx(&server);
@@ -3515,10 +3470,10 @@ plugins:
         )
         .await;
 
-        let Some(plugins) = server.service().plugins.get() else {
-            panic!("Plugins should be initialized");
-        };
-        assert!(!plugins.is_empty(), "Should have loaded rstime plugin");
+        assert!(
+            !server.service().plugins.is_empty(),
+            "Should have loaded rstime plugin"
+        );
 
         let request = None;
         let ctx = create_test_ctx(&server);
