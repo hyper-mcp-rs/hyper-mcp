@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{DurationSeconds, serde_as};
 use std::{
-    collections::HashMap,
     fmt::Debug,
     ops::Deref,
     sync::{
@@ -95,9 +94,37 @@ impl PluginService {
         &self,
         plugin_name: &PluginName,
         plugin_cfg: &PluginConfig,
-        wasm_data: Vec<u8>,
     ) -> Option<Arc<dyn Plugin>> {
-        tracing::info!(plugin = plugin_name.to_string(), "Loading plugin");
+        let url = &plugin_cfg.url;
+        tracing::info!(plugin = %plugin_name, url = %url, "Loading plugin");
+
+        let wasm_data = match url.scheme() {
+            "file" => tokio::fs::read(url.path())
+                .await
+                .map_err(anyhow::Error::from),
+            "http" => wasm::http::load_wasm(url, &None).await,
+            "https" => wasm::http::load_wasm(url, &self.config.auths).await,
+            "oci" => wasm::oci::load_wasm(url, &self.config.oci).await,
+            "s3" => wasm::s3::load_wasm(url).await,
+            unsupported => {
+                tracing::error!(scheme = unsupported, "Unsupported plugin URL scheme");
+                Err(anyhow::anyhow!(
+                    "Unsupported plugin URL scheme: {unsupported}"
+                ))
+            }
+        };
+
+        let wasm_data = match wasm_data {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!(
+                    plugin = %plugin_name,
+                    error = %e,
+                    "Failed to download plugin WASM data, skipping"
+                );
+                return None;
+            }
+        };
 
         let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
         if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
@@ -209,70 +236,26 @@ impl PluginService {
 
     #[tracing::instrument(skip_all)]
     async fn load_plugins(&self) -> Result<()> {
-        // Phase 1: Download all WASM data in parallel.
-        let mut download_set = tokio::task::JoinSet::new();
+        let mut join_set = tokio::task::JoinSet::new();
 
         for (plugin_name, plugin_cfg) in &self.config.plugins {
+            let service = self.clone();
             let plugin_name = plugin_name.clone();
-            let url = plugin_cfg.url.clone();
-            let auths = self.config.auths.clone();
-            let oci_config = self.config.oci.clone();
+            let plugin_cfg = plugin_cfg.clone();
 
-            tracing::info!(
-                plugin = plugin_name.to_string(),
-                url = url.to_string(),
-                "Downloading wasm for plugin"
-            );
-
-            download_set.spawn(async move {
-                let wasm_data = match url.scheme() {
-                    "file" => tokio::fs::read(url.path())
-                        .await
-                        .map_err(anyhow::Error::from),
-                    "http" => wasm::http::load_wasm(&url, &None).await,
-                    "https" => wasm::http::load_wasm(&url, &auths).await,
-                    "oci" => wasm::oci::load_wasm(&url, &oci_config).await,
-                    "s3" => wasm::s3::load_wasm(&url).await,
-                    unsupported => {
-                        tracing::error!(scheme = unsupported, "Unsupported plugin URL scheme");
-                        Err(anyhow::anyhow!(
-                            "Unsupported plugin URL scheme: {unsupported}"
-                        ))
-                    }
-                };
-                (plugin_name, wasm_data)
+            join_set.spawn(async move {
+                if let Some(plugin) = service.load_plugin(&plugin_name, &plugin_cfg).await {
+                    service.plugins.insert(plugin_name, plugin);
+                }
             });
         }
 
-        let mut downloaded: HashMap<PluginName, Vec<u8>> = HashMap::new();
-        while let Some(result) = download_set.join_next().await {
-            match result {
-                Ok((plugin_name, Ok(data))) => {
-                    downloaded.insert(plugin_name, data);
-                }
-                Ok((plugin_name, Err(e))) => {
-                    tracing::error!(
-                        plugin = plugin_name.to_string(),
-                        error = %e,
-                        "Failed to download plugin WASM data, skipping"
-                    );
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "Plugin download task failed");
-                }
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                tracing::error!(error = %e, "Plugin load task failed");
             }
         }
 
-        // Phase 2: Build manifests and create plugins (sequential, CPU-bound).
-        for (plugin_name, plugin_cfg) in &self.config.plugins {
-            let Some(wasm_data) = downloaded.remove(plugin_name) else {
-                // Download was skipped due to an error in phase 1
-                continue;
-            };
-            if let Some(plugin) = self.load_plugin(plugin_name, plugin_cfg, wasm_data).await {
-                self.plugins.insert(plugin_name.clone(), plugin);
-            }
-        }
         Ok(())
     }
 
