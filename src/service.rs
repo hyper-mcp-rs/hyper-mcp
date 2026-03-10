@@ -1,5 +1,5 @@
 use crate::{
-    config::{Config, KeyringEntryId},
+    config::{Config, KeyringEntryId, PluginConfig},
     naming::{
         PluginName, create_namespaced_name, create_namespaced_uri, parse_namespaced_name,
         parse_namespaced_uri,
@@ -51,7 +51,6 @@ fn next_call_id() -> u64 {
 pub struct PluginServiceInner {
     config: Config,
     logging_level: RwLock<LoggingLevel>,
-    names: SetOnce<HashMap<Uuid, PluginName>>,
     peer: SetOnce<Peer<RoleServer>>,
     plugins: SetOnce<HashMap<PluginName, Box<dyn Plugin>>>,
     tokens: DashMap<OauthCredentials, (AccessToken, Option<RefreshToken>)>,
@@ -80,7 +79,6 @@ impl PluginService {
         let inner = Arc::new(PluginServiceInner {
             config: config.clone(),
             logging_level: RwLock::new(LoggingLevel::Error),
-            names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),
             tokens: DashMap::new(),
@@ -93,8 +91,124 @@ impl PluginService {
     }
 
     #[tracing::instrument(skip_all)]
+    async fn load_plugin(
+        &self,
+        plugin_name: &PluginName,
+        plugin_cfg: &PluginConfig,
+        wasm_data: Vec<u8>,
+    ) -> Option<Box<dyn Plugin>> {
+        tracing::info!(plugin = plugin_name.to_string(), "Loading plugin");
+
+        let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
+        if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
+            if let Some(hosts) = &runtime_cfg.allowed_hosts {
+                for host in hosts {
+                    manifest = manifest.with_allowed_host(host);
+                }
+            }
+            if let Some(paths) = &runtime_cfg.allowed_paths {
+                for path in paths {
+                    // host path will be available in the plugin at the plugin path
+                    manifest = manifest.with_allowed_path(path.host.to_string(), &path.plugin);
+                }
+            }
+
+            // Add plugin configurations if present
+            if let Some(env_vars) = &runtime_cfg.env_vars {
+                fn check_env_reference(value: &str) -> String {
+                    // Check if the value matches the pattern ${ENVVARKEY}
+                    if let Some(stripped) =
+                        value.strip_prefix("${").and_then(|s| s.strip_suffix("}"))
+                    {
+                        // Try to get the environment variable
+                        match std::env::var(stripped) {
+                            Ok(env_value) => {
+                                tracing::debug!(
+                                    var = stripped,
+                                    "Resolved environment variable reference to actual value"
+                                );
+                                env_value
+                            }
+                            Err(_) => {
+                                tracing::warn!(
+                                    var = stripped,
+                                    value = value,
+                                    "Environment variable not found, keeping original value"
+                                );
+                                value.to_string()
+                            }
+                        }
+                    } else {
+                        value.to_string()
+                    }
+                }
+
+                for (key, value) in env_vars {
+                    let resolved_value = check_env_reference(value);
+                    manifest = manifest.with_config_key(key, &resolved_value);
+                }
+            }
+
+            if let Some(memory_limit) = &runtime_cfg.memory_limit {
+                // Wasm page size 64KiB, convert to number of pages
+                let num_pages = memory_limit.as_u64() / (64 * 1024);
+                manifest = manifest.with_memory_max(num_pages as u32);
+            }
+        }
+        let ctx = host_fns::PluginServiceContext {
+            handle: Handle::current(),
+            plugin_name: plugin_name.clone(),
+            plugin_service: self.clone(),
+        };
+        let extism_plugin = match extism::Plugin::new(
+            &manifest,
+            [
+                host_fns::create_elicitation(ctx.clone()),
+                host_fns::create_message(ctx.clone()),
+                host_fns::get_access_token(ctx.clone()),
+                host_fns::get_keyring_secret(ctx.clone()),
+                host_fns::list_roots(ctx.clone()),
+                host_fns::notify_logging_message(ctx.clone()),
+                host_fns::notify_progress(ctx.clone()),
+                host_fns::notify_prompt_list_changed(ctx.clone()),
+                host_fns::notify_resource_list_changed(ctx.clone()),
+                host_fns::notify_resource_updated(ctx.clone()),
+                host_fns::notify_tool_list_changed(ctx.clone()),
+                host_fns::notify_url_elicitation_completed(ctx.clone()),
+            ],
+            true,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(
+                    plugin = plugin_name.to_string(),
+                    error = ?e,
+                    url = %plugin_cfg.url,
+                    "Failed to create extism plugin, skipping"
+                );
+                return None;
+            }
+        };
+
+        let plugin: Box<dyn Plugin> =
+            if extism_plugin.function_exists("call") && extism_plugin.function_exists("describe") {
+                Box::new(PluginV1::new(
+                    plugin_name.clone(),
+                    Arc::new(Mutex::new(extism_plugin)),
+                ))
+            } else {
+                Box::new(PluginV2::new(
+                    plugin_name.clone(),
+                    Arc::new(Mutex::new(extism_plugin)),
+                ))
+            };
+
+        tracing::info!(plugin = plugin_name.to_string(), "Loaded plugin");
+        Some(plugin)
+    }
+
+    #[tracing::instrument(skip_all)]
     async fn load_plugins(&self) -> Result<()> {
-        let mut names = HashMap::new();
         let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
 
         // Phase 1: Download all WASM data in parallel.
@@ -153,123 +267,14 @@ impl PluginService {
 
         // Phase 2: Build manifests and create plugins (sequential, CPU-bound).
         for (plugin_name, plugin_cfg) in &self.config.plugins {
-            tracing::info!(plugin = plugin_name.to_string(), "Loading plugin");
             let Some(wasm_data) = downloaded.remove(plugin_name) else {
                 // Download was skipped due to an error in phase 1
                 continue;
             };
-
-            let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
-            if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
-                if let Some(hosts) = &runtime_cfg.allowed_hosts {
-                    for host in hosts {
-                        manifest = manifest.with_allowed_host(host);
-                    }
-                }
-                if let Some(paths) = &runtime_cfg.allowed_paths {
-                    for path in paths {
-                        // host path will be available in the plugin at the plugin path
-                        manifest = manifest.with_allowed_path(path.host.to_string(), &path.plugin);
-                    }
-                }
-
-                // Add plugin configurations if present
-                if let Some(env_vars) = &runtime_cfg.env_vars {
-                    fn check_env_reference(value: &str) -> String {
-                        // Check if the value matches the pattern ${ENVVARKEY}
-                        if let Some(stripped) =
-                            value.strip_prefix("${").and_then(|s| s.strip_suffix("}"))
-                        {
-                            // Try to get the environment variable
-                            match std::env::var(stripped) {
-                                Ok(env_value) => {
-                                    tracing::debug!(
-                                        var = stripped,
-                                        "Resolved environment variable reference to actual value"
-                                    );
-                                    env_value
-                                }
-                                Err(_) => {
-                                    tracing::warn!(
-                                        var = stripped,
-                                        value = value,
-                                        "Environment variable not found, keeping original value"
-                                    );
-                                    value.to_string()
-                                }
-                            }
-                        } else {
-                            value.to_string()
-                        }
-                    }
-
-                    for (key, value) in env_vars {
-                        let resolved_value = check_env_reference(value);
-                        manifest = manifest.with_config_key(key, &resolved_value);
-                    }
-                }
-
-                if let Some(memory_limit) = &runtime_cfg.memory_limit {
-                    // Wasm page size 64KiB, convert to number of pages
-                    let num_pages = memory_limit.as_u64() / (64 * 1024);
-                    manifest = manifest.with_memory_max(num_pages as u32);
-                }
+            if let Some(plugin) = self.load_plugin(plugin_name, plugin_cfg, wasm_data).await {
+                plugins.insert(plugin_name.clone(), plugin);
             }
-            let ctx = host_fns::PluginServiceContext {
-                handle: Handle::current(),
-                plugin_name: plugin_name.clone(),
-                plugin_service: self.clone(),
-            };
-            let extism_plugin = match extism::Plugin::new(
-                &manifest,
-                [
-                    host_fns::create_elicitation(ctx.clone()),
-                    host_fns::create_message(ctx.clone()),
-                    host_fns::get_access_token(ctx.clone()),
-                    host_fns::get_keyring_secret(ctx.clone()),
-                    host_fns::list_roots(ctx.clone()),
-                    host_fns::notify_logging_message(ctx.clone()),
-                    host_fns::notify_progress(ctx.clone()),
-                    host_fns::notify_prompt_list_changed(ctx.clone()),
-                    host_fns::notify_resource_list_changed(ctx.clone()),
-                    host_fns::notify_resource_updated(ctx.clone()),
-                    host_fns::notify_tool_list_changed(ctx.clone()),
-                    host_fns::notify_url_elicitation_completed(ctx.clone()),
-                ],
-                true,
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(
-                        plugin = plugin_name.to_string(),
-                        error = ?e,
-                        url = %plugin_cfg.url,
-                        "Failed to create extism plugin, skipping"
-                    );
-                    continue;
-                }
-            };
-
-            let plugin_id = extism_plugin.id;
-            let plugin: Box<dyn Plugin> = if extism_plugin.function_exists("call")
-                && extism_plugin.function_exists("describe")
-            {
-                Box::new(PluginV1::new(
-                    plugin_name.clone(),
-                    Arc::new(Mutex::new(extism_plugin)),
-                ))
-            } else {
-                Box::new(PluginV2::new(
-                    plugin_name.clone(),
-                    Arc::new(Mutex::new(extism_plugin)),
-                ))
-            };
-
-            names.insert(plugin_id, plugin_name.clone());
-            plugins.insert(plugin_name.clone(), plugin);
-            tracing::info!(plugin = plugin_name.to_string(), "Loaded plugin");
         }
-        self.names.set(names).expect("Names already set");
         self.plugins.set(plugins).expect("Plugins already set");
         Ok(())
     }
@@ -1792,7 +1797,6 @@ mod tests {
         PluginService(Arc::new(PluginServiceInner {
             config,
             logging_level: RwLock::new(LoggingLevel::Info),
-            names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),
             tokens: DashMap::new(),
