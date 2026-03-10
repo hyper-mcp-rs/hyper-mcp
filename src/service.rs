@@ -90,11 +90,7 @@ impl PluginService {
     }
 
     #[tracing::instrument(skip_all)]
-    async fn load_plugin(
-        &self,
-        plugin_name: &PluginName,
-        plugin_cfg: &PluginConfig,
-    ) -> Option<Arc<dyn Plugin>> {
+    async fn load_plugin(&self, plugin_name: &PluginName, plugin_cfg: &PluginConfig) -> Result<()> {
         let url = &plugin_cfg.url;
         tracing::info!(plugin = %plugin_name, url = %url, "Loading plugin");
 
@@ -108,23 +104,11 @@ impl PluginService {
             "s3" => wasm::s3::load_wasm(url).await,
             unsupported => {
                 tracing::error!(scheme = unsupported, "Unsupported plugin URL scheme");
-                Err(anyhow::anyhow!(
+                return Err(anyhow::anyhow!(
                     "Unsupported plugin URL scheme: {unsupported}"
-                ))
+                ));
             }
-        };
-
-        let wasm_data = match wasm_data {
-            Ok(data) => data,
-            Err(e) => {
-                tracing::error!(
-                    plugin = %plugin_name,
-                    error = %e,
-                    "Failed to download plugin WASM data, skipping"
-                );
-                return None;
-            }
-        };
+        }?;
 
         let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
         if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
@@ -187,7 +171,7 @@ impl PluginService {
             plugin_name: plugin_name.clone(),
             plugin_service: self.clone(),
         };
-        let extism_plugin = match extism::Plugin::new(
+        let extism_plugin = extism::Plugin::new(
             &manifest,
             [
                 host_fns::create_elicitation(ctx.clone()),
@@ -204,18 +188,7 @@ impl PluginService {
                 host_fns::notify_url_elicitation_completed(ctx.clone()),
             ],
             true,
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(
-                    plugin = plugin_name.to_string(),
-                    error = ?e,
-                    url = %plugin_cfg.url,
-                    "Failed to create extism plugin, skipping"
-                );
-                return None;
-            }
-        };
+        )?;
 
         let plugin: Arc<dyn Plugin> =
             if extism_plugin.function_exists("call") && extism_plugin.function_exists("describe") {
@@ -230,8 +203,9 @@ impl PluginService {
                 ))
             };
 
+        self.plugins.insert(plugin_name.clone(), plugin);
         tracing::info!(plugin = plugin_name.to_string(), "Loaded plugin");
-        Some(plugin)
+        Ok(())
     }
 
     #[tracing::instrument(skip_all)]
@@ -244,15 +218,15 @@ impl PluginService {
             let plugin_cfg = plugin_cfg.clone();
 
             join_set.spawn(async move {
-                if let Some(plugin) = service.load_plugin(&plugin_name, &plugin_cfg).await {
-                    service.plugins.insert(plugin_name, plugin);
+                if let Err(e) = service.load_plugin(&plugin_name, &plugin_cfg).await {
+                    tracing::error!(error = %e, "Failed to load {plugin_name}, skipping...")
                 }
             });
         }
 
         while let Some(result) = join_set.join_next().await {
             if let Err(e) = result {
-                tracing::error!(error = %e, "Plugin load task failed");
+                tracing::error!(error = %e, "Plugin load failed");
             }
         }
 
@@ -1667,6 +1641,7 @@ mod tests {
         service::{RoleClient, RunningService, Service, serve_client, serve_server},
     };
     use std::{
+        collections::HashMap,
         path::PathBuf,
         str::FromStr,
         sync::atomic::{AtomicUsize, Ordering},
