@@ -283,6 +283,17 @@ impl PluginService {
     fn set_logging_level(&self, level: LoggingLevel) {
         *self.logging_level.write().unwrap() = level;
     }
+
+    #[tracing::instrument(skip_all)]
+    fn unload_plugin(&self, plugin_name: &PluginName) -> bool {
+        if self.plugins.remove(plugin_name).is_some() {
+            tracing::info!(plugin = %plugin_name, "Unloaded plugin");
+            true
+        } else {
+            tracing::warn!(plugin = %plugin_name, "Plugin not found, nothing to unload");
+            false
+        }
+    }
 }
 
 impl ServerHandler for PluginService {
