@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
         let _span = span.enter();
         let cli = cli::Cli::parse();
         tracing::debug!("Loading config from {:?}", cli);
-        let config = config::load_config(&cli).await?;
+        let config = config::Config::load(&cli).await?;
         tracing::info!("Starting hyper-mcp");
         let service = service::PluginService::new(&config).await?;
         let ct = CancellationToken::new();

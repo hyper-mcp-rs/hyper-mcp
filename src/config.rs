@@ -55,9 +55,80 @@ pub struct Config {
     pub auths: Option<HashMap<Url, AuthConfig>>,
 
     #[serde(default)]
+    pub dynamic_loading: bool,
+
+    #[serde(default)]
     pub oci: OciConfig,
 
     pub plugins: DashMap<PluginName, PluginConfig>,
+}
+
+impl Config {
+    pub async fn load(cli: &Cli) -> Result<Config> {
+        // Get default config path in the user's config directory
+        let default_config_path = dirs::config_dir()
+            .map(|mut path| {
+                path.push("hyper-mcp");
+                path.push("config.json");
+                path
+            })
+            .unwrap();
+
+        let config_path = cli.config_file.as_ref().unwrap_or(&default_config_path);
+        if !config_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Config file not found at: {}. Please create a config file first.",
+                config_path.display()
+            ));
+        }
+        tracing::info!("Using config file at {}", config_path.display());
+        let ext = config_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let content = tokio::fs::read_to_string(config_path)
+            .await
+            .with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
+
+        let mut config: Config = match ext {
+            "json" => serde_json::from_str(&content)?,
+            "yaml" | "yml" => serde_yaml::from_str(&content)?,
+            "toml" => toml::from_str(&content)?,
+            _ => return Err(anyhow::anyhow!("Unsupported config format: {ext}")),
+        };
+
+        let mut oci = config.oci.clone();
+
+        if let Some(skip) = cli.insecure_skip_signature {
+            oci.insecure_skip_signature = skip;
+        }
+        if let Some(use_tuf) = cli.use_sigstore_tuf_data {
+            oci.use_sigstore_tuf_data = use_tuf;
+        }
+        if let Some(rekor_keys) = &cli.rekor_pub_keys {
+            oci.rekor_pub_keys = Some(rekor_keys.clone());
+        }
+        if let Some(fulcio_certs) = &cli.fulcio_certs {
+            oci.fulcio_certs = Some(fulcio_certs.clone());
+        }
+        if let Some(issuer) = &cli.cert_issuer {
+            oci.cert_issuer = Some(issuer.clone());
+        }
+        if let Some(email) = &cli.cert_email {
+            oci.cert_email = Some(email.clone());
+        }
+        if let Some(url) = &cli.cert_url {
+            oci.cert_url = Some(url.clone());
+        }
+        config.oci = oci;
+
+        if let Some(dynamic_loading) = &cli.dynamic_loading {
+            config.dynamic_loading = dynamic_loading.clone();
+        }
+
+        Ok(config)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -249,68 +320,6 @@ pub struct RuntimeConfig {
     pub memory_limit: Option<ByteSize>,
 }
 
-pub async fn load_config(cli: &Cli) -> Result<Config> {
-    // Get default config path in the user's config directory
-    let default_config_path = dirs::config_dir()
-        .map(|mut path| {
-            path.push("hyper-mcp");
-            path.push("config.json");
-            path
-        })
-        .unwrap();
-
-    let config_path = cli.config_file.as_ref().unwrap_or(&default_config_path);
-    if !config_path.exists() {
-        return Err(anyhow::anyhow!(
-            "Config file not found at: {}. Please create a config file first.",
-            config_path.display()
-        ));
-    }
-    tracing::info!("Using config file at {}", config_path.display());
-    let ext = config_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-
-    let content = tokio::fs::read_to_string(config_path)
-        .await
-        .with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
-
-    let mut config: Config = match ext {
-        "json" => serde_json::from_str(&content)?,
-        "yaml" | "yml" => serde_yaml::from_str(&content)?,
-        "toml" => toml::from_str(&content)?,
-        _ => return Err(anyhow::anyhow!("Unsupported config format: {ext}")),
-    };
-
-    let mut oci = config.oci.clone();
-
-    if let Some(skip) = cli.insecure_skip_signature {
-        oci.insecure_skip_signature = skip;
-    }
-    if let Some(use_tuf) = cli.use_sigstore_tuf_data {
-        oci.use_sigstore_tuf_data = use_tuf;
-    }
-    if let Some(rekor_keys) = &cli.rekor_pub_keys {
-        oci.rekor_pub_keys = Some(rekor_keys.clone());
-    }
-    if let Some(fulcio_certs) = &cli.fulcio_certs {
-        oci.fulcio_certs = Some(fulcio_certs.clone());
-    }
-    if let Some(issuer) = &cli.cert_issuer {
-        oci.cert_issuer = Some(issuer.clone());
-    }
-    if let Some(email) = &cli.cert_email {
-        oci.cert_email = Some(email.clone());
-    }
-    if let Some(url) = &cli.cert_url {
-        oci.cert_url = Some(url.clone());
-    }
-    config.oci = oci;
-
-    Ok(config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,7 +386,7 @@ mod tests {
         };
 
         // Load the config
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_ok(),
             "Failed to load valid YAML config: {:?}",
@@ -458,7 +467,7 @@ mod tests {
         };
 
         // Load the config
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
 
         assert!(config_result.is_ok(), "Failed to load valid JSON config");
 
@@ -509,7 +518,7 @@ mod tests {
         };
 
         // Load the config
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_err(),
             "Expected error for invalid plugin name"
@@ -530,7 +539,7 @@ mod tests {
         };
 
         // Load the config
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(config_result.is_err(), "Expected error for invalid URL");
 
         let error = config_result.unwrap_err();
@@ -555,7 +564,7 @@ mod tests {
         };
 
         // Load the config
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_err(),
             "Expected error for invalid structure"
@@ -576,7 +585,7 @@ mod tests {
         };
 
         // Load the config
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_err(),
             "Expected error for nonexistent file"
@@ -602,7 +611,7 @@ mod tests {
         };
 
         // Load the config
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_err(),
             "Expected error for unsupported extension"
@@ -901,7 +910,7 @@ plugins:
             ..Default::default()
         };
 
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_ok(),
             "Failed to load config with auths from YAML"
@@ -946,7 +955,7 @@ plugins:
             ..Default::default()
         };
 
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_ok(),
             "Failed to load config with auths from JSON"
@@ -983,7 +992,7 @@ plugins:
             ..Default::default()
         };
 
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_err(),
             "Expected error for invalid auth config"
@@ -1133,7 +1142,7 @@ plugins:
             ..Default::default()
         };
 
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_ok(),
             "Documentation YAML example should be valid"
@@ -1214,7 +1223,7 @@ plugins:
             ..Default::default()
         };
 
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_ok(),
             "Documentation JSON example should be valid"
@@ -1668,7 +1677,7 @@ plugins:
         };
 
         // Test loading the config file (this should trigger keyring lookup)
-        let load_result = rt.block_on(load_config(&cli));
+        let load_result = rt.block_on(Config::load(&cli));
 
         // Cleanup keyring entry before checking results
         if let Ok(output) = remove_result {
@@ -2508,7 +2517,7 @@ allowed_hosts:
             ..Default::default()
         };
 
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_ok(),
             "Failed to load skip_tools examples config: {:?}",
@@ -3485,7 +3494,7 @@ allowed_hosts:
             ..Default::default()
         };
 
-        let config_result = rt.block_on(load_config(&cli));
+        let config_result = rt.block_on(Config::load(&cli));
         assert!(
             config_result.is_ok(),
             "Failed to load allowed_paths examples config: {:?}",

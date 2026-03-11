@@ -20,6 +20,13 @@ pub struct Cli {
     pub config_file: Option<PathBuf>,
 
     #[arg(
+        long = "dynamic-loading",
+        help = "Enable dynamic plugin loading and unloading via hyper_mcp-load_plugin and hyper_mcp-unload_plugin tools.",
+        env = "HYPER_MCP_DYNAMIC_LOADING"
+    )]
+    pub dynamic_loading: Option<bool>,
+
+    #[arg(
         long = "insecure-skip-signature",
         help = "Skip OCI image signature verification. Will override the value in your config file if set.",
         env = "HYPER_MCP_INSECURE_SKIP_SIGNATURE"
