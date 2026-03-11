@@ -1,11 +1,12 @@
 use anyhow::Result;
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, convert::TryFrom, fmt, str::FromStr, sync::LazyLock};
 use url::Url;
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
-pub struct PluginName(String);
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, JsonSchema)]
+pub struct PluginName(pub String);
 
 #[derive(Clone, Debug)]
 pub struct PluginNameParseError;
@@ -62,9 +63,11 @@ static PLUGIN_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[A-Za-z0-9]+(?:[_][A-Za-z0-9]+)*$").expect("Failed to compile plugin name regex")
 });
 
+pub const HYPER_MCP_PLUGIN_NAME: &str = "hyper_mcp";
+
 static RESERVED_PLUGIN_NAMES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     let mut set = HashSet::new();
-    set.insert("hyper_mcp");
+    set.insert(HYPER_MCP_PLUGIN_NAME);
     set
 });
 
@@ -129,20 +132,32 @@ impl fmt::Display for PluginName {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct NamespacedNameParseError;
+#[derive(Clone, Debug)]
+pub enum NamespacedNameParseError {
+    PluginNameError(PluginNameError),
+    UrlError(url::ParseError),
+}
 
 impl fmt::Display for NamespacedNameParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Failed to parse name")
+        match self {
+            NamespacedNameParseError::PluginNameError(e) => write!(f, "{}", e),
+            NamespacedNameParseError::UrlError(e) => write!(f, "{}", e),
+        }
     }
 }
 
 impl std::error::Error for NamespacedNameParseError {}
 
 impl From<PluginNameError> for NamespacedNameParseError {
-    fn from(_: PluginNameError) -> Self {
-        NamespacedNameParseError
+    fn from(value: PluginNameError) -> Self {
+        NamespacedNameParseError::PluginNameError(value)
+    }
+}
+
+impl From<url::ParseError> for NamespacedNameParseError {
+    fn from(value: url::ParseError) -> Self {
+        NamespacedNameParseError::UrlError(value)
     }
 }
 
@@ -160,22 +175,32 @@ pub fn create_namespaced_uri(plugin_name: &PluginName, uri: &str) -> Result<Stri
     Ok(uri.to_string())
 }
 
-pub fn parse_namespaced_name(namespaced_name: String) -> Result<(PluginName, String)> {
+pub fn raw_parse_namespaced_name(
+    namespaced_name: &str,
+) -> Result<(&str, &str), NamespacedNameParseError> {
     if let Some((plugin_name, tool_name)) = namespaced_name.split_once("-") {
-        return Ok((PluginName::from_str(plugin_name)?, tool_name.to_string()));
+        return Ok((plugin_name, tool_name));
     }
-    Err(NamespacedNameParseError.into())
+    Err(NamespacedNameParseError::PluginNameError(
+        PluginNameError::ParseError(PluginNameParseError),
+    ))
 }
 
-pub fn parse_namespaced_uri(namespaced_uri: String) -> Result<(PluginName, String)> {
+pub fn parse_namespaced_name(
+    namespaced_name: String,
+) -> Result<(PluginName, String), NamespacedNameParseError> {
+    let (plugin_name, tool_name) = raw_parse_namespaced_name(&namespaced_name)?;
+    Ok((PluginName::from_str(plugin_name)?, tool_name.to_string()))
+}
+
+pub fn parse_namespaced_uri(
+    namespaced_uri: String,
+) -> Result<(PluginName, String), NamespacedNameParseError> {
     let mut uri = Url::parse(namespaced_uri.as_str())?;
     let mut segments = uri
         .path_segments()
         .ok_or(url::ParseError::RelativeUrlWithoutBase)?
         .collect::<Vec<&str>>();
-    if segments.is_empty() {
-        return Err(NamespacedNameParseError.into());
-    }
     let plugin_name = PluginName::from_str(segments.remove(0))?;
     uri.set_path(&segments.join("/"));
     Ok((plugin_name, uri.to_string()))
@@ -289,15 +314,17 @@ mod tests {
 
     #[test]
     fn test_tool_name_parse_error_display() {
-        let error = NamespacedNameParseError;
-        assert_eq!(format!("{error}"), "Failed to parse name");
+        let error = NamespacedNameParseError::PluginNameError(PluginNameError::ParseError(
+            PluginNameParseError,
+        ));
+        assert_eq!(format!("{error}"), "Failed to parse plugin name");
     }
 
     #[test]
     fn test_tool_name_parse_error_from_plugin_name_error() {
         let plugin_error = PluginNameError::ParseError(PluginNameParseError);
         let tool_error: NamespacedNameParseError = plugin_error.into();
-        assert_eq!(format!("{tool_error}"), "Failed to parse name");
+        assert_eq!(format!("{tool_error}"), "Failed to parse plugin name");
     }
 
     #[test]

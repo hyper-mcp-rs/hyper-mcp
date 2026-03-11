@@ -34,6 +34,7 @@ hyper-mcp makes it easy to add AI capabilities to your applications. It works wi
 - Deploy anywhere: serverless, edge, mobile, IoT devices
 - Cross-platform compatibility out of the box
 - Support tool name prefix to prevent tool names collision
+- Dynamic plugin loading and unloading (configurable)
 
 ## Security
 

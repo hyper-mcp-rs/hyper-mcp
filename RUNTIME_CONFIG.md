@@ -5,6 +5,7 @@
 The configuration is structured as follows:
 
 - **auths** (`object`, optional): Authentication configurations for HTTPS requests, keyed by URL.
+- **dynamic_loading** (`bool`, optional, default: `false`): Enable dynamic plugin loading and unloading at runtime. When enabled, two built-in tools are exposed: `hyper_mcp-load_plugin` and `hyper_mcp-unload_plugin`. Can also be set via the `--dynamic-loading` CLI flag or the `HYPER_MCP_DYNAMIC_LOADING` environment variable (CLI/env takes precedence over the config file).
 - **plugins**: A map of plugin names to  plugin configuration objects.
   - **path** (`string`): OCI path or HTTP URL or local path for the plugin.
   - **runtime_config** (`object`, optional): Plugin-specific runtime configuration. The available fields are:
@@ -298,6 +299,48 @@ security add-generic-password -a "developer" -s "team-registry" -w '{"type":"bas
 6. **Backup Strategy**: Consider backing up keyring entries for critical services
 7. **Testing**: Use non-production credentials in keyring for testing
 
+## Dynamic Loading
+
+When `dynamic_loading` is set to `true`, hyper-mcp exposes two additional built-in tools that allow MCP clients to manage plugins at runtime:
+
+- **`hyper_mcp-load_plugin`**: Dynamically loads a new plugin into the current session. Accepts a plugin `name` and a full `config` object (with `url` and optional `runtime_config`).
+- **`hyper_mcp-unload_plugin`**: Dynamically unloads an existing plugin from the current session by `name`. The plugin is removed from both the active plugin set and the running configuration.
+
+After a plugin is loaded or unloaded, hyper-mcp automatically notifies the MCP client that the tool, resource, and prompt lists have changed.
+
+### Enabling Dynamic Loading
+
+Dynamic loading can be enabled in three ways (in order of precedence):
+
+1. **CLI flag**: `--dynamic-loading true`
+2. **Environment variable**: `HYPER_MCP_DYNAMIC_LOADING=true`
+3. **Config file**:
+
+```yaml
+dynamic_loading: true
+
+plugins:
+  time:
+    url: oci://ghcr.io/hyper-mcp-rs/time-plugin:latest
+```
+
+```json
+{
+  "dynamic_loading": true,
+  "plugins": {
+    "time": {
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
+    }
+  }
+}
+```
+
+### Security Considerations
+
+- Dynamic loading is **disabled by default** to follow the principle of least privilege.
+- When enabled, any MCP client connected to the session can load arbitrary plugins or unload existing ones.
+- Only enable dynamic loading in trusted environments or when the MCP client is expected to manage plugins.
+
 ## Example (YAML)
 
 ```yaml
@@ -313,6 +356,8 @@ auths:
     type: basic
     username: "enterprise-user"
     password: "enterprise-pass"
+
+dynamic_loading: true
 
 plugins:
   time:
@@ -353,6 +398,7 @@ plugins:
 
 ```json
 {
+  "dynamic_loading": true,
   "auths": {
     "https://private.registry.io": {
       "type": "basic",
@@ -1199,3 +1245,4 @@ plugins:
 - Skip tools patterns use full regex syntax with automatic anchoring for precise tool filtering.
 - Allowed secrets provide fine-grained control over keyring access, implementing principle of least privilege for secret management.
 - When `allowed_secrets` is omitted, plugins may have unrestricted keyring access (depending on plugin implementation). When specified, only the listed keyring entries can be accessed.
+- Dynamic loading is disabled by default. When enabled via config, CLI flag, or environment variable, the `hyper_mcp-load_plugin` and `hyper_mcp-unload_plugin` tools become available to MCP clients.

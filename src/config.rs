@@ -5,8 +5,10 @@ use bytesize::ByteSize;
 use camino::Utf8PathBuf;
 use dashmap::DashMap;
 use regex::RegexSet;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize, de};
 use serde_with::{DisplayFromStr, serde_as};
+use std::borrow::Cow;
 use std::{collections::HashMap, path::PathBuf};
 use url::Url;
 
@@ -124,7 +126,7 @@ impl Config {
         config.oci = oci;
 
         if let Some(dynamic_loading) = &cli.dynamic_loading {
-            config.dynamic_loading = dynamic_loading.clone();
+            config.dynamic_loading = *dynamic_loading;
         }
 
         Ok(config)
@@ -172,6 +174,33 @@ pub struct PluginConfig {
     #[serde(rename = "url", alias = "path")]
     pub url: Url,
     pub runtime_config: Option<RuntimeConfig>,
+}
+
+impl JsonSchema for PluginConfig {
+    fn schema_name() -> Cow<'static, str> {
+        "PluginConfig".into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        concat!(module_path!(), "::PluginConfig").into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let runtime_config_schema = generator.subschema_for::<Option<RuntimeConfig>>();
+
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URL or path of the plugin"
+                },
+                "runtime_config": runtime_config_schema
+            },
+            "required": ["url"]
+        })
+    }
 }
 
 mod skip_serde {
@@ -227,6 +256,23 @@ pub struct AllowedPath {
     pub plugin: Utf8PathBuf,
 }
 
+impl JsonSchema for AllowedPath {
+    fn schema_name() -> Cow<'static, str> {
+        "AllowedPath".into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        concat!(module_path!(), "::AllowedPath").into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "description": "A path mapping in the format 'host_path' or 'host_path:plugin_path' (';' separator on Windows)"
+        })
+    }
+}
+
 impl<'de> Deserialize<'de> for AllowedPath {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -274,7 +320,7 @@ impl Serialize for AllowedPath {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct KeyringEntryId {
     pub service: String,
     pub user: String,
@@ -318,6 +364,51 @@ pub struct RuntimeConfig {
 
     #[serde_as(as = "Option<DisplayFromStr>")]
     pub memory_limit: Option<ByteSize>,
+}
+
+impl JsonSchema for RuntimeConfig {
+    fn schema_name() -> Cow<'static, str> {
+        "RuntimeConfig".into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        concat!(module_path!(), "::RuntimeConfig").into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let regex_list_schema = json_schema!({
+            "anyOf": [
+                { "type": "array", "items": { "type": "string" } },
+                { "type": "null" }
+            ]
+        });
+
+        let allowed_hosts_schema = generator.subschema_for::<Option<Vec<String>>>();
+        let allowed_paths_schema = generator.subschema_for::<Option<Vec<AllowedPath>>>();
+        let allowed_secrets_schema = generator.subschema_for::<Option<Vec<KeyringEntryId>>>();
+        let env_vars_schema = generator.subschema_for::<Option<HashMap<String, String>>>();
+
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "skip_prompts": regex_list_schema,
+                "skip_resource_templates": regex_list_schema,
+                "skip_resources": regex_list_schema,
+                "skip_tools": regex_list_schema,
+                "allowed_hosts": allowed_hosts_schema,
+                "allowed_paths": allowed_paths_schema,
+                "allowed_secrets": allowed_secrets_schema,
+                "env_vars": env_vars_schema,
+                "memory_limit": {
+                    "anyOf": [
+                        { "type": "string" },
+                        { "type": "null" }
+                    ],
+                    "description": "Memory limit as a human-readable byte size string (e.g. '256MB', '1GB')"
+                }
+            }
+        })
+    }
 }
 
 #[cfg(test)]

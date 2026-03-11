@@ -1,8 +1,9 @@
 use crate::{
     config::{Config, KeyringEntryId, PluginConfig},
     naming::{
-        PluginName, create_namespaced_name, create_namespaced_uri, parse_namespaced_name,
-        parse_namespaced_uri,
+        HYPER_MCP_PLUGIN_NAME, NamespacedNameParseError, PluginName, PluginNameError,
+        create_namespaced_name, create_namespaced_uri, parse_namespaced_name, parse_namespaced_uri,
+        raw_parse_namespaced_name,
     },
     oauth2::{AccessToken, OauthCredentials},
     plugin::{Plugin, PluginV1, PluginV2},
@@ -16,31 +17,91 @@ use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::{
         CallToolRequestMethod, CallToolRequestParams, CallToolResult, CompleteRequestMethod,
-        CompleteRequestParams, CompleteResult, GetPromptRequestMethod, GetPromptRequestParams,
-        GetPromptResult, Implementation, InitializeRequestParams, InitializeResult,
-        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
-        LoggingLevel, PaginatedRequestParams, ReadResourceRequestMethod, ReadResourceRequestParams,
-        ReadResourceResult, Reference, Resource, ResourceTemplate, ServerCapabilities, ServerInfo,
-        SetLevelRequestParams, SubscribeRequestParams, UnsubscribeRequestParams,
+        CompleteRequestParams, CompleteResult, Content, GetPromptRequestMethod,
+        GetPromptRequestParams, GetPromptResult, Implementation, InitializeRequestParams,
+        InitializeResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
+        ListToolsResult, LoggingLevel, PaginatedRequestParams, ReadResourceRequestMethod,
+        ReadResourceRequestParams, ReadResourceResult, Reference, Resource, ResourceTemplate,
+        ServerCapabilities, ServerInfo, SetLevelRequestParams, SubscribeRequestParams, Tool,
+        UnsubscribeRequestParams,
     },
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use serde_with::{DurationSeconds, serde_as};
 use std::{
     fmt::Debug,
     ops::Deref,
+    str::FromStr,
     sync::{
         Arc, Mutex, RwLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
+use strum_macros::{AsRefStr, EnumString};
 use tokio::{runtime::Handle, sync::SetOnce};
 use uuid::Uuid;
 
 static CALL_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct LoadPluginArguments {
+    name: PluginName,
+    config: PluginConfig,
+}
+
+impl TryFrom<Map<String, Value>> for LoadPluginArguments {
+    type Error = serde_json::Error;
+
+    fn try_from(value: Map<String, Value>) -> std::result::Result<Self, Self::Error> {
+        serde_json::from_value(Value::Object(value))
+    }
+}
+
+impl TryFrom<Option<Map<String, Value>>> for LoadPluginArguments {
+    type Error = Error;
+
+    fn try_from(value: Option<Map<String, Value>>) -> std::result::Result<Self, Self::Error> {
+        if let Some(value) = value {
+            return Self::try_from(value).map_err(|e| e.into());
+        }
+        Err(anyhow!("Missing arguments"))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct UnloadPluginArguments {
+    name: PluginName,
+}
+
+impl TryFrom<Map<String, Value>> for UnloadPluginArguments {
+    type Error = serde_json::Error;
+
+    fn try_from(value: Map<String, Value>) -> std::result::Result<Self, Self::Error> {
+        serde_json::from_value(Value::Object(value))
+    }
+}
+
+impl TryFrom<Option<Map<String, Value>>> for UnloadPluginArguments {
+    type Error = Error;
+
+    fn try_from(value: Option<Map<String, Value>>) -> std::result::Result<Self, Self::Error> {
+        if let Some(value) = value {
+            return Self::try_from(value).map_err(|e| e.into());
+        }
+        Err(anyhow!("Missing arguments"))
+    }
+}
+
+#[derive(Debug, EnumString, AsRefStr)]
+#[strum(serialize_all = "snake_case")]
+enum HyperMcpTools {
+    LoadPlugin,
+    UnloadPlugin,
+}
 
 fn next_call_id() -> u64 {
     CALL_ID.fetch_add(1, Ordering::Relaxed)
@@ -87,6 +148,73 @@ impl PluginService {
 
         service.load_plugins().await?;
         Ok(service)
+    }
+
+    async fn handle_hyper_mcp_tools(
+        &self,
+        tool_name: &str,
+        arguments: Option<Map<String, Value>>,
+    ) -> Result<CallToolResult> {
+        let tool = match HyperMcpTools::from_str(tool_name) {
+            Ok(tool) => tool,
+            Err(e) => {
+                return Err(anyhow!("Failed to parse tool name: {e}"));
+            }
+        };
+
+        let notify = || async {
+            if let Some(peer) = self.peer.get() {
+                if let Err(e) = peer.notify_prompt_list_changed().await {
+                    tracing::error!(error = %e, "Error notifying prompt list changed");
+                }
+                if let Err(e) = peer.notify_resource_list_changed().await {
+                    tracing::error!(error = %e, "Error notifying resource list changed");
+                }
+                if let Err(e) = peer.notify_tool_list_changed().await {
+                    tracing::error!(error = %e, "Error notifying tool list changed");
+                }
+            }
+        };
+
+        match tool {
+            HyperMcpTools::LoadPlugin => {
+                if !self.config.dynamic_loading {
+                    return Err(anyhow!("Dynamic loading not enabled"));
+                }
+                match LoadPluginArguments::try_from(arguments) {
+                    Ok(args) => match self.load_plugin(&args.name, &args.config).await {
+                        Ok(()) => {
+                            notify().await;
+                            Ok(CallToolResult::success(vec![Content::text(format!(
+                                "Loaded {}",
+                                args.name
+                            ))]))
+                        }
+                        Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                            "Error loading plugin {}: {e}",
+                            args.name
+                        ))])),
+                    },
+                    Err(e) => Err(anyhow!("Failed to parse arguments: {e}")),
+                }
+            }
+            HyperMcpTools::UnloadPlugin => {
+                if !self.config.dynamic_loading {
+                    return Err(anyhow!("Dynamic loading not enabled"));
+                }
+                match UnloadPluginArguments::try_from(arguments) {
+                    Ok(args) => {
+                        self.unload_plugin(&args.name);
+                        notify().await;
+                        Ok(CallToolResult::success(vec![Content::text(format!(
+                            "Unloaded {}",
+                            args.name
+                        ))]))
+                    }
+                    Err(e) => Err(anyhow!("Failed to parse arguments: {e}")),
+                }
+            }
+        }
     }
 
     #[tracing::instrument(skip_all)]
@@ -251,14 +379,12 @@ impl PluginService {
     }
 
     #[tracing::instrument(skip_all)]
-    fn unload_plugin(&self, plugin_name: &PluginName) -> bool {
+    fn unload_plugin(&self, plugin_name: &PluginName) {
         if self.plugins.remove(plugin_name).is_some() {
             self.config.plugins.remove(plugin_name);
             tracing::info!(plugin = %plugin_name, "Unloaded plugin");
-            true
         } else {
             tracing::warn!(plugin = %plugin_name, "Plugin not found, nothing to unload");
-            false
         }
     }
 }
@@ -280,43 +406,64 @@ impl ServerHandler for PluginService {
             ));
         }
 
-        let (plugin_name, tool_name) = match parse_namespaced_name(request.name.to_string()) {
-            Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
-            Err(e) => {
-                return Err(McpError::invalid_request(
-                    format!("Failed to parse tool name: {e}"),
-                    None,
-                ));
+        match parse_namespaced_name(request.name.to_string()) {
+            Ok((plugin_name, tool_name)) => {
+                let plugin_config = match self.config.plugins.get(&plugin_name) {
+                    Some(config) => config,
+                    None => {
+                        return Err(McpError::method_not_found::<CallToolRequestMethod>());
+                    }
+                };
+                if let Some(skip_tools) = &plugin_config
+                    .runtime_config
+                    .as_ref()
+                    .and_then(|rc| rc.skip_tools.clone())
+                    && skip_tools.is_match(&tool_name)
+                {
+                    tracing::warn!(tool = tool_name, "Tool in skip_tools");
+                    return Err(McpError::method_not_found::<CallToolRequestMethod>());
+                }
+
+                let request = {
+                    let mut nr = CallToolRequestParams::new(tool_name.clone());
+                    nr.meta = request.meta;
+                    nr.arguments = request.arguments;
+                    nr.task = request.task;
+                    nr
+                };
+
+                let Some(plugin) = self.plugins.get(&plugin_name) else {
+                    return Err(McpError::method_not_found::<CallToolRequestMethod>());
+                };
+                plugin.value().call_tool(request, context).await
             }
-        };
-        let plugin_config = match self.config.plugins.get(&plugin_name) {
-            Some(config) => config,
-            None => {
-                return Err(McpError::method_not_found::<CallToolRequestMethod>());
+            Err(NamespacedNameParseError::PluginNameError(PluginNameError::ReservedError(_))) => {
+                let (plugin_name, tool_name) =
+                    match raw_parse_namespaced_name(request.name.as_ref()) {
+                        Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
+                        Err(e) => {
+                            return Err(McpError::invalid_request(
+                                format!("Failed to parse tool name: {e}"),
+                                None,
+                            ));
+                        }
+                    };
+                match plugin_name {
+                    HYPER_MCP_PLUGIN_NAME => self
+                        .handle_hyper_mcp_tools(tool_name, request.arguments)
+                        .await
+                        .map_err(|e| McpError::invalid_request(e.to_string(), None)),
+                    _ => Err(McpError::invalid_request(
+                        "Unknown reserved name (should not occur, contact the maintainer)",
+                        None,
+                    )),
+                }
             }
-        };
-        if let Some(skip_tools) = &plugin_config
-            .runtime_config
-            .as_ref()
-            .and_then(|rc| rc.skip_tools.clone())
-            && skip_tools.is_match(&tool_name)
-        {
-            tracing::warn!(tool = tool_name, "Tool in skip_tools");
-            return Err(McpError::method_not_found::<CallToolRequestMethod>());
+            Err(e) => Err(McpError::invalid_request(
+                format!("Failed to parse tool name: {e}"),
+                None,
+            )),
         }
-
-        let request = {
-            let mut nr = CallToolRequestParams::new(tool_name.clone());
-            nr.meta = request.meta;
-            nr.arguments = request.arguments;
-            nr.task = request.task;
-            nr
-        };
-
-        let Some(plugin) = self.plugins.get(&plugin_name) else {
-            return Err(McpError::method_not_found::<CallToolRequestMethod>());
-        };
-        plugin.value().call_tool(request, context).await
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
@@ -743,6 +890,29 @@ impl ServerHandler for PluginService {
         let results = futures::future::join_all(futures).await;
 
         let mut list_tools_result = ListToolsResult::default();
+
+        if self.config.dynamic_loading {
+            list_tools_result.tools.push(
+                Tool::new(
+                    format!("{HYPER_MCP_PLUGIN_NAME}-load_plugin"),
+                    "Dynamically loads a plugin into the MCP session",
+                    Arc::new(std::mem::take(
+                        schema_for!(LoadPluginArguments).ensure_object(),
+                    )),
+                )
+                .with_title("Load Plugin"),
+            );
+            list_tools_result.tools.push(
+                Tool::new(
+                    format!("{HYPER_MCP_PLUGIN_NAME}-unload_plugin"),
+                    "Dynamically unloads a plugin from the MCP session",
+                    Arc::new(std::mem::take(
+                        schema_for!(UnloadPluginArguments).ensure_object(),
+                    )),
+                )
+                .with_title("Unload Plugin"),
+            );
+        }
 
         for (plugin_name, plugin_tools) in results {
             let plugin_tools = plugin_tools?;
@@ -4105,5 +4275,81 @@ plugins:
 
         assert_ok!(server.cancel().await);
         assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_unload_plugin_removes_plugin_and_config() {
+        let wasm_url = get_test_wasm_url();
+        if !test_wasm_exists() {
+            println!("Skipping test - WASM not available at {wasm_url}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  time_plugin:
+    url: "{}"
+"#,
+            wasm_url
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+        let config = Config::load(&cli).await.unwrap();
+
+        let service = PluginService::new(&config).await.unwrap();
+        let plugin_name = PluginName::from_str("time_plugin").unwrap();
+
+        // Before unloading: plugin should exist in both the plugins map and config
+        assert!(
+            service.plugins.contains_key(&plugin_name),
+            "Plugin should be present in plugins map before unload"
+        );
+        assert!(
+            service.config.plugins.contains_key(&plugin_name),
+            "Plugin should be present in config.plugins before unload"
+        );
+
+        service.unload_plugin(&plugin_name);
+
+        // After unloading: plugin should be removed from both maps
+        assert!(
+            !service.plugins.contains_key(&plugin_name),
+            "Plugin should be removed from plugins map after unload"
+        );
+        assert!(
+            !service.config.plugins.contains_key(&plugin_name),
+            "Plugin should be removed from config.plugins after unload"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unload_plugin_nonexistent_is_noop() {
+        let config = Config::default();
+        let service = create_test_service(config);
+        let plugin_name = PluginName::from_str("nonexistent_plugin").unwrap();
+
+        assert!(
+            !service.plugins.contains_key(&plugin_name),
+            "Plugin should not exist before unload"
+        );
+        assert!(
+            !service.config.plugins.contains_key(&plugin_name),
+            "Plugin config should not exist before unload"
+        );
+
+        // Calling unload on a nonexistent plugin should not panic
+        service.unload_plugin(&plugin_name);
+
+        assert!(
+            !service.plugins.contains_key(&plugin_name),
+            "Plugin should still not exist after unload"
+        );
+        assert!(
+            !service.config.plugins.contains_key(&plugin_name),
+            "Plugin config should still not exist after unload"
+        );
     }
 }
