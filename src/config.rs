@@ -1,5 +1,4 @@
-use crate::cli::Cli;
-use crate::naming::PluginName;
+use crate::{cli::Cli, naming::PluginName};
 use anyhow::{Context, Result};
 use bytesize::ByteSize;
 use camino::Utf8PathBuf;
@@ -8,8 +7,7 @@ use regex::RegexSet;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize, de};
 use serde_with::{DisplayFromStr, serde_as};
-use std::borrow::Cow;
-use std::{collections::HashMap, path::PathBuf};
+use std::{borrow::Cow, collections::HashMap, path::PathBuf};
 use url::Url;
 
 #[derive(Clone, Debug, Serialize)]
