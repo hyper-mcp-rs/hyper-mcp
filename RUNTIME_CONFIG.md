@@ -310,7 +310,7 @@ After a plugin is loaded or unloaded, hyper-mcp automatically notifies the MCP c
 
 ### Enabling Dynamic Loading
 
-Dynamic loading can be enabled in three ways (in order of precedence):
+Dynamic loading can be enabled (or disabled) in three ways (in order of precedence):
 
 1. **CLI flag**: `--dynamic-loading true`
 2. **Environment variable**: `HYPER_MCP_DYNAMIC_LOADING=true`
