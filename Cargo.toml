@@ -25,7 +25,7 @@ bytesize = "2.3"
 camino = "1.2"
 clap = { version = "4.5", features = ["derive", "env"] }
 ctor = "0.6"
-dashmap = "6.1"
+dashmap = { version = "6.1", features = ["serde"] }
 directories = "6.0"
 dirs = "6.0"
 docker_credential = "1.3"

@@ -204,18 +204,27 @@ impl PluginService {
             };
 
         self.plugins.insert(plugin_name.clone(), plugin);
+        self.config
+            .plugins
+            .insert(plugin_name.clone(), plugin_cfg.clone());
         tracing::info!(plugin = plugin_name.to_string(), "Loaded plugin");
         Ok(())
     }
 
     #[tracing::instrument(skip_all)]
     async fn load_plugins(&self) -> Result<()> {
+        let pending: Vec<_> = self
+            .config
+            .plugins
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        self.config.plugins.clear();
+
         let mut join_set = tokio::task::JoinSet::new();
 
-        for (plugin_name, plugin_cfg) in &self.config.plugins {
+        for (plugin_name, plugin_cfg) in pending {
             let service = self.clone();
-            let plugin_name = plugin_name.clone();
-            let plugin_cfg = plugin_cfg.clone();
 
             join_set.spawn(async move {
                 if let Err(e) = service.load_plugin(&plugin_name, &plugin_cfg).await {
@@ -244,6 +253,7 @@ impl PluginService {
     #[tracing::instrument(skip_all)]
     fn unload_plugin(&self, plugin_name: &PluginName) -> bool {
         if self.plugins.remove(plugin_name).is_some() {
+            self.config.plugins.remove(plugin_name);
             tracing::info!(plugin = %plugin_name, "Unloaded plugin");
             true
         } else {
@@ -2174,24 +2184,26 @@ plugins:
         }
 
         // Verify the plugin configuration includes skip_tools
-        let plugin_name: PluginName = "time_plugin".parse().unwrap();
-        let plugin_config = server.service().config.plugins.get(&plugin_name).unwrap();
-        let skip_tools = plugin_config
-            .runtime_config
-            .as_ref()
-            .and_then(|rc| rc.skip_tools.as_ref())
-            .unwrap();
+        {
+            let plugin_name: PluginName = "time_plugin".parse().unwrap();
+            let plugin_config = server.service().config.plugins.get(&plugin_name).unwrap();
+            let skip_tools = plugin_config
+                .runtime_config
+                .as_ref()
+                .and_then(|rc| rc.skip_tools.as_ref())
+                .unwrap();
 
-        assert!(
-            skip_tools.is_match(&"time"),
-            "Configuration should include 'time' in skip_tools list: {skip_tools:?}"
-        );
+            assert!(
+                skip_tools.is_match(&"time"),
+                "Configuration should include 'time' in skip_tools list: {skip_tools:?}"
+            );
 
-        assert_eq!(
-            skip_tools.len(),
-            1,
-            "Should have exactly one tool in skip_tools list: {skip_tools:?}"
-        );
+            assert_eq!(
+                skip_tools.len(),
+                1,
+                "Should have exactly one tool in skip_tools list: {skip_tools:?}"
+            );
+        }
 
         // Cleanup
         assert_ok!(server.cancel().await);

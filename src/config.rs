@@ -3,6 +3,7 @@ use crate::naming::PluginName;
 use anyhow::{Context, Result};
 use bytesize::ByteSize;
 use camino::Utf8PathBuf;
+use dashmap::DashMap;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize, de};
 use serde_with::{DisplayFromStr, serde_as};
@@ -56,7 +57,7 @@ pub struct Config {
     #[serde(default)]
     pub oci: OciConfig,
 
-    pub plugins: HashMap<PluginName, PluginConfig>,
+    pub plugins: DashMap<PluginName, PluginConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -386,7 +387,7 @@ mod tests {
         let config = config_result.unwrap();
         assert_eq!(config.plugins.len(), 3, "Expected 3 plugins in the config");
 
-        // Verify plugin names
+        // Verify plugin names (DashMap doesn't guarantee order, so check contains_key)
         assert!(
             config
                 .plugins
@@ -404,7 +405,10 @@ mod tests {
         );
 
         // Verify plugin configs
-        let test_plugin = &config.plugins[&PluginName::try_from("test_plugin").unwrap()];
+        let test_plugin = config
+            .plugins
+            .get(&PluginName::try_from("test_plugin").unwrap())
+            .unwrap();
         assert_eq!(test_plugin.url.to_string(), "file:///path/to/plugin");
 
         let runtime_config = test_plugin.runtime_config.as_ref().unwrap();
@@ -433,7 +437,10 @@ mod tests {
         );
 
         // Verify minimal plugin has no runtime config
-        let minimal_plugin = &config.plugins[&PluginName::try_from("minimal_plugin").unwrap()];
+        let minimal_plugin = config
+            .plugins
+            .get(&PluginName::try_from("minimal_plugin").unwrap())
+            .unwrap();
         assert!(minimal_plugin.runtime_config.is_none());
     }
 
@@ -476,7 +483,10 @@ mod tests {
         );
 
         // Verify env vars
-        let test_plugin = &config.plugins[&PluginName::try_from("test_plugin").unwrap()];
+        let test_plugin = config
+            .plugins
+            .get(&PluginName::try_from("test_plugin").unwrap())
+            .unwrap();
         let runtime_config = test_plugin.runtime_config.as_ref().unwrap();
         assert_eq!(runtime_config.env_vars.as_ref().unwrap()["DEBUG"], "true");
         assert_eq!(
@@ -1015,7 +1025,7 @@ plugins:
 
         let config = Config {
             auths: Some(auths),
-            plugins: HashMap::new(),
+            plugins: DashMap::new(),
 
             ..Default::default()
         };
@@ -1182,7 +1192,10 @@ plugins:
         );
 
         // Verify private plugin config
-        let private_plugin = &config.plugins[&PluginName::try_from("private_plugin").unwrap()];
+        let private_plugin = config
+            .plugins
+            .get(&PluginName::try_from("private_plugin").unwrap())
+            .unwrap();
         assert_eq!(
             private_plugin.url.to_string(),
             "https://private.registry.io/my_plugin"
@@ -1233,7 +1246,10 @@ plugins:
         // Verify plugins match the documentation
         assert_eq!(config.plugins.len(), 3);
 
-        let myip_plugin = &config.plugins[&PluginName::try_from("myip").unwrap()];
+        let myip_plugin = config
+            .plugins
+            .get(&PluginName::try_from("myip").unwrap())
+            .unwrap();
         let runtime_config = myip_plugin.runtime_config.as_ref().unwrap();
         assert_eq!(runtime_config.env_vars.as_ref().unwrap()["FOO"], "bar");
         assert_eq!(
@@ -2152,7 +2168,7 @@ plugins:
 
         let config = Config {
             auths: Some(auths),
-            plugins: HashMap::new(),
+            plugins: DashMap::new(),
 
             ..Default::default()
         };
@@ -2507,7 +2523,10 @@ allowed_hosts:
         );
 
         // Test exact_match_plugin
-        let exact_plugin = &config.plugins[&PluginName::try_from("exact_match_plugin").unwrap()];
+        let exact_plugin = config
+            .plugins
+            .get(&PluginName::try_from("exact_match_plugin").unwrap())
+            .unwrap();
         let exact_skip_tools = exact_plugin
             .runtime_config
             .as_ref()
@@ -2522,7 +2541,10 @@ allowed_hosts:
         assert!(!exact_skip_tools.is_match("debug_tool_extended"));
 
         // Test wildcard_plugin
-        let wildcard_plugin = &config.plugins[&PluginName::try_from("wildcard_plugin").unwrap()];
+        let wildcard_plugin = config
+            .plugins
+            .get(&PluginName::try_from("wildcard_plugin").unwrap())
+            .unwrap();
         let wildcard_skip_tools = wildcard_plugin
             .runtime_config
             .as_ref()
@@ -2540,7 +2562,10 @@ allowed_hosts:
         assert!(!wildcard_skip_tools.is_match("temp"));
 
         // Test regex_plugin
-        let regex_plugin = &config.plugins[&PluginName::try_from("regex_plugin").unwrap()];
+        let regex_plugin = config
+            .plugins
+            .get(&PluginName::try_from("regex_plugin").unwrap())
+            .unwrap();
         let regex_skip_tools = regex_plugin
             .runtime_config
             .as_ref()
@@ -2558,7 +2583,10 @@ allowed_hosts:
         assert!(!regex_skip_tools.is_match("Data_helper"));
 
         // Test anchored_plugin
-        let anchored_plugin = &config.plugins[&PluginName::try_from("anchored_plugin").unwrap()];
+        let anchored_plugin = config
+            .plugins
+            .get(&PluginName::try_from("anchored_plugin").unwrap())
+            .unwrap();
         let anchored_skip_tools = anchored_plugin
             .runtime_config
             .as_ref()
@@ -2574,7 +2602,10 @@ allowed_hosts:
         assert!(!anchored_skip_tools.is_match("exact_only_more"));
 
         // Test case_sensitive_plugin
-        let case_plugin = &config.plugins[&PluginName::try_from("case_sensitive_plugin").unwrap()];
+        let case_plugin = config
+            .plugins
+            .get(&PluginName::try_from("case_sensitive_plugin").unwrap())
+            .unwrap();
         let case_skip_tools = case_plugin
             .runtime_config
             .as_ref()
@@ -2591,8 +2622,10 @@ allowed_hosts:
         assert!(!case_skip_tools.is_match("camelCaseHelper"));
 
         // Test special_chars_plugin
-        let special_plugin =
-            &config.plugins[&PluginName::try_from("special_chars_plugin").unwrap()];
+        let special_plugin = config
+            .plugins
+            .get(&PluginName::try_from("special_chars_plugin").unwrap())
+            .unwrap();
         let special_skip_tools = special_plugin
             .runtime_config
             .as_ref()
@@ -2608,7 +2641,10 @@ allowed_hosts:
         assert!(!special_skip_tools.is_match("script"));
 
         // Test empty_skip_plugin
-        let empty_plugin = &config.plugins[&PluginName::try_from("empty_skip_plugin").unwrap()];
+        let empty_plugin = config
+            .plugins
+            .get(&PluginName::try_from("empty_skip_plugin").unwrap())
+            .unwrap();
         let empty_skip_tools = empty_plugin
             .runtime_config
             .as_ref()
@@ -2620,7 +2656,10 @@ allowed_hosts:
         assert!(!empty_skip_tools.is_match("anything"));
 
         // Test no_skip_plugin
-        let no_skip_plugin = &config.plugins[&PluginName::try_from("no_skip_plugin").unwrap()];
+        let no_skip_plugin = config
+            .plugins
+            .get(&PluginName::try_from("no_skip_plugin").unwrap())
+            .unwrap();
         assert!(
             no_skip_plugin
                 .runtime_config
@@ -2631,7 +2670,10 @@ allowed_hosts:
         );
 
         // Test full_config_plugin has all components
-        let full_plugin = &config.plugins[&PluginName::try_from("full_config_plugin").unwrap()];
+        let full_plugin = config
+            .plugins
+            .get(&PluginName::try_from("full_config_plugin").unwrap())
+            .unwrap();
         let full_runtime = full_plugin.runtime_config.as_ref().unwrap();
         let full_skip_tools = full_runtime.skip_tools.as_ref().unwrap();
         assert!(full_skip_tools.is_match("admin_tool"));
@@ -3458,7 +3500,10 @@ allowed_hosts:
         );
 
         // Test single_paths_plugin
-        let single_plugin = &config.plugins[&PluginName::try_from("single_paths_plugin").unwrap()];
+        let single_plugin = config
+            .plugins
+            .get(&PluginName::try_from("single_paths_plugin").unwrap())
+            .unwrap();
         let single_paths = single_plugin
             .runtime_config
             .as_ref()
@@ -3475,7 +3520,10 @@ allowed_hosts:
         assert_eq!(single_paths[2].plugin.as_str(), p("home/user/data"));
 
         // Test mapped_paths_plugin
-        let mapped_plugin = &config.plugins[&PluginName::try_from("mapped_paths_plugin").unwrap()];
+        let mapped_plugin = config
+            .plugins
+            .get(&PluginName::try_from("mapped_paths_plugin").unwrap())
+            .unwrap();
         let mapped_paths = mapped_plugin
             .runtime_config
             .as_ref()
@@ -3496,7 +3544,10 @@ allowed_hosts:
         }
 
         // Test mixed_paths_plugin
-        let mixed_plugin = &config.plugins[&PluginName::try_from("mixed_paths_plugin").unwrap()];
+        let mixed_plugin = config
+            .plugins
+            .get(&PluginName::try_from("mixed_paths_plugin").unwrap())
+            .unwrap();
         let mixed_paths = mixed_plugin
             .runtime_config
             .as_ref()
@@ -3520,8 +3571,10 @@ allowed_hosts:
         assert_eq!(mixed_paths[2].plugin.as_str(), p("home/user"));
 
         // Test relative_paths_plugin
-        let relative_plugin =
-            &config.plugins[&PluginName::try_from("relative_paths_plugin").unwrap()];
+        let relative_plugin = config
+            .plugins
+            .get(&PluginName::try_from("relative_paths_plugin").unwrap())
+            .unwrap();
         let relative_paths = relative_plugin
             .runtime_config
             .as_ref()
@@ -3538,8 +3591,10 @@ allowed_hosts:
         assert_eq!(relative_paths[2].plugin.as_str(), p("relative/path"));
 
         // Test mapped_relative_plugin
-        let mapped_relative =
-            &config.plugins[&PluginName::try_from("mapped_relative_plugin").unwrap()];
+        let mapped_relative = config
+            .plugins
+            .get(&PluginName::try_from("mapped_relative_plugin").unwrap())
+            .unwrap();
         let mapped_rel_paths = mapped_relative
             .runtime_config
             .as_ref()
@@ -3560,8 +3615,10 @@ allowed_hosts:
         }
 
         // Test paths_with_spaces_plugin
-        let spaces_plugin =
-            &config.plugins[&PluginName::try_from("paths_with_spaces_plugin").unwrap()];
+        let spaces_plugin = config
+            .plugins
+            .get(&PluginName::try_from("paths_with_spaces_plugin").unwrap())
+            .unwrap();
         let spaces_paths = spaces_plugin
             .runtime_config
             .as_ref()
@@ -3583,8 +3640,10 @@ allowed_hosts:
         assert_eq!(spaces_paths[2].plugin.as_str(), p("my documents"));
 
         // Test special_chars_plugin
-        let special_plugin =
-            &config.plugins[&PluginName::try_from("special_chars_plugin").unwrap()];
+        let special_plugin = config
+            .plugins
+            .get(&PluginName::try_from("special_chars_plugin").unwrap())
+            .unwrap();
         let special_paths = special_plugin
             .runtime_config
             .as_ref()
@@ -3607,7 +3666,10 @@ allowed_hosts:
         }
 
         // Test empty_paths_plugin
-        let empty_plugin = &config.plugins[&PluginName::try_from("empty_paths_plugin").unwrap()];
+        let empty_plugin = config
+            .plugins
+            .get(&PluginName::try_from("empty_paths_plugin").unwrap())
+            .unwrap();
         let empty_paths = empty_plugin
             .runtime_config
             .as_ref()
@@ -3618,7 +3680,10 @@ allowed_hosts:
         assert_eq!(empty_paths.len(), 0);
 
         // Test no_paths_plugin
-        let no_paths_plugin = &config.plugins[&PluginName::try_from("no_paths_plugin").unwrap()];
+        let no_paths_plugin = config
+            .plugins
+            .get(&PluginName::try_from("no_paths_plugin").unwrap())
+            .unwrap();
         assert!(
             no_paths_plugin
                 .runtime_config
@@ -3629,7 +3694,10 @@ allowed_hosts:
         );
 
         // Test full_config_plugin has all components
-        let full_plugin = &config.plugins[&PluginName::try_from("full_config_plugin").unwrap()];
+        let full_plugin = config
+            .plugins
+            .get(&PluginName::try_from("full_config_plugin").unwrap())
+            .unwrap();
         let full_runtime = full_plugin.runtime_config.as_ref().unwrap();
         let full_skip_tools = full_runtime.skip_tools.as_ref().unwrap();
         assert!(full_skip_tools.is_match("admin_tool"));
@@ -3659,7 +3727,10 @@ allowed_hosts:
         );
 
         // Test nested_paths_plugin
-        let nested_plugin = &config.plugins[&PluginName::try_from("nested_paths_plugin").unwrap()];
+        let nested_plugin = config
+            .plugins
+            .get(&PluginName::try_from("nested_paths_plugin").unwrap())
+            .unwrap();
         let nested_paths = nested_plugin
             .runtime_config
             .as_ref()
@@ -3687,7 +3758,10 @@ allowed_hosts:
         assert_eq!(nested_paths[2].plugin.as_str(), p("a/b/c/d/e/f/g"));
 
         // Test multi_mapping_plugin
-        let multi_plugin = &config.plugins[&PluginName::try_from("multi_mapping_plugin").unwrap()];
+        let multi_plugin = config
+            .plugins
+            .get(&PluginName::try_from("multi_mapping_plugin").unwrap())
+            .unwrap();
         let multi_paths = multi_plugin
             .runtime_config
             .as_ref()
@@ -3710,7 +3784,10 @@ allowed_hosts:
         }
 
         // Test root_user_paths_plugin
-        let root_plugin = &config.plugins[&PluginName::try_from("root_user_paths_plugin").unwrap()];
+        let root_plugin = config
+            .plugins
+            .get(&PluginName::try_from("root_user_paths_plugin").unwrap())
+            .unwrap();
         let root_paths = root_plugin
             .runtime_config
             .as_ref()
