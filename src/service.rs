@@ -48,8 +48,13 @@ use uuid::Uuid;
 static CALL_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Arguments for loading a plugin into the current MCP session.")]
 struct LoadPluginArguments {
+    #[schemars(
+        description = "The name to register the plugin under. Letters, numbers, and underscores only."
+    )]
     name: PluginName,
+    #[schemars(description = "The plugin configuration.")]
     config: PluginConfig,
 }
 
@@ -73,7 +78,9 @@ impl TryFrom<Option<Map<String, Value>>> for LoadPluginArguments {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Arguments for unloading a plugin from the current MCP session.")]
 struct UnloadPluginArguments {
+    #[schemars(description = "The name of the plugin to unload.")]
     name: PluginName,
 }
 
@@ -894,8 +901,11 @@ impl ServerHandler for PluginService {
         if self.config.dynamic_loading {
             list_tools_result.tools.push(
                 Tool::new(
-                    format!("{HYPER_MCP_PLUGIN_NAME}-load_plugin"),
-                    "Dynamically loads a plugin into the MCP session",
+                    format!(
+                        "{HYPER_MCP_PLUGIN_NAME}-{}",
+                        HyperMcpTools::LoadPlugin.as_ref()
+                    ),
+                    "Loads a plugin into the MCP session",
                     Arc::new(std::mem::take(
                         schema_for!(LoadPluginArguments).ensure_object(),
                     )),
@@ -904,8 +914,11 @@ impl ServerHandler for PluginService {
             );
             list_tools_result.tools.push(
                 Tool::new(
-                    format!("{HYPER_MCP_PLUGIN_NAME}-unload_plugin"),
-                    "Dynamically unloads a plugin from the MCP session",
+                    format!(
+                        "{HYPER_MCP_PLUGIN_NAME}-{}",
+                        HyperMcpTools::UnloadPlugin.as_ref()
+                    ),
+                    "Unloads a plugin from the MCP session",
                     Arc::new(std::mem::take(
                         schema_for!(UnloadPluginArguments).ensure_object(),
                     )),

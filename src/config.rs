@@ -186,8 +186,6 @@ impl JsonSchema for PluginConfig {
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        let runtime_config_schema = generator.subschema_for::<Option<RuntimeConfig>>();
-
         json_schema!({
             "type": "object",
             "properties": {
@@ -196,7 +194,7 @@ impl JsonSchema for PluginConfig {
                     "format": "uri",
                     "description": "The URL or path of the plugin"
                 },
-                "runtime_config": runtime_config_schema
+                "runtime_config": generator.subschema_for::<Option<RuntimeConfig>>()
             },
             "required": ["url"]
         })
@@ -257,6 +255,10 @@ pub struct AllowedPath {
 }
 
 impl JsonSchema for AllowedPath {
+    fn inline_schema() -> bool {
+        true
+    }
+
     fn schema_name() -> Cow<'static, str> {
         "AllowedPath".into()
     }
@@ -321,8 +323,13 @@ impl Serialize for AllowedPath {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[schemars(description = "Identifies a keyring entry for secure credential storage.")]
 pub struct KeyringEntryId {
+    #[schemars(
+        description = "The keyring service name that the credential is stored under (e.g. \"my-app\")."
+    )]
     pub service: String,
+    #[schemars(description = "The username associated with the keyring entry (e.g. \"admin\").")]
     pub user: String,
 }
 
@@ -376,35 +383,60 @@ impl JsonSchema for RuntimeConfig {
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        let regex_list_schema = json_schema!({
-            "anyOf": [
-                { "type": "array", "items": { "type": "string" } },
-                { "type": "null" }
-            ]
-        });
-
-        let allowed_hosts_schema = generator.subschema_for::<Option<Vec<String>>>();
-        let allowed_paths_schema = generator.subschema_for::<Option<Vec<AllowedPath>>>();
-        let allowed_secrets_schema = generator.subschema_for::<Option<Vec<KeyringEntryId>>>();
-        let env_vars_schema = generator.subschema_for::<Option<HashMap<String, String>>>();
-
         json_schema!({
             "type": "object",
+            "description": "Plugin-specific runtime configuration that controls sandboxing, filtering, and resource limits.",
             "properties": {
-                "skip_prompts": regex_list_schema,
-                "skip_resource_templates": regex_list_schema,
-                "skip_resources": regex_list_schema,
-                "skip_tools": regex_list_schema,
-                "allowed_hosts": allowed_hosts_schema,
-                "allowed_paths": allowed_paths_schema,
-                "allowed_secrets": allowed_secrets_schema,
-                "env_vars": env_vars_schema,
+                "skip_prompts": {
+                    "anyOf": [
+                        { "type": "array", "items": { "type": "string" } },
+                        { "type": "null" }
+                    ],
+                    "description": "List of regex patterns for prompt names to skip. Patterns are automatically anchored with ^ and $."
+                },
+                "skip_resource_templates": {
+                    "anyOf": [
+                        { "type": "array", "items": { "type": "string" } },
+                        { "type": "null" }
+                    ],
+                    "description": "List of regex patterns for resource template names to skip. Patterns are automatically anchored with ^ and $."
+                },
+                "skip_resources": {
+                    "anyOf": [
+                        { "type": "array", "items": { "type": "string" } },
+                        { "type": "null" }
+                    ],
+                    "description": "List of regex patterns for resource names to skip. Patterns are automatically anchored with ^ and $."
+                },
+                "skip_tools": {
+                    "anyOf": [
+                        { "type": "array", "items": { "type": "string" } },
+                        { "type": "null" }
+                    ],
+                    "description": "List of regex patterns for tool names to skip. Patterns are automatically anchored with ^ and $."
+                },
+                "allowed_hosts": {
+                    "description": "List of hostnames or IP addresses the plugin is allowed to connect to.",
+                    "allOf": [generator.subschema_for::<Option<Vec<String>>>()]
+                },
+                "allowed_paths": {
+                    "description": "List of file system paths the plugin is allowed to access.",
+                    "allOf": [generator.subschema_for::<Option<Vec<AllowedPath>>>()]
+                },
+                "allowed_secrets": {
+                    "description": "List of keyring entries the plugin is allowed to read..",
+                    "allOf": [generator.subschema_for::<Option<Vec<KeyringEntryId>>>()]
+                },
+                "env_vars": {
+                    "description": "Key-value pairs of environment variables to inject into the plugin runtime.",
+                    "allOf": [generator.subschema_for::<Option<HashMap<String, String>>>()]
+                },
                 "memory_limit": {
                     "anyOf": [
                         { "type": "string" },
                         { "type": "null" }
                     ],
-                    "description": "Memory limit as a human-readable byte size string (e.g. '256MB', '1GB')"
+                    "description": "Memory limit for the plugin as a human-readable string (e.g. '256MB', '1GB', '512Mi')."
                 }
             }
         })
