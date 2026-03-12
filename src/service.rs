@@ -189,19 +189,28 @@ impl PluginService {
                     return Err(anyhow!("Dynamic loading not enabled"));
                 }
                 match LoadPluginArguments::try_from(arguments) {
-                    Ok(args) => match self.load_plugin(&args.name, &args.config).await {
-                        Ok(()) => {
-                            notify().await;
-                            Ok(CallToolResult::success(vec![Content::text(format!(
-                                "Loaded {}",
+                    Ok(args) => {
+                        if self.plugins.contains_key(&args.name) {
+                            Ok(CallToolResult::error(vec![Content::text(format!(
+                                "A plugin by the name {} already exists. If you intend on replacing this pluging, unload it first",
                                 args.name
                             ))]))
+                        } else {
+                            match self.load_plugin(&args.name, &args.config).await {
+                                Ok(()) => {
+                                    notify().await;
+                                    Ok(CallToolResult::success(vec![Content::text(format!(
+                                        "Loaded {}",
+                                        args.name
+                                    ))]))
+                                }
+                                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                                    "Error loading plugin {}: {e}",
+                                    args.name
+                                ))])),
+                            }
                         }
-                        Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                            "Error loading plugin {}: {e}",
-                            args.name
-                        ))])),
-                    },
+                    }
                     Err(e) => Err(anyhow!("Failed to parse arguments: {e}")),
                 }
             }
@@ -228,6 +237,10 @@ impl PluginService {
     async fn load_plugin(&self, plugin_name: &PluginName, plugin_cfg: &PluginConfig) -> Result<()> {
         let url = &plugin_cfg.url;
         tracing::info!(plugin = %plugin_name, url = %url, "Loading plugin");
+
+        if self.plugins.contains_key(plugin_name) {
+            return Err(anyhow!("A plugin by the name {plugin_name} already exists"));
+        }
 
         let wasm_data = match url.scheme() {
             "file" => tokio::fs::read(url.path())
