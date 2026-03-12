@@ -186,7 +186,9 @@ impl PluginService {
         match tool {
             HyperMcpTools::LoadPlugin => {
                 if !self.config.dynamic_loading {
-                    return Err(anyhow!("Dynamic loading not enabled"));
+                    return Ok(CallToolResult::error(vec![Content::text(
+                        "Dynamic loading not enabled",
+                    )]));
                 }
                 match LoadPluginArguments::try_from(arguments) {
                     Ok(args) => {
@@ -216,7 +218,9 @@ impl PluginService {
             }
             HyperMcpTools::UnloadPlugin => {
                 if !self.config.dynamic_loading {
-                    return Err(anyhow!("Dynamic loading not enabled"));
+                    return Ok(CallToolResult::error(vec![Content::text(
+                        "Dynamic loading not enabled",
+                    )]));
                 }
                 match UnloadPluginArguments::try_from(arguments) {
                     Ok(args) => {
