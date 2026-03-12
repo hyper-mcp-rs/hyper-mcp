@@ -211,6 +211,10 @@ These plugins use the v2 plugin interface. New plugins should use this interface
 
 ## Documentation
 
+- **[Built-in Tools Reference](./BUILT_IN_TOOLS.md)** - Documentation for the `hyper_mcp-*` tools including:
+  - `hyper_mcp-list_plugins` — list all loaded plugins
+  - `hyper_mcp-load_plugin` — dynamically load a plugin at runtime
+  - `hyper_mcp-unload_plugin` — dynamically unload a plugin at runtime
 - **[Runtime Configuration Guide](./RUNTIME_CONFIG.md)** - Comprehensive guide to configuration options including:
   - Authentication setup (Basic, Token, and Keyring)
   - Plugin runtime configuration

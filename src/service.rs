@@ -27,7 +27,7 @@ use rmcp::{
     },
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
-use schemars::{JsonSchema, schema_for};
+use schemars::{JsonSchema, json_schema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use serde_with::{DurationSeconds, serde_as};
@@ -46,6 +46,20 @@ use tokio::{runtime::Handle, sync::SetOnce};
 use uuid::Uuid;
 
 static CALL_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct ListPluginResult {
+    name: PluginName,
+    url: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct ListPluginResults {
+    plugins: Vec<ListPluginResult>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Arguments for loading a plugin into the current MCP session.")]
@@ -106,6 +120,7 @@ impl TryFrom<Option<Map<String, Value>>> for UnloadPluginArguments {
 #[derive(Debug, EnumString, AsRefStr)]
 #[strum(serialize_all = "snake_case")]
 enum HyperMcpTools {
+    ListPlugins,
     LoadPlugin,
     UnloadPlugin,
 }
@@ -184,6 +199,20 @@ impl PluginService {
         };
 
         match tool {
+            HyperMcpTools::ListPlugins => Ok(CallToolResult::structured(serde_json::to_value(
+                ListPluginResults {
+                    plugins: self
+                        .config
+                        .plugins
+                        .iter()
+                        .map(|entry| ListPluginResult {
+                            name: entry.key().clone(),
+                            url: entry.value().url.to_string(),
+                            description: entry.value().description.clone(),
+                        })
+                        .collect(),
+                },
+            )?)),
             HyperMcpTools::LoadPlugin => {
                 if !self.config.dynamic_loading {
                     return Ok(CallToolResult::error(vec![Content::text(
@@ -918,6 +947,25 @@ impl ServerHandler for PluginService {
         let results = futures::future::join_all(futures).await;
 
         let mut list_tools_result = ListToolsResult::default();
+        list_tools_result.tools.push(
+            Tool::new(
+                format!(
+                    "{HYPER_MCP_PLUGIN_NAME}-{}",
+                    HyperMcpTools::ListPlugins.as_ref()
+                ),
+                "Lists plugins in the MCP session",
+                Arc::new(std::mem::take(
+                    json_schema!({
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": false
+                    })
+                    .ensure_object(),
+                )),
+            )
+            .with_output_schema::<ListPluginResults>()
+            .with_title("Load Plugin"),
+        );
 
         if self.config.dynamic_loading {
             list_tools_result.tools.push(
@@ -2242,7 +2290,7 @@ plugins:
         );
 
         // Verify we get the expected tools from time.wasm plugin
-        let expected_tools = vec!["time_plugin-time"];
+        let expected_tools = vec!["hyper_mcp-list_plugins", "time_plugin-time"];
 
         let actual_tool_names: Vec<String> = list_tools_result
             .tools
@@ -2355,15 +2403,17 @@ plugins:
 
         let list_tools_result = result.unwrap();
 
-        // Since we're skipping the "time" tool, the tools list should be empty
+        // Since we're skipping the "time" tool, only built-in tools should remain
+        let non_builtin_tools: Vec<&str> = list_tools_result
+            .tools
+            .iter()
+            .map(|t| t.name.as_ref() as &str)
+            .filter(|name| !name.starts_with("hyper_mcp-"))
+            .collect();
         assert!(
-            list_tools_result.tools.is_empty(),
-            "Should have no tools since 'time' tool is skipped. Found tools: {:?}",
-            list_tools_result
-                .tools
-                .iter()
-                .map(|t| t.name.as_ref() as &str)
-                .collect::<Vec<&str>>()
+            non_builtin_tools.is_empty(),
+            "Should have no plugin tools since 'time' tool is skipped. Found tools: {:?}",
+            non_builtin_tools
         );
 
         // Verify specifically that the time-plugin::time tool is not present
