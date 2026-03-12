@@ -57,16 +57,19 @@ Built with security-first mindset:
 {
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest",
+      "description": "Get current time and do time calculations"
     },
     "qr_code": {
-      "url": "oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest",
+      "description": "Generate QR codes from text"
     },
     "hash": {
       "url": "oci://ghcr.io/hyper-mcp-rs/hash-plugin:latest"
     },
     "myip": {
       "url": "oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest",
+      "description": "Get your current public IP address",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"]
       }

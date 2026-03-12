@@ -8,6 +8,7 @@ The configuration is structured as follows:
 - **dynamic_loading** (`bool`, optional, default: `false`): Enable dynamic plugin loading and unloading at runtime. When enabled, two built-in tools are exposed: `hyper_mcp-load_plugin` and `hyper_mcp-unload_plugin`. Can also be set via the `--dynamic-loading` CLI flag or the `HYPER_MCP_DYNAMIC_LOADING` environment variable (CLI/env takes precedence over the config file).
 - **plugins**: A map of plugin names to  plugin configuration objects.
   - **path** (`string`): OCI path or HTTP URL or local path for the plugin.
+  - **description** (`string`, optional): A human-readable description of the plugin. This is for documentation purposes only and has no effect on plugin behavior.
   - **runtime_config** (`object`, optional): Plugin-specific runtime configuration. The available fields are:
     - **skip_tools** (`array[string]`, optional): List of regex patterns for tool names to skip loading at runtime. Each pattern is automatically anchored to match the entire tool name (equivalent to wrapping with `^` and `$`). Supports full regex syntax for powerful pattern matching.
     - **allowed_hosts** (`array[string]`, optional): List of allowed hosts for the plugin (e.g., `["1.1.1.1"]` or `["*"]`).
@@ -362,8 +363,10 @@ dynamic_loading: true
 plugins:
   time:
     url: oci://ghcr.io/hyper-mcp-rs/time-plugin:latest
+    description: "Get current time and do time calculations"
   myip:
     url: oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest
+    description: "Get your current public IP address"
     runtime_config:
       allowed_hosts:
         - "1.1.1.1"
@@ -386,6 +389,7 @@ plugins:
       memory_limit: "512Mi"
   private_plugin:
     url: "https://private.registry.io/my-plugin"
+    description: "A plugin loaded from a private registry"
     runtime_config:
       allowed_hosts:
         - "private.registry.io"
@@ -417,10 +421,12 @@ plugins:
   },
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest",
+      "description": "Get current time and do time calculations"
     },
     "myip": {
       "url": "oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest",
+      "description": "Get your current public IP address",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"],
         "allowed_paths": [
@@ -446,6 +452,7 @@ plugins:
     },
     "private_plugin": {
       "url": "https://private.registry.io/my-plugin",
+      "description": "A plugin loaded from a private registry",
       "runtime_config": {
         "allowed_hosts": ["private.registry.io"]
       }

@@ -1,16 +1,20 @@
 {
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/time-plugin:latest",
+      "description": "Get current time and do time calculations"
     },
     "qr-code": {
-      "url": "oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/qrcode-plugin:latest",
+      "description": "Generate QR codes from text or URLs"
     },
     "hash": {
-      "url": "oci://ghcr.io/hyper-mcp-rs/hash-plugin:latest"
+      "url": "oci://ghcr.io/hyper-mcp-rs/hash-plugin:latest",
+      "description": "Generate various types of hashes"
     },
     "myip": {
       "url": "oci://ghcr.io/hyper-mcp-rs/myip-plugin:latest",
+      "description": "Get your current public IP address",
       "runtime_config": {
         "allowed_hosts": ["1.1.1.1"],
         "allowed_secrets": [
@@ -24,6 +28,7 @@
     },
     "fetch": {
       "url": "oci://ghcr.io/hyper-mcp-rs/fetch-plugin:latest",
+      "description": "Fetch and extract content from web pages",
       "runtime_config": {
         "allowed_hosts": ["*"],
         "skip_tools": ["temp_.*", "mock_.*", "tool_[0-9]+"]
@@ -31,6 +36,7 @@
     },
     "example_plugin": {
       "url": "oci://ghcr.io/example/demo-plugin:latest",
+      "description": "An example plugin demonstrating advanced runtime configuration",
       "runtime_config": {
         "skip_tools": [
           "admin_tool",
