@@ -190,31 +190,33 @@ impl PluginService {
                         "Dynamic loading not enabled",
                     )]));
                 }
-                match LoadPluginArguments::try_from(arguments) {
+                Ok(match LoadPluginArguments::try_from(arguments) {
                     Ok(args) => {
                         if self.plugins.contains_key(&args.name) {
-                            Ok(CallToolResult::error(vec![Content::text(format!(
+                            CallToolResult::error(vec![Content::text(format!(
                                 "A plugin by the name {} already exists. If you intend on replacing this pluging, unload it first",
                                 args.name
-                            ))]))
+                            ))])
                         } else {
                             match self.load_plugin(&args.name, &args.config).await {
                                 Ok(()) => {
                                     notify().await;
-                                    Ok(CallToolResult::success(vec![Content::text(format!(
+                                    CallToolResult::success(vec![Content::text(format!(
                                         "Loaded {}",
                                         args.name
-                                    ))]))
+                                    ))])
                                 }
-                                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                                Err(e) => CallToolResult::error(vec![Content::text(format!(
                                     "Error loading plugin {}: {e}",
                                     args.name
-                                ))])),
+                                ))]),
                             }
                         }
                     }
-                    Err(e) => Err(anyhow!("Failed to parse arguments: {e}")),
-                }
+                    Err(e) => CallToolResult::error(vec![Content::text(format!(
+                        "Failed to parse arguments: {e}"
+                    ))]),
+                })
             }
             HyperMcpTools::UnloadPlugin => {
                 if !self.config.dynamic_loading {
@@ -222,17 +224,19 @@ impl PluginService {
                         "Dynamic loading not enabled",
                     )]));
                 }
-                match UnloadPluginArguments::try_from(arguments) {
+                Ok(match UnloadPluginArguments::try_from(arguments) {
                     Ok(args) => {
                         self.unload_plugin(&args.name);
                         notify().await;
-                        Ok(CallToolResult::success(vec![Content::text(format!(
+                        CallToolResult::success(vec![Content::text(format!(
                             "Unloaded {}",
                             args.name
-                        ))]))
+                        ))])
                     }
-                    Err(e) => Err(anyhow!("Failed to parse arguments: {e}")),
-                }
+                    Err(e) => CallToolResult::error(vec![Content::text(format!(
+                        "Failed to parse arguments: {e}"
+                    ))]),
+                })
             }
         }
     }
