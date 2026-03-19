@@ -167,7 +167,7 @@ You can configure hyper-mcp either globally for all projects or specifically for
 
 ## Available Plugins
 
-We maintain several example plugins to get you started:
+We maintain several plugins to get you started:
 
 ### V1 Plugins
 
