@@ -6,7 +6,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: read # checkout repository
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,7 +21,7 @@ jobs:
     name: Prepare nightly tag + delete prior release
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # push nightly tag and delete prior release
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -53,9 +57,9 @@ jobs:
             platform: linux/arm64
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: read
-      packages: write
-      id-token: write # keyless cosign
+      contents: read # checkout repository
+      packages: write # push container images to GHCR
+      id-token: write # keyless cosign signing
     outputs:
       digest_amd64: ${{ steps.meta.outputs.digest_amd64 }}
       digest_arm64: ${{ steps.meta.outputs.digest_arm64 }}
@@ -98,8 +102,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
-          ARCH="${{ matrix.arch }}"
+          IMAGE="ghcr.io/${REPOSITORY_OWNER}/hyper-mcp"
           DIGEST="${STEPS_BUILD_OUTPUTS_DIGEST}"
 
           REF="${IMAGE}@${DIGEST}"
@@ -118,6 +121,8 @@ jobs:
           echo "Built ${IMAGE}:nightly-${ARCH} -> ${DIGEST}"
         env:
           STEPS_BUILD_OUTPUTS_DIGEST: ${{ steps.build.outputs.digest }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          ARCH: ${{ matrix.arch }}
 
   # 2) Create multi-arch nightly manifest (tag=nightly), sign manifest by digest, export digest for release notes.
   create-multiarch-manifests:
@@ -125,9 +130,9 @@ jobs:
     needs: build-oci-images
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      contents: read # checkout repository
+      packages: write # push manifest to GHCR
+      id-token: write # keyless cosign signing
     outputs:
       nightly_digest: ${{ steps.digest.outputs.nightly_digest }}
 
@@ -156,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+          IMAGE="ghcr.io/${REPOSITORY_OWNER}/hyper-mcp"
           AMD64_DIGEST="${NEEDS_BUILD_OCI_IMAGES_OUTPUTS_DIGEST_AMD64}"
           ARM64_DIGEST="${NEEDS_BUILD_OCI_IMAGES_OUTPUTS_DIGEST_ARM64}"
 
@@ -189,6 +194,7 @@ jobs:
         env:
           NEEDS_BUILD_OCI_IMAGES_OUTPUTS_DIGEST_AMD64: ${{ needs.build-oci-images.outputs.digest_amd64 }}
           NEEDS_BUILD_OCI_IMAGES_OUTPUTS_DIGEST_ARM64: ${{ needs.build-oci-images.outputs.digest_arm64 }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
 
   # 3) Build binaries (matrix), upload as artifacts.
   build-nightly-binaries:
@@ -213,7 +219,7 @@ jobs:
             ext: ".exe"
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: read
+      contents: read # checkout repository
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -221,18 +227,20 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
-        with:
-          components: rustfmt, clippy
+        run: rustup show
 
       - name: Install cargo-auditable
         run: cargo install cargo-auditable
 
       - name: Install compilation target
-        run: rustup target add ${{ matrix.target }}
+        run: rustup target add "${TARGET}"
+        env:
+          TARGET: ${{ matrix.target }}
 
       - name: Build
-        run: cargo auditable build --target ${{ matrix.target }} --release --locked
+        run: cargo auditable build --target "${TARGET}" --release --locked
+        env:
+          TARGET: ${{ matrix.target }}
 
       - name: Package
         shell: bash
@@ -240,25 +248,29 @@ jobs:
           set -euo pipefail
           mkdir -p dist
 
-          bin="hyper-mcp${{ matrix.ext }}"
-          src="target/${{ matrix.target }}/release/${bin}"
+          bin="hyper-mcp${EXT}"
+          src="target/${TARGET}/release/${bin}"
 
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
             # Use PowerShell's Compress-Archive? We'll keep it simple with tar if available;
             # but Windows runners have bsdtar via Git. Use zip for compatibility.
-            7z a "dist/hyper-mcp-${{ matrix.target }}.zip" "${src}"
-            pkg="dist/hyper-mcp-${{ matrix.target }}.zip"
+            7z a "dist/hyper-mcp-${TARGET}.zip" "${src}"
+            pkg="dist/hyper-mcp-${TARGET}.zip"
           else
-            tar -czf "dist/hyper-mcp-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" "${bin}"
-            pkg="dist/hyper-mcp-${{ matrix.target }}.tar.gz"
+            tar -czf "dist/hyper-mcp-${TARGET}.tar.gz" -C "target/${TARGET}/release" "${bin}"
+            pkg="dist/hyper-mcp-${TARGET}.tar.gz"
           fi
 
           # checksums
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "${pkg}" > "dist/checksums-${{ matrix.target }}.txt"
+            sha256sum "${pkg}" > "dist/checksums-${TARGET}.txt"
           else
-            shasum -a 256 "${pkg}" > "dist/checksums-${{ matrix.target }}.txt"
+            shasum -a 256 "${pkg}" > "dist/checksums-${TARGET}.txt"
           fi
+        env:
+          TARGET: ${{ matrix.target }}
+          EXT: ${{ matrix.ext }}
+          RUNNER_OS: ${{ runner.os }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -274,7 +286,7 @@ jobs:
     name: SBOM
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: read # checkout repository
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -313,7 +325,7 @@ jobs:
       - sbom
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # create GitHub release and upload assets
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -345,7 +357,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          IMAGE="ghcr.io/${{ github.repository_owner }}/hyper-mcp"
+          IMAGE="ghcr.io/${REPOSITORY_OWNER}/hyper-mcp"
           NIGHTLY_DIGEST="${NEEDS_CREATE_MULTIARCH_MANIFESTS_OUTPUTS_NIGHTLY_DIGEST}"
           SHA="${GITHUB_SHA}"
 
@@ -370,21 +382,17 @@ jobs:
             ${IMAGE}@${NIGHTLY_DIGEST}
           \`\`\`
           EOF
-
-          echo "body_path=release-body.md" >> "$GITHUB_OUTPUT"
         env:
           NEEDS_CREATE_MULTIARCH_MANIFESTS_OUTPUTS_NIGHTLY_DIGEST: ${{ needs.create-multiarch-manifests.outputs.nightly_digest }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
 
       - name: Create nightly release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
-        with:
-          tag_name: nightly
-          name: Nightly build
-          draft: false
-          prerelease: true
-          generate_release_notes: true
-          preserve_order: true
-          body_path: ${{ steps.notes.outputs.body_path }}
-          files: |
-            out/*
+        shell: bash
+        run: |
+          gh release create nightly \
+            --title "Nightly build" \
+            --prerelease \
+            --generate-notes \
+            --notes-file release-body.md \
+            out/* \
             sbom.cdx.json
