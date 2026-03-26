@@ -244,11 +244,13 @@ jobs:
         run: cargo install cargo-auditable
 
       - name: Install compilation target
+        shell: bash
         run: rustup target add "${TARGET}"
         env:
           TARGET: ${{ matrix.target }}
 
       - name: Build
+        shell: bash
         run: cargo auditable build --target "${TARGET}" --release --locked
         env:
           TARGET: ${{ matrix.target }}
