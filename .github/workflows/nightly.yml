@@ -33,8 +33,17 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main
-          git tag -f nightly origin/main
-          git push -f origin nightly
+          MAIN_SHA="$(git rev-parse origin/main)"
+
+          # Move the nightly tag via the API (git push is unavailable with persist-credentials: false)
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
+            --method PATCH \
+            --field sha="${MAIN_SHA}" \
+            --field force=true 2>/dev/null \
+          || gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            --method POST \
+            --field ref="refs/tags/nightly" \
+            --field sha="${MAIN_SHA}"
 
       - name: Delete existing nightly release (if any)
         shell: bash
