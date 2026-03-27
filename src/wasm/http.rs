@@ -77,7 +77,13 @@ pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> R
     if let Some(query) = url.query() {
         let mut query_hash = Sha256::new();
         query_hash.update(query);
-        wasm_path.push(format!("{:x}", query_hash.finalize()));
+        wasm_path.push(
+            query_hash
+                .finalize()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>(),
+        );
     }
 
     let mut request = REQWEST_CLIENT

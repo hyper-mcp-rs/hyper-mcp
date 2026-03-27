@@ -1897,8 +1897,8 @@ mod tests {
     use rmcp::{
         ClientHandler,
         model::{
-            ArgumentInfo, ClientInfo, CompletionContext, Extensions, Meta, PromptReference,
-            ProtocolVersion, RequestId, ResourceReference, Tool,
+            ArgumentInfo, ClientInfo, CompletionContext, PromptReference, ProtocolVersion,
+            RequestId, ResourceReference, Tool,
         },
         service::{RoleClient, RunningService, Service, serve_client, serve_server},
     };
@@ -1911,7 +1911,6 @@ mod tests {
     use tempfile::TempDir;
     use tokio::io::duplex;
     use tokio_test::assert_ok;
-    use tokio_util::sync::CancellationToken;
 
     struct TestClientInner {
         tool_list_changed_count: AtomicUsize,
@@ -1969,13 +1968,7 @@ mod tests {
     fn create_test_ctx(
         running: &RunningService<RoleServer, PluginService>,
     ) -> RequestContext<RoleServer> {
-        RequestContext {
-            ct: CancellationToken::new(),
-            extensions: Extensions::default(),
-            id: RequestId::Number(1),
-            meta: Meta::default(),
-            peer: running.peer().clone(),
-        }
+        RequestContext::new(RequestId::Number(1), running.peer().clone())
     }
 
     fn create_test_service(config: Config) -> PluginService {
@@ -2769,17 +2762,8 @@ plugins:
         )
         .await;
 
-        // Create a cancellation token
-        let cancellation_token = CancellationToken::new();
-
         // Create request context with the cancellation token
-        let ctx = RequestContext {
-            ct: cancellation_token.clone(),
-            extensions: Extensions::default(),
-            id: RequestId::Number(1),
-            meta: Meta::default(),
-            peer: server.peer().clone(),
-        };
+        let ctx = create_test_ctx(&server);
 
         let request = CallToolRequestParams::new("time_plugin-time").with_arguments({
             let mut map = serde_json::Map::new();
@@ -2791,7 +2775,7 @@ plugins:
         });
 
         // Cancel the token before executing call_tool to force cancellation path
-        cancellation_token.cancel();
+        ctx.ct.cancel();
 
         // Execute call_tool with the already-cancelled token
         let result = server.service().call_tool(request, ctx).await;
@@ -2835,20 +2819,11 @@ plugins:
         )
         .await;
 
-        // Create a cancellation token
-        let cancellation_token = CancellationToken::new();
-
         // Create request context with the cancellation token
-        let ctx = RequestContext {
-            ct: cancellation_token.clone(),
-            extensions: Extensions::default(),
-            id: RequestId::Number(1),
-            meta: Meta::default(),
-            peer: server.peer().clone(),
-        };
+        let ctx = create_test_ctx(&server);
 
         // Cancel the token before executing list_tools to force cancellation path
-        cancellation_token.cancel();
+        ctx.ct.cancel();
 
         // Execute list_tools with the already-cancelled token
         let result = server.service().list_tools(None, ctx).await;
