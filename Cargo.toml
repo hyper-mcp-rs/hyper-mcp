@@ -24,7 +24,7 @@ axum = "0.8"
 bytesize = "2.3"
 camino = "1.2"
 clap = { version = "4.6", features = ["derive", "env"] }
-ctor = "0.6"
+ctor = "0.8"
 dashmap = { version = "6.1", features = ["serde"] }
 directories = "6.0"
 dirs = "6.0"
@@ -68,7 +68,7 @@ tracing = { version = "0.1", features = ["attributes"] }
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5", features = ["serde"] }
-uuid = { version = "1.22", features = ["serde"] }
+uuid = { version = "1.23", features = ["serde"] }
 
 [dev-dependencies]
 aws-sdk-s3 = { version = "1.127", features = ["test-util"] }
