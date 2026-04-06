@@ -61,7 +61,7 @@ sigstore = { version = "0.13", features = ["cosign", "verify", "bundle"] }
 strum = "0.28"
 strum_macros = "0.28"
 tar = "0.4"
-tokio = { version = "1.50", features = ["full"] }
+tokio = { version = "1.51", features = ["full"] }
 tokio-util = "0.7"
 toml = "1.1"
 tracing = { version = "0.1", features = ["attributes"] }
