@@ -1267,18 +1267,12 @@ mod host_fns {
                         if let Some(timeout) = elicitation_msg.timeout {
                             Ok(ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).unwrap_or_else(|err| {
                                 tracing::error!(error = ?err, "Elicitation creation failed");
-                                Json(CreateElicitationResult {
-                                    action: ElicitationAction::Decline,
-                                    content: Some(json!({"error": err.to_string()})),
-                                })
+                                Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": err.to_string()})))
                             }))
                         } else {
                             Ok(ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).unwrap_or_else(|err| {
                                     tracing::error!(error = ?err, "Elicitation creation failed");
-                                    Json(CreateElicitationResult {
-                                        action: ElicitationAction::Decline,
-                                        content: Some(json!({"error": err.to_string()})),
-                                    })
+                                    Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": err.to_string()})))
                             }))
                         }
                     };
@@ -1287,35 +1281,23 @@ mod host_fns {
                             peer_create_elicitation()
                         } else {
                             tracing::info!("Peer does not support form elicitation, declining");
-                            Ok(Json(CreateElicitationResult {
-                                action: ElicitationAction::Decline,
-                                content: Some(json!({"error": "Peer does not support form elicitation"})),
-                            }))
+                            Ok(Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": "Peer does not support form elicitation"}))))
                         }
                     } else if let CreateElicitationRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
                         if peer.supported_elicitation_modes().contains(&ElicitationMode::Url) {
                             peer_create_elicitation()
                         } else {
                             tracing::info!("Peer does not support url elicitation, declining");
-                            Ok(Json(CreateElicitationResult {
-                                action: ElicitationAction::Decline,
-                                content: Some(json!({"error": "Peer does not support url elicitation"})),
-                            }))
+                            Ok(Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": "Peer does not support url elicitation"}))))
                         }
                     } else {
                         tracing::warn!("Unknown elicitation type, declining");
-                        Ok(Json(CreateElicitationResult {
-                            action: ElicitationAction::Decline,
-                            content: Some(json!({"error": "Unknown elicitation type"})),
-                        }))
+                        Ok(Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": "Unknown elicitation type"}))))
                     }
                 },
                 None => {
                     tracing::error!("No peer available, declining");
-                    Ok(Json(CreateElicitationResult {
-                        action: ElicitationAction::Decline,
-                        content: Some(json!({"error": "No peer avaialable"})),
-                    }))
+                    Ok(Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": "No peer avaialable"}))))
                 },
             }
         });
