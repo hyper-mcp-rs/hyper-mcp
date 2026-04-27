@@ -46,6 +46,37 @@ Built with security-first mindset:
 - Fine-grained access control for host functions
 - OCI plugin images are signed at publish time and verified at load time with [sigstore](https://www.sigstore.dev/).
 
+## Installation
+
+### Pre-built binaries (GitHub Releases)
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/hyper-mcp-rs/hyper-mcp/releases):
+
+Chose the version that you want and download the architecture-specific binary.
+
+| Platform | Architecture | Download |
+|---|---|---|
+| macOS | Apple Silicon (ARM64) | hyper-mcp-aarch64-apple-darwin.tar.gz |
+| Linux | ARM64 | hyper-mcp-aarch64-unknown-linux-gnu.tar.gz |
+| Linux | x86_64 | hyper-mcp-x86_64-unknown-linux-gnu.tar.gz |
+| Windows | x86_64 | hyper-mcp-x86_64-pc-windows-msvc.zip |
+
+**macOS / Linux:**
+
+Donwload the `.tar.gz` file, extract it, and place `hyper-mcp` in `/usr/local/bin`.
+
+**Windows:**
+
+Download the `.zip` file, extract it, and place `hyper-mcp.exe` somewhere on your `PATH`.
+
+### Install from crates.io
+
+If you have [Rust](https://rustup.rs/) installed, you can install hyper-mcp directly from [crates.io](https://crates.io/crates/hyper-mcp):
+
+```sh
+cargo install hyper-mcp
+```
+
 ## Getting Started
 
 1. Create your config file:
