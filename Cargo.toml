@@ -34,11 +34,8 @@ extism-convert = "1.21"
 flate2 = "1.1"
 futures = "0.3"
 hex = "0.4"
-keyring = { version = "3.6", features = [
-    "apple-native",
-    "linux-native",
-    "windows-native",
-] }
+keyring = "4.0"
+keyring-core = "1.0"
 oauth2 = "5.0"
 oci-client = "0.16"
 percent-encoding = "2.3"

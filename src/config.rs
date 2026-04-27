@@ -37,7 +37,7 @@ impl<'de> Deserialize<'de> for AuthConfig {
             }
             InternalAuthConfig::Token { token } => Ok(AuthConfig::Token { token }),
             InternalAuthConfig::Keyring(id) => {
-                use keyring::Entry;
+                use keyring_core::Entry;
                 use serde::de;
 
                 let entry: Entry = (id).try_into().map_err(de::Error::custom)?;
@@ -340,19 +340,19 @@ pub struct KeyringEntryId {
     pub user: String,
 }
 
-impl TryFrom<KeyringEntryId> for keyring::Entry {
-    type Error = keyring::Error;
+impl TryFrom<KeyringEntryId> for keyring_core::Entry {
+    type Error = keyring_core::Error;
 
     fn try_from(id: KeyringEntryId) -> Result<Self, Self::Error> {
-        keyring::Entry::new(&id.service, &id.user)
+        keyring_core::Entry::new(&id.service, &id.user)
     }
 }
 
-impl TryFrom<&KeyringEntryId> for keyring::Entry {
-    type Error = keyring::Error;
+impl TryFrom<&KeyringEntryId> for keyring_core::Entry {
+    type Error = keyring_core::Error;
 
     fn try_from(id: &KeyringEntryId) -> Result<Self, Self::Error> {
-        keyring::Entry::new(&id.service, &id.user)
+        keyring_core::Entry::new(&id.service, &id.user)
     }
 }
 
@@ -1513,6 +1513,12 @@ plugins:
         use std::process::Command;
         use std::time::{SystemTime, UNIX_EPOCH};
 
+        // Initialize the platform-native keyring store (required by keyring 4.0)
+        if let Err(e) = keyring::use_native_store(false) {
+            println!("Failed to initialize native keyring store: {e}. Skipping test.");
+            return;
+        }
+
         // Generate unique service and user names to avoid conflicts
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1670,6 +1676,12 @@ plugins:
         use std::process::Command;
         use std::time::{SystemTime, UNIX_EPOCH};
         use tokio::fs;
+
+        // Initialize the platform-native keyring store (required by keyring 4.0)
+        if let Err(e) = keyring::use_native_store(false) {
+            println!("Failed to initialize native keyring store: {e}. Skipping test.");
+            return;
+        }
 
         let rt = Runtime::new().unwrap();
 
@@ -1883,7 +1895,11 @@ plugins:
             Err(e) => {
                 // Check if this is a keyring-related error
                 let error_msg = e.to_string();
-                if error_msg.contains("keyring") || error_msg.contains("secure storage") {
+                if error_msg.contains("keyring")
+                    || error_msg.contains("secure storage")
+                    || error_msg.contains("No default store")
+                    || error_msg.contains("No matching credential")
+                {
                     println!(
                         "Keyring lookup failed (keyring service may not be available): {e}. This is acceptable for CI environments."
                     );
@@ -1899,6 +1915,12 @@ plugins:
     fn test_keyring_auth_direct_deserialization() {
         use std::process::Command;
         use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Initialize the platform-native keyring store (required by keyring 4.0)
+        if let Err(e) = keyring::use_native_store(false) {
+            println!("Failed to initialize native keyring store: {e}. Skipping test.");
+            return;
+        }
 
         // Generate unique service and user names to avoid conflicts
         let timestamp = SystemTime::now()

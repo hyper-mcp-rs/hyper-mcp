@@ -20,6 +20,12 @@ async fn main() -> Result<()> {
         let _span = span.enter();
         let cli = cli::Cli::parse();
         tracing::debug!("Loading config from {:?}", cli);
+
+        // Initialize the platform-native keyring store before any entries are created.
+        if let Err(e) = keyring::use_native_store(false) {
+            tracing::warn!(error = ?e, "Failed to initialize native keyring store; keyring secrets will be unavailable");
+        }
+
         let config = config::Config::load(&cli).await?;
         tracing::info!("Starting hyper-mcp");
         let service = service::PluginService::new(&config).await?;

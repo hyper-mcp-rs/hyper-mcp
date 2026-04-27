@@ -1583,7 +1583,7 @@ mod host_fns {
             match &plugin_config.runtime_config {
                 Some(runtime_config) => match &runtime_config.allowed_secrets {
                     Some(allowed_secrets) => if allowed_secrets.contains(&entry) {
-                        let entry: keyring::Entry = match (entry).try_into() {
+                        let entry: keyring_core::Entry = match (entry).try_into() {
                             Ok(entry) => entry,
                             Err(error) => {
                                 tracing::error!(error = ?error, "Unable to convert to entry in keyring");
