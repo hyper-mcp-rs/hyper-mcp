@@ -17,6 +17,84 @@ The configuration is structured as follows:
     - **env_vars** (`object`, optional): Key-value pairs of environment variables for the plugin.
     - **memory_limit** (`string`, optional): Memory limit for the plugin (e.g., `"512Mi"`).
 
+## Environment Variable Expansion
+
+Config files support environment variable expansion using the `${VAR}` syntax.
+Expansion happens **before** the file is parsed, so it works identically across
+JSON, YAML, and TOML configs.
+
+### Syntax
+
+| Pattern | Behaviour |
+|---|---|
+| `${VAR}` | Replaced with the value of the environment variable `VAR`. An error is raised if the variable is unset or empty. |
+| `${VAR:-default}` | Replaced with the value of `VAR`, or `default` if the variable is unset or empty. |
+| `$${VAR}` | Escape hatch — produces the literal text `${VAR}` (no expansion). |
+| `$VAR` | **Not** expanded. Left as-is. This is intentional so that regex patterns in `skip_tools` (which use `$` for end-of-string anchors) are not affected. |
+
+Variable names must match `[A-Za-z_][A-Za-z0-9_]*`.
+
+### Examples
+
+**YAML:**
+```yaml
+plugins:
+  my_plugin:
+    url: "file://${HOME}/plugins/my-plugin.wasm"
+    runtime_config:
+      env_vars:
+        API_KEY: "${API_KEY}"
+        REGION: "${AWS_REGION:-us-east-1}"
+```
+
+**JSON:**
+```json
+{
+  "plugins": {
+    "my_plugin": {
+      "url": "file://${HOME}/plugins/my-plugin.wasm",
+      "runtime_config": {
+        "env_vars": {
+          "API_KEY": "${API_KEY}",
+          "REGION": "${AWS_REGION:-us-east-1}"
+        }
+      }
+    }
+  }
+}
+```
+
+**TOML:**
+```toml
+[plugins.my_plugin]
+url = "file://${HOME}/plugins/my-plugin.wasm"
+
+[plugins.my_plugin.runtime_config.env_vars]
+API_KEY = "${API_KEY}"
+REGION = "${AWS_REGION:-us-east-1}"
+```
+
+### Producing a literal `${...}`
+
+If you need the literal text `${VAR}` in a config value (for example, a
+template string that should not be expanded), double the leading `$`:
+
+```yaml
+env_vars:
+  TEMPLATE: "$${NOT_EXPANDED}"   # Value will be: ${NOT_EXPANDED}
+```
+
+### Error behaviour
+
+If a `${VAR}` reference (without a default) points to an undefined or empty
+environment variable, hyper-mcp will refuse to start and print an error
+listing all missing variables. This prevents silent misconfiguration.
+
+To make a variable optional, always provide a default:
+```yaml
+url: "${PLUGIN_PATH:-file:///usr/local/share/hyper-mcp/default-plugin.wasm}"
+```
+
 ## Plugin Names
 
 Plugin names must follow strict naming conventions to ensure consistency and avoid conflicts:

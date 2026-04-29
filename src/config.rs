@@ -1,4 +1,4 @@
-use crate::{cli::Cli, naming::PluginName};
+use crate::{cli::Cli, expand_env::expand_env_vars, naming::PluginName};
 use anyhow::{Context, Result};
 use bytesize::ByteSize;
 use camino::Utf8PathBuf;
@@ -90,6 +90,9 @@ impl Config {
         let content = tokio::fs::read_to_string(config_path)
             .await
             .with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
+
+        let content = expand_env_vars(&content)
+            .with_context(|| "Failed to expand environment variables in config file")?;
 
         let mut config: Config = match ext {
             "json" => serde_json::from_str(&content)?,
@@ -4142,5 +4145,210 @@ allowed_hosts:
         let debug_str = format!("{:?}", entry);
         assert!(debug_str.contains("debug-service"));
         assert!(debug_str.contains("debug-user"));
+    }
+
+    // ── Environment variable expansion integration tests ─────────────
+
+    #[test]
+    fn test_env_expansion_in_yaml_config() {
+        use std::io::Write;
+
+        let rt = Runtime::new().unwrap();
+
+        unsafe { std::env::set_var("EXPAND_INT_TEST_URL", "file:///expanded/path/plugin") };
+        unsafe { std::env::set_var("EXPAND_INT_TEST_HOST", "api.example.com") };
+
+        let yaml_content = r#"plugins:
+  expanded_plugin:
+    url: "${EXPAND_INT_TEST_URL}"
+    runtime_config:
+      allowed_hosts:
+        - "${EXPAND_INT_TEST_HOST}"
+      env_vars:
+        MODE: "${EXPAND_INT_TEST_MISSING:-production}"
+"#;
+
+        let mut tmp_file = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
+        tmp_file.write_all(yaml_content.as_bytes()).unwrap();
+        tmp_file.flush().unwrap();
+
+        let cli = Cli {
+            config_file: Some(tmp_file.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let config = rt
+            .block_on(Config::load(&cli))
+            .expect("Failed to load config with env expansion");
+
+        let plugin = config
+            .plugins
+            .get(&PluginName::try_from("expanded_plugin").unwrap())
+            .expect("expanded_plugin not found");
+
+        assert_eq!(plugin.url.to_string(), "file:///expanded/path/plugin");
+
+        let rc = plugin.runtime_config.as_ref().unwrap();
+        assert_eq!(
+            rc.allowed_hosts.as_ref().unwrap(),
+            &["api.example.com".to_string()]
+        );
+        assert_eq!(rc.env_vars.as_ref().unwrap()["MODE"], "production");
+
+        unsafe { std::env::remove_var("EXPAND_INT_TEST_URL") };
+        unsafe { std::env::remove_var("EXPAND_INT_TEST_HOST") };
+    }
+
+    #[test]
+    fn test_env_expansion_in_json_config() {
+        use std::io::Write;
+
+        let rt = Runtime::new().unwrap();
+
+        unsafe { std::env::set_var("EXPAND_INT_JSON_URL", "https://example.com/plugin.wasm") };
+
+        let json_content = r#"{
+  "plugins": {
+    "json_expanded": {
+      "url": "${EXPAND_INT_JSON_URL}",
+      "runtime_config": {
+        "env_vars": {
+          "REGION": "${EXPAND_INT_JSON_MISSING:-us-east-1}"
+        }
+      }
+    }
+  }
+}"#;
+
+        let mut tmp_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        tmp_file.write_all(json_content.as_bytes()).unwrap();
+        tmp_file.flush().unwrap();
+
+        let cli = Cli {
+            config_file: Some(tmp_file.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let config = rt
+            .block_on(Config::load(&cli))
+            .expect("Failed to load JSON config with env expansion");
+
+        let plugin = config
+            .plugins
+            .get(&PluginName::try_from("json_expanded").unwrap())
+            .expect("json_expanded not found");
+
+        assert_eq!(plugin.url.to_string(), "https://example.com/plugin.wasm");
+
+        let rc = plugin.runtime_config.as_ref().unwrap();
+        assert_eq!(rc.env_vars.as_ref().unwrap()["REGION"], "us-east-1");
+
+        unsafe { std::env::remove_var("EXPAND_INT_JSON_URL") };
+    }
+
+    #[test]
+    fn test_env_expansion_in_toml_config() {
+        use std::io::Write;
+
+        let rt = Runtime::new().unwrap();
+
+        unsafe { std::env::set_var("EXPAND_INT_TOML_URL", "file:///toml/plugin.wasm") };
+
+        let toml_content = r#"[plugins.toml_expanded]
+url = "${EXPAND_INT_TOML_URL}"
+"#;
+
+        let mut tmp_file = tempfile::Builder::new().suffix(".toml").tempfile().unwrap();
+        tmp_file.write_all(toml_content.as_bytes()).unwrap();
+        tmp_file.flush().unwrap();
+
+        let cli = Cli {
+            config_file: Some(tmp_file.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let config = rt
+            .block_on(Config::load(&cli))
+            .expect("Failed to load TOML config with env expansion");
+
+        let plugin = config
+            .plugins
+            .get(&PluginName::try_from("toml_expanded").unwrap())
+            .expect("toml_expanded not found");
+
+        assert_eq!(plugin.url.to_string(), "file:///toml/plugin.wasm");
+
+        unsafe { std::env::remove_var("EXPAND_INT_TOML_URL") };
+    }
+
+    #[test]
+    fn test_env_expansion_escape_hatch_in_config() {
+        use std::io::Write;
+
+        let rt = Runtime::new().unwrap();
+
+        // The skip_tools regex pattern contains a literal ${...} via the escape hatch
+        let yaml_content = r#"plugins:
+  escape_test:
+    url: "file:///path/to/plugin"
+    runtime_config:
+      skip_tools:
+        - "literal_tool"
+      env_vars:
+        TEMPLATE: "$${NOT_EXPANDED}"
+"#;
+
+        let mut tmp_file = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
+        tmp_file.write_all(yaml_content.as_bytes()).unwrap();
+        tmp_file.flush().unwrap();
+
+        let cli = Cli {
+            config_file: Some(tmp_file.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let config = rt
+            .block_on(Config::load(&cli))
+            .expect("Failed to load config with escape hatch");
+
+        let plugin = config
+            .plugins
+            .get(&PluginName::try_from("escape_test").unwrap())
+            .expect("escape_test not found");
+
+        let rc = plugin.runtime_config.as_ref().unwrap();
+        assert_eq!(rc.env_vars.as_ref().unwrap()["TEMPLATE"], "${NOT_EXPANDED}");
+    }
+
+    #[test]
+    fn test_env_expansion_missing_var_errors() {
+        use std::io::Write;
+
+        let rt = Runtime::new().unwrap();
+
+        unsafe { std::env::remove_var("EXPAND_INT_ERR_MISSING") };
+
+        let yaml_content = r#"plugins:
+  error_test:
+    url: "${EXPAND_INT_ERR_MISSING}"
+"#;
+
+        let mut tmp_file = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
+        tmp_file.write_all(yaml_content.as_bytes()).unwrap();
+        tmp_file.flush().unwrap();
+
+        let cli = Cli {
+            config_file: Some(tmp_file.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let result = rt.block_on(Config::load(&cli));
+        assert!(result.is_err(), "Expected error for missing env var");
+        let err = result.unwrap_err();
+        let chain = format!("{err:?}");
+        assert!(
+            chain.contains("EXPAND_INT_ERR_MISSING"),
+            "Error chain should mention the missing var, got: {chain}"
+        );
     }
 }

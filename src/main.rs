@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod expand_env;
 mod logging;
 mod naming;
 mod oauth2;
