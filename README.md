@@ -48,6 +48,16 @@ Built with security-first mindset:
 
 ## Installation
 
+### Prerequisites
+
+**cosign** — required for loading plugins from OCI registries (`oci://` URLs).
+
+hyper-mcp verifies the cryptographic signature of every OCI plugin before loading it to ensure the plugin has not been tampered with and comes from a trusted source. This verification is performed by shelling out to the [cosign](https://github.com/sigstore/cosign) CLI, which must be installed and available on your `PATH`.
+
+Install cosign by following the official instructions: **<https://docs.sigstore.dev/cosign/system_config/installation/>**
+
+> **Note:** If you only use `file://`, `http://`, `https://`, or `s3://` plugin URLs, cosign is not needed. You can also bypass signature verification for OCI plugins by setting `insecure_skip_signature: true` in your config or the `HYPER_MCP_INSECURE_SKIP_SIGNATURE=true` environment variable, but this is **not recommended** for production use.
+
 ### Pre-built binaries (GitHub Releases)
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/hyper-mcp-rs/hyper-mcp/releases):
@@ -119,7 +129,7 @@ cargo install hyper-mcp
 > 📖 **For detailed configuration options including authentication setup, runtime configuration, and advanced features, see [RUNTIME_CONFIG.md](./RUNTIME_CONFIG.md)**
 
 Supported URL schemes:
-- `oci://` - for OCI-compliant registries (like Docker Hub, GitHub Container Registry, etc.) **REQUIRES COSIGN**
+- `oci://` - for OCI-compliant registries (like Docker Hub, GitHub Container Registry, etc.). Requires [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) for signature verification (see [Prerequisites](#prerequisites))
 - `file://` - for local files
 - `http://` or `https://` - for remote files
 - `s3://` - for Amazon S3 objects (requires that you have your AWS credentials set up in the environment)
