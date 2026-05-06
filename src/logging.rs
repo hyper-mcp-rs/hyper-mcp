@@ -37,7 +37,7 @@ pub fn install_panic_hook() {
     }));
 }
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn _install_global_tracing() {
     LOGGING.get_or_init(|| {
         let fmt = tracing_subscriber::fmt()
