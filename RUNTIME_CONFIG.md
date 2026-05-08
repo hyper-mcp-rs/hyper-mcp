@@ -712,6 +712,18 @@ skip_tools:
 
 The `allowed_paths` field provides fine-grained control over filesystem access for plugins. It supports both simple paths and sophisticated host-to-plugin path mapping, enabling secure isolation while maintaining flexibility.
 
+### Host Path Existence and Auto-Creation
+
+When `hyper-mcp` parses an `allowed_paths` entry, it inspects the host side of the mapping (the part before the `:` on Unix or `;` on Windows):
+
+- If the host path **already exists**, it is accepted as-is. Existing files are left untouched; existing directories are not modified.
+- If the host path **does not exist**, `hyper-mcp` will create it as a directory (recursively, equivalent to `mkdir -p`) before continuing.
+- If the host path cannot be created (for example, because a parent component is an existing regular file, or the process lacks permission to create it), the configuration fails to load with an error of the form `host path <path> does not exist and could not be created: <reason>`.
+
+This means it is safe to point `allowed_paths` at directories that do not yet exist on a fresh checkout (e.g. project-local cache or scratch directories) — they will be materialized on startup.
+
+Note that only the **host** side is created. The **plugin** side of a mapped entry is an opaque label inside the WASM sandbox and is never created on the host filesystem.
+
 ### Path Format
 
 Paths can be specified in two formats:

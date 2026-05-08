@@ -296,14 +296,17 @@ impl<'de> Deserialize<'de> for AllowedPath {
             .map(str::trim);
         match path_iter.next() {
             Some(host) => {
-                if !Utf8PathBuf::from(host).exists() {
-                    return Err(de::Error::custom(format!(
-                        "host path {} does not exist",
-                        host
-                    )));
+                let host_path = Utf8PathBuf::from(host);
+                if !host_path.exists() {
+                    std::fs::create_dir_all(&host_path).map_err(|e| {
+                        de::Error::custom(format!(
+                            "host path {} does not exist and could not be created: {}",
+                            host, e
+                        ))
+                    })?;
                 }
                 Ok(AllowedPath {
-                    host: Utf8PathBuf::from(host),
+                    host: host_path,
                     plugin: Utf8PathBuf::from(
                         path_iter.next().filter(|p| !p.is_empty()).unwrap_or(host),
                     ),
@@ -3744,15 +3747,101 @@ allowed_hosts:
     }
 
     #[test]
-    fn test_allowed_path_nonexistent_host_errors() {
-        // Deserializing a path that does not exist on disk must produce an error
-        let json = r#""/no/such/path/exists/here""#;
-        let result: std::result::Result<AllowedPath, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "Expected error for nonexistent host path");
-        let msg = result.unwrap_err().to_string();
+    fn test_allowed_path_nonexistent_host_is_created() {
+        // Deserializing a path that does not exist on disk should create it
+        // (as a directory) rather than fail.
+        let dir = TempDir::new().unwrap();
+        let nested = dir.path().join("new").join("nested").join("dir");
         assert!(
-            msg.contains("does not exist"),
-            "Error message should mention the path does not exist, got: {msg}"
+            !nested.exists(),
+            "Precondition: nested path should not exist yet"
+        );
+
+        let host = nested.to_str().unwrap();
+        let json = format!(r#""{}""#, host);
+        let allowed_path: AllowedPath =
+            serde_json::from_str(&json).expect("deserialization should succeed and create dir");
+
+        assert_eq!(allowed_path.host.as_str(), host);
+        assert_eq!(allowed_path.plugin.as_str(), host);
+        assert!(
+            nested.exists() && nested.is_dir(),
+            "Host path should have been created as a directory"
+        );
+    }
+
+    #[test]
+    fn test_allowed_path_nonexistent_host_mapped_is_created() {
+        // Same as above, but for the mapped form (host:plugin). Only the host
+        // path should be created; the plugin path is opaque inside the sandbox.
+        #[cfg(not(windows))]
+        {
+            let dir = TempDir::new().unwrap();
+            let nested = dir.path().join("created").join("host");
+            assert!(!nested.exists());
+
+            let host = nested.to_str().unwrap();
+            let json = format!(r#""{}:/plugin/dest""#, host);
+            let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(allowed_path.host.as_str(), host);
+            assert_eq!(allowed_path.plugin.as_str(), "/plugin/dest");
+            assert!(nested.is_dir(), "Host directory should have been created");
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_creation_failure_errors() {
+        // If the host path cannot be created (e.g. because a parent component is
+        // an existing regular file, not a directory) deserialization must fail
+        // with a clear, actionable error message.
+        #[cfg(not(windows))]
+        {
+            let dir = TempDir::new().unwrap();
+            let blocking_file = dir.path().join("blocker");
+            std::fs::write(&blocking_file, b"not a directory").unwrap();
+
+            // Try to use a path *under* the regular file, which cannot be
+            // created as a directory.
+            let unreachable = blocking_file.join("child");
+            let host = unreachable.to_str().unwrap();
+            let json = format!(r#""{}""#, host);
+
+            let result: std::result::Result<AllowedPath, _> = serde_json::from_str(&json);
+            assert!(
+                result.is_err(),
+                "Expected error when host path cannot be created"
+            );
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("could not be created"),
+                "Error message should mention the failed creation, got: {msg}"
+            );
+            assert!(
+                msg.contains(host),
+                "Error message should include the offending path, got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_allowed_path_existing_file_is_accepted() {
+        // A pre-existing regular file (not a directory) should be accepted
+        // unchanged. We must not try to create or replace it.
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("already_a_file");
+        std::fs::write(&file_path, b"hello").unwrap();
+
+        let host = file_path.to_str().unwrap();
+        let json = format!(r#""{}""#, host);
+        let allowed_path: AllowedPath = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(allowed_path.host.as_str(), host);
+        assert!(file_path.is_file(), "Existing file must be left untouched");
+        assert_eq!(
+            std::fs::read(&file_path).unwrap(),
+            b"hello",
+            "Existing file contents must be preserved"
         );
     }
 
