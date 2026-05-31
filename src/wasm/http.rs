@@ -3,17 +3,18 @@ use crate::{
     wasm::{
         cache::{CacheMeta, cache_dir},
         locks::DOWNLOAD_LOCKS,
+        retry::download_backoff,
     },
 };
 use anyhow::{Result, anyhow};
-use backoff::{ExponentialBackoff, future::retry};
+use backon::Retryable;
 use percent_encoding::percent_decode_str;
 use reqwest::{
     Client, RequestBuilder, Response, StatusCode,
     header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED},
 };
 use sha2::{Digest, Sha256};
-use std::{cmp::Reverse, collections::HashMap, path::PathBuf, time::Duration};
+use std::{cmp::Reverse, collections::HashMap, path::PathBuf};
 use tokio::{fs, sync::OnceCell};
 use url::Url;
 
@@ -128,30 +129,25 @@ pub async fn load_wasm(url: &Url, auths: &Option<HashMap<Url, AuthConfig>>) -> R
             .map(|s| s.to_string())
     }
 
-    let backoff = ExponentialBackoff {
-        max_elapsed_time: Some(Duration::from_secs(30)),
-        max_interval: Duration::from_secs(5),
-        ..Default::default()
-    };
-
-    let response = retry(backoff, || async {
+    // All failures here are treated as transient (matches prior behaviour):
+    // `backon` retries every `Err` returned by the closure by default, so no
+    // `.when()` predicate is needed.
+    let response = (|| async {
         let resp = request
             .try_clone()
             .ok_or_else(|| anyhow!("Failed to clone request"))?
             .send()
-            .await
-            .map_err(|e| backoff::Error::transient(e.into()))?;
+            .await?;
 
         match resp.status() {
             StatusCode::NOT_MODIFIED | StatusCode::OK => Ok(resp),
             s => {
                 tracing::warn!(status = s.to_string(), "Unexpected status, retrying...");
-                Err(backoff::Error::transient(anyhow!(
-                    "Unexpected status {s} fetching {url}"
-                )))
+                Err(anyhow!("Unexpected status {s} fetching {url}"))
             }
         }
     })
+    .retry(download_backoff())
     .await?;
 
     if response.status() == StatusCode::OK {

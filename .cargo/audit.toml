@@ -33,8 +33,4 @@ ignore = [
     "RUSTSEC-2026-0095",
     "RUSTSEC-2026-0096",
     "RUSTSEC-2026-0114",
-
-    # Unmaintained crates.
-    "RUSTSEC-2025-0012", # backoff 0.4 (direct dep; migrate to backon)
-    "RUSTSEC-2024-0384", # instant (transitive via backoff)
 ]

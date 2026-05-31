@@ -1,9 +1,9 @@
 use crate::{
     config::OciConfig,
-    wasm::{cache::cache_dir, locks::DOWNLOAD_LOCKS},
+    wasm::{cache::cache_dir, locks::DOWNLOAD_LOCKS, retry::download_backoff},
 };
 use anyhow::{Context, Result, anyhow};
-use backoff::{ExponentialBackoff, future::retry};
+use backon::Retryable;
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use flate2::read::GzDecoder;
 use oci_client::{
@@ -15,7 +15,6 @@ use oci_client::{
 use std::{
     io::Read,
     path::{Path, PathBuf},
-    time::Duration,
 };
 use tar::Archive;
 use tokio::{fs, process::Command, sync::OnceCell};
@@ -77,18 +76,12 @@ pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
     //   but layer mediaTypes vary widely.
     // - The accept list here is mostly about manifest types, not layer types.
 
-    let manifest_backoff = ExponentialBackoff {
-        max_elapsed_time: Some(Duration::from_secs(30)),
-        max_interval: Duration::from_secs(5),
-        ..Default::default()
-    };
-
-    let (manifest, manifest_digest) = retry(manifest_backoff, || async {
-        client.pull_manifest(&reference, &auth).await.map_err(|e| {
+    let (manifest, manifest_digest) = (|| async {
+        client.pull_manifest(&reference, &auth).await.inspect_err(|e| {
             tracing::warn!(image = image_reference, error = ?e, "Failed to pull manifest, retrying");
-            backoff::Error::transient(e)
         })
     })
+    .retry(download_backoff())
     .await?;
 
     let local_output_path = cache_dir.join(match manifest_digest.split_once(':') {
@@ -128,28 +121,22 @@ pub async fn load_wasm(url: &Url, config: &OciConfig) -> Result<Vec<u8>> {
         let digest = layer_desc.digest.as_str(); // e.g. "sha256:...."
 
         // Pull by digest string (AsLayerDescriptor for &str) to avoid media-type validation.
-        let blob_backoff = ExponentialBackoff {
-            max_elapsed_time: Some(Duration::from_secs(30)),
-            max_interval: Duration::from_secs(5),
-            ..Default::default()
-        };
-
-        let buf = retry(blob_backoff, || async {
+        let buf = (|| async {
             let mut temp_buf = Vec::new();
             client
                 .pull_blob(&reference, digest, &mut temp_buf)
                 .await
                 .map(|_| temp_buf)
-                .map_err(|e| {
+                .inspect_err(|e| {
                     tracing::warn!(
                         digest = digest,
                         image = image_reference,
                         error = ?e,
                         "Failed to pull blob",
                     );
-                    backoff::Error::transient(e)
                 })
         })
+        .retry(download_backoff())
         .await?;
 
         if let Some(wasm) = extract_wasm_from_blob(&buf)? {

@@ -57,11 +57,6 @@ ignore = [
     { id = "RUSTSEC-2026-0095", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
     { id = "RUSTSEC-2026-0096", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
     { id = "RUSTSEC-2026-0114", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-
-    # Unmaintained crates. `backoff` is a direct dep we should eventually swap
-    # for `backon` or similar; `instant` reaches us transitively through it.
-    { id = "RUSTSEC-2025-0012", reason = "backoff 0.4 unmaintained; plan to migrate to backon" },
-    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via backoff" },
 ]
 
 # ─────────────────────────────────────────────────────────────────────────
