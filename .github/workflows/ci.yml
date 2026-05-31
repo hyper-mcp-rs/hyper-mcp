@@ -18,6 +18,7 @@ on:
       - ".hadolint.yaml"
       - "pre-commit-config.yaml"
       - ".zed/**"
+      - "lefthook.yml"
   pull_request:
     branches: [main]
   workflow_dispatch:
