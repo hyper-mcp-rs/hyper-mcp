@@ -19,7 +19,7 @@ async-trait = "0.1"
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.4"
 backoff = { version = "0.4", features = ["tokio"] }
-aws-sdk-s3 = "1.132"
+aws-sdk-s3 = "1.134"
 axum = "0.8"
 bytesize = "2.3"
 camino = "1.2"
@@ -36,7 +36,7 @@ futures = "0.3"
 hex = "0.4"
 keyring = "4.0"
 keyring-core = "1.0"
-oauth2 = "5.0"
+oauth2 = { version = "5.0", features = ["reqwest-blocking"] }
 oci-client = "0.17"
 percent-encoding = "2.3"
 rmcp = { version = "1.7", features = [
@@ -54,7 +54,7 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 serde_with = "3.20"
 sha2 = "0.11"
-sigstore = { version = "0.13", features = ["cosign", "verify", "bundle"] }
+sigstore = { version = "0.14", features = ["cosign", "verify", "bundle"] }
 strum = "0.28"
 strum_macros = "0.28"
 tar = "0.4"
@@ -68,7 +68,7 @@ url = { version = "2.5", features = ["serde"] }
 uuid = { version = "1.23", features = ["serde"] }
 
 [dev-dependencies]
-aws-sdk-s3 = { version = "1.132", features = ["test-util"] }
+aws-sdk-s3 = { version = "1.134", features = ["test-util"] }
 aws-smithy-mocks = "0.2"
 aws-smithy-runtime-api = "1.12"
 rmcp = { version = "1.7", features = [
