@@ -288,8 +288,7 @@ mod tests {
         let tool_name = "-tool".to_string();
         let result = parse_namespaced_name(tool_name);
         // This should still work but with empty plugin name
-        if result.is_ok() {
-            let (plugin, _) = result.unwrap();
+        if let Ok((plugin, _)) = result {
             assert!(plugin.as_str().is_empty());
         }
     }

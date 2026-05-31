@@ -2311,23 +2311,21 @@ plugins:
 
         // Check that the input schema includes the expected operations in the enum
         let schema_value = &time_tool.input_schema;
-        if let Some(properties) = schema_value.get("properties") {
-            if let Some(name_property) = properties.get("name") {
-                if let Some(enum_values) = name_property.get("enum") {
-                    if let Some(enum_array) = enum_values.as_array() {
-                        let schema_operations: Vec<String> = enum_array
-                            .iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect();
+        if let Some(properties) = schema_value.get("properties")
+            && let Some(name_property) = properties.get("name")
+            && let Some(enum_values) = name_property.get("enum")
+            && let Some(enum_array) = enum_values.as_array()
+        {
+            let schema_operations: Vec<String> = enum_array
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
 
-                        for operation in &expected_operations {
-                            assert!(
-                                schema_operations.contains(&operation.to_string()),
-                                "Input schema should include operation '{operation}' in enum: {schema_operations:?}"
-                            );
-                        }
-                    }
-                }
+            for operation in &expected_operations {
+                assert!(
+                    schema_operations.contains(&operation.to_string()),
+                    "Input schema should include operation '{operation}' in enum: {schema_operations:?}"
+                );
             }
         }
         // Cleanup
@@ -2423,7 +2421,7 @@ plugins:
                 .unwrap();
 
             assert!(
-                skip_tools.is_match(&"time"),
+                skip_tools.is_match("time"),
                 "Configuration should include 'time' in skip_tools list: {skip_tools:?}"
             );
 
@@ -3386,24 +3384,24 @@ plugins:
             .collect();
 
         // Verify tool descriptions exist and are meaningful
-        if let Some(add_tool) = tool_map.get("tool_list_changed_plugin-add_tool") {
-            if let Some(desc) = &add_tool.description {
-                assert!(!desc.is_empty(), "add_tool should have a description");
-                assert!(
-                    desc.to_lowercase().contains("add"),
-                    "add_tool description should mention 'add'"
-                );
-            }
+        if let Some(add_tool) = tool_map.get("tool_list_changed_plugin-add_tool")
+            && let Some(desc) = &add_tool.description
+        {
+            assert!(!desc.is_empty(), "add_tool should have a description");
+            assert!(
+                desc.to_lowercase().contains("add"),
+                "add_tool description should mention 'add'"
+            );
         }
 
-        if let Some(tool_1) = tool_map.get("tool_list_changed_plugin-tool_1") {
-            if let Some(desc) = &tool_1.description {
-                assert!(!desc.is_empty(), "tool_1 should have a description");
-                assert!(
-                    desc.to_lowercase().contains("tool"),
-                    "tool_1 description should mention 'tool'"
-                );
-            }
+        if let Some(tool_1) = tool_map.get("tool_list_changed_plugin-tool_1")
+            && let Some(desc) = &tool_1.description
+        {
+            assert!(!desc.is_empty(), "tool_1 should have a description");
+            assert!(
+                desc.to_lowercase().contains("tool"),
+                "tool_1 description should mention 'tool'"
+            );
         }
 
         assert_ok!(server.cancel().await);

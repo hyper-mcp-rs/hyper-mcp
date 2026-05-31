@@ -523,10 +523,10 @@ mod tests {
                 async move {
                     count.fetch_add(1, Ordering::SeqCst);
 
-                    if let Some(etag) = headers.get("if-none-match") {
-                        if etag.to_str().unwrap() == "\"test-etag\"" {
-                            return (StatusCode::NOT_MODIFIED, Vec::new()).into_response();
-                        }
+                    if let Some(etag) = headers.get("if-none-match")
+                        && etag.to_str().unwrap() == "\"test-etag\""
+                    {
+                        return (StatusCode::NOT_MODIFIED, Vec::new()).into_response();
                     }
 
                     (StatusCode::OK, [("etag", "\"test-etag\"")], content).into_response()
@@ -698,19 +698,19 @@ mod tests {
                     count.fetch_add(1, Ordering::SeqCst);
 
                     // Check if client sent if-none-match header
-                    if let Some(etag) = headers.get("if-none-match") {
-                        if etag.to_str().unwrap() == "\"test-etag-123\"" {
-                            // Return 304 Not Modified
-                            return (
-                                StatusCode::NOT_MODIFIED,
-                                [
-                                    ("etag", "\"test-etag-123\""),
-                                    ("last-modified", "Wed, 01 Jan 2025 00:00:00 GMT"),
-                                ],
-                                Vec::new(),
-                            )
-                                .into_response();
-                        }
+                    if let Some(etag) = headers.get("if-none-match")
+                        && etag.to_str().unwrap() == "\"test-etag-123\""
+                    {
+                        // Return 304 Not Modified
+                        return (
+                            StatusCode::NOT_MODIFIED,
+                            [
+                                ("etag", "\"test-etag-123\""),
+                                ("last-modified", "Wed, 01 Jan 2025 00:00:00 GMT"),
+                            ],
+                            Vec::new(),
+                        )
+                            .into_response();
                     }
 
                     // First request - return full content with etag and last-modified

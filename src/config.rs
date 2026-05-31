@@ -2378,7 +2378,7 @@ allowed_hosts:
 
     #[test]
     fn test_skip_tools_matching_functionality() {
-        let patterns = vec![
+        let patterns = [
             "exact".to_string(),
             "prefix.*".to_string(),
             ".*suffix".to_string(),

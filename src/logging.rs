@@ -53,7 +53,6 @@ fn _install_global_tracing() {
         {
             // Captured by the test harness (doesn't risk corrupting stdio MCP)
             fmt.with_test_writer().init();
-            ()
         }
 
         #[cfg(not(test))]
