@@ -7,8 +7,6 @@ on:
       - ".github/workflows/nightly.yml"
       - ".github/workflows/release.yml"
       - "**/*.md"
-      - ".cursor/**"
-      - ".windsurf/**"
       - ".gitignore"
       - "assets/**"
       - "iac/**"
