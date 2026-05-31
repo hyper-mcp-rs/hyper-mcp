@@ -1,0 +1,129 @@
+# cargo-deny configuration.
+#
+# Docs:        https://embarkstudios.github.io/cargo-deny/
+# Run locally: `just security` or `cargo deny check`
+#
+# Editing rules of thumb:
+#   * If a security advisory is unavoidable (e.g. transitive dep with no
+#     fix yet), add it to `[advisories].ignore` *with a comment* linking
+#     to the upstream issue and an estimated unblock date.
+#   * If a new dep brings in a license not on the allow list below, prefer
+#     replacing the dep over adding the license. License-graph drift is
+#     hard to undo.
+#   * `[bans].deny` is the place to record "we tried this crate and it was
+#     bad" - keeps the lesson with the codebase.
+
+[graph]
+all-features = true
+
+# ─────────────────────────────────────────────────────────────────────────
+# Advisories - RustSec database checks. Overlaps with `cargo audit`; we
+# keep both because they fail differently (audit is fast and focused;
+# deny is policy-driven and can also catch yanked crates and unmaintained
+# advisories).
+# ─────────────────────────────────────────────────────────────────────────
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+
+# Advisories we currently accept because the fix lives in an upstream crate we
+# don't control. Re-evaluate when bumping the listed parent dep. Keep one entry
+# per ID with a `reason` pointing at the blocker.
+ignore = [
+    # rsa: Marvin timing sidechannel. No fixed `rsa` release yet. Reaches us
+    # via `openidconnect` -> `sigstore` and `jsonwebtoken` -> `oci-client`.
+    # Unblock: upstream `rsa` fix + sigstore/oci-client bumps.
+    { id = "RUSTSEC-2023-0071", reason = "rsa 0.9.x has no fixed release; transitive via sigstore + oci-client" },
+
+    # rustls-webpki 0.101.7 advisories. Pulled in by aws-smithy-http-client ->
+    # hyper-rustls 0.24 -> rustls 0.21. Fixed in rustls-webpki >=0.103.13, but
+    # requires the AWS SDK to bump its rustls stack first.
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101 via aws-smithy-http-client; waiting on AWS SDK rustls bump" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101 via aws-smithy-http-client; waiting on AWS SDK rustls bump" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101 via aws-smithy-http-client; waiting on AWS SDK rustls bump" },
+
+    # wasmtime 41.0.4 advisories. Pinned by `extism` 1.21. Fixes are in
+    # wasmtime >=42.0.2 / >=43.0.1 / >=44.0.1; requires an extism release that
+    # picks up a newer wasmtime.
+    { id = "RUSTSEC-2026-0085", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0086", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0087", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0088", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0089", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0091", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0092", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0093", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0094", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0095", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0096", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    { id = "RUSTSEC-2026-0114", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+
+    # Unmaintained crates. `backoff` is a direct dep we should eventually swap
+    # for `backon` or similar; `instant` reaches us transitively through it.
+    { id = "RUSTSEC-2025-0012", reason = "backoff 0.4 unmaintained; plan to migrate to backon" },
+    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via backoff" },
+]
+
+# ─────────────────────────────────────────────────────────────────────────
+# Licenses - allowlist model. This list is intentionally conservative for
+# proprietary internal use: copyleft (GPL/AGPL/LGPL) is excluded so it
+# can't sneak in transitively.
+#
+# When a new permissive license shows up in a dep, evaluate it explicitly
+# rather than auto-allowing - the SPDX list is large.
+# ─────────────────────────────────────────────────────────────────────────
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    # Linux Foundation's permissive data-licence. Permissive, not
+    # copyleft, no patent grant, no copyleft-style propagation -
+    # obligations equivalent to MIT/BSD-3. Currently used by
+    # `webpki-roots`, which embeds the Mozilla CA bundle (a dataset)
+    # and reaches us transitively via `hyper-rustls` from both
+    # `gcp-bigquery-client` and `firestore`.
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+exceptions = []
+
+# Don't require this crate (or any other `publish = false` workspace
+# member) to declare a license - internal apps aren't published.
+[licenses.private]
+ignore = true
+
+# ─────────────────────────────────────────────────────────────────────────
+# Bans - duplicate versions, wildcards, blocklist.
+#
+# `multiple-versions = "warn"` because pinning the entire ecosystem to a
+# single version of every transitive dep is a fight you can't win. Bump
+# to "deny" only after consolidating duplicates.
+# ─────────────────────────────────────────────────────────────────────────
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+skip = []
+skip-tree = []
+
+# ─────────────────────────────────────────────────────────────────────────
+# Sources - only crates.io is allowed. Pulls from arbitrary git repos
+# are denied; if you need one, list its URL under `allow-git` *with a
+# comment* explaining why.
+# ─────────────────────────────────────────────────────────────────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

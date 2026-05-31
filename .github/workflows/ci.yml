@@ -187,11 +187,21 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      - name: Run tests
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run tests with coverage
         env:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: RUST_BACKTRACE=1 cargo test --workspace --all-features --locked
+        run: RUST_BACKTRACE=1 cargo llvm-cov --workspace --all-features --locked --lcov --output-path lcov.info
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          if-no-files-found: error
 
   sbom:
     name: SBOM

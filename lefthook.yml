@@ -1,0 +1,116 @@
+# Git hooks managed by Lefthook (https://lefthook.dev).
+#
+# Install once per clone:
+#     lefthook install
+# (Or run `just hooks-install`, which does the same thing.)
+#
+# Philosophy:
+#   * pre-commit  → fast feedback only. Formatting, lint. Skipped when no
+#                   relevant files are staged so commits to README/CI/etc.
+#                   stay snappy.
+#   * pre-push    → the full unit + integration test suite. Catches drift
+#                   between handlers, templates, and routes before it
+#                   reaches the remote.
+#
+# Override locally without touching this file by creating
+# `lefthook-local.yml` (gitignored).
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Quick checks: must finish in seconds.
+# ──────────────────────────────────────────────────────────────────────────────
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      tags: rust style
+      glob: "*.rs"
+      # `cargo fmt --check` is workspace-wide; per-file invocation would
+      # miss imports drifting in unstaged files. Cheap enough to run all.
+      run: cargo fmt --all -- --check
+      fail_text: |
+        Run `cargo fmt --all` (or `just fmt`) to fix formatting before committing.
+
+    clippy:
+      tags: rust lint
+      # Templates and Cargo.toml affect compilation just as much as .rs:
+      # askama's macro reads .html at build time, so a typo in a template
+      # is a clippy/build error.
+      glob: "*.{rs,html,toml}"
+      run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      fail_text: |
+        Clippy reported warnings. Fix them or add a justified
+        `#[allow(...)]` before committing.
+
+# ─────────────────────────────────────────────────────────────────────────
+# Slower checks: run before code leaves the machine.
+#
+# `audit` and `deny` are dep-file scoped via `glob` so they only fire on
+# pushes that actually touch dependency manifests - keeps day-to-day
+# pushes fast while still catching CVEs and license drift the moment
+# they're introduced.
+# ─────────────────────────────────────────────────────────────────────────
+pre-push:
+  parallel: true
+  commands:
+    test-coverage:
+      tags: rust test coverage
+      # `cargo llvm-cov` runs the full test suite with LLVM source-based
+      # coverage instrumentation and exits non-zero if total line
+      # coverage drops below 70%. Two failure modes in one command:
+      #   1. a test failed (same as plain `cargo test`), or
+      #   2. tests passed but coverage is under the threshold.
+      # `--workspace` (not `--all`; llvm-cov flags `--all` as deprecated)
+      # covers every crate in the workspace. `--locked` catches a
+      # forgotten Cargo.lock update. Artifacts land in
+      # `target/llvm-cov-target/` so this doesn't disturb the
+      # `target/debug/` that `just vibe` / `cargo run` rely on.
+      run: cargo llvm-cov --workspace --locked --fail-under-lines 70
+      fail_text: |
+        Push aborted. `cargo llvm-cov` reported one of:
+          1. a failing test - fix the test or the code and re-run, or
+          2. total line coverage below 70% - add Rust tests for the
+             uncovered branches. Rust tests are written inline with
+             production code; if coverage is low, the inline tests
+             aren't covering enough branches yet. Playwright e2e
+             specs ship in the same change as their production code
+             but don't contribute to this Rust line-coverage number.
+        Reproduce locally with:
+            cargo llvm-cov --workspace --locked --fail-under-lines 70
+        For a browsable HTML report of which lines are uncovered:
+            cargo llvm-cov --workspace --html --open
+        If `cargo-llvm-cov` itself or the `llvm-tools-preview` rustup
+        component is missing, contact Core Engineering - both should
+        have been provisioned by the environment bootstrap script.
+        Install manually with:
+            rustup component add llvm-tools-preview
+            cargo install cargo-llvm-cov --locked
+
+    audit:
+      tags: rust security
+      # Only run when dependency manifests changed in the push range.
+      # `cargo audit` parses Cargo.lock against the RustSec advisory DB.
+      glob: "{Cargo.toml,Cargo.lock}"
+      run: cargo audit
+      fail_text: |
+        cargo-audit found a vulnerable dependency. Either:
+          1. update / replace the offending crate, or
+          2. accept the risk explicitly in `deny.toml` under
+             [advisories].ignore (with a comment + ETA), or
+          3. pass `--ignore RUSTSEC-XXXX-NNNN` if it's a one-off override.
+        If `cargo-audit` itself is missing from your PATH, contact Core
+        Engineering - it should have been provisioned by the environment
+        bootstrap script.
+
+    deny:
+      tags: rust security
+      # Re-run the full policy check whenever deps OR the policy itself
+      # change.
+      glob: "{Cargo.toml,Cargo.lock,deny.toml}"
+      run: cargo deny check
+      fail_text: |
+        cargo-deny rejected a dependency, license, ban, or source.
+        Edit `deny.toml` (with a comment justifying the change) or replace
+        the offending crate. See https://embarkstudios.github.io/cargo-deny/.
+        If `cargo-deny` itself is missing from your PATH, contact Core
+        Engineering - it should have been provisioned by the environment
+        bootstrap script.
