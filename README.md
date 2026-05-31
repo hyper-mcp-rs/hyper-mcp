@@ -58,6 +58,24 @@ Install cosign by following the official instructions: **<https://docs.sigstore.
 
 > **Note:** If you only use `file://`, `http://`, `https://`, or `s3://` plugin URLs, cosign is not needed. You can also bypass signature verification for OCI plugins by setting `insecure_skip_signature: true` in your config or the `HYPER_MCP_INSECURE_SKIP_SIGNATURE=true` environment variable, but this is **not recommended** for production use.
 
+### Install from Homebrew
+
+hyper-mcp is published on Homebrew for macOS and Linux in two places:
+
+**Homebrew core** — no tap setup required:
+
+```sh
+brew install hyper-mcp
+```
+
+**Our own tap (`hyper-mcp-rs/tap`)** — bumped automatically on every GitHub Release, so it picks up new versions immediately:
+
+```sh
+brew install hyper-mcp-rs/tap/hyper-mcp
+```
+
+Both install the same binary. Prefer the core formula unless you want the absolute latest release the moment it ships.
+
 ### Pre-built binaries (GitHub Releases)
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/hyper-mcp-rs/hyper-mcp/releases):
