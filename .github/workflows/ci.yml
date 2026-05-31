@@ -19,6 +19,7 @@ on:
       - "xtp-plugin-schema.json"
       - ".hadolint.yaml"
       - "pre-commit-config.yaml"
+      - ".zed/**"
   pull_request:
     branches: [main]
   workflow_dispatch:

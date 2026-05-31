@@ -1,0 +1,29 @@
+// Project-scoped Zed settings.
+//
+// These settings apply only when this project is opened in Zed. They override
+// matching keys in the user-level `~/.config/zed/settings.json`. Format is
+// JSONC (JSON with comments); keep this file committed so every developer
+// gets the same agent tooling out of the box.
+//
+// Docs: https://zed.dev/docs/configuring-zed
+//       https://zed.dev/docs/ai/mcp
+{
+  // ────────────────────────────────────────────────────────────────────────
+  // Model Context Protocol (MCP) servers exposed to the Agent Panel.
+  //
+  // Zed will spawn each command on demand, talk to it over stdio using the
+  // MCP protocol, and surface its tools to the active model. See the
+  // indicator dot next to the server's name in the Agent Panel settings
+  // view to confirm it's running.
+  // ────────────────────────────────────────────────────────────────────────
+  "context_servers": {
+    "hyper-mcp": {
+      "command": "hyper-mcp",
+      "args": [],
+    },
+    "sentrux": {
+      "command": "sentrux",
+      "args": ["mcp"],
+    },
+  },
+}
