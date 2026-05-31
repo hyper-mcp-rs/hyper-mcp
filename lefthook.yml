@@ -51,6 +51,12 @@ pre-commit:
 # ─────────────────────────────────────────────────────────────────────────
 pre-push:
   parallel: true
+  # Skip the entire pre-push hook when no commits are being pushed - e.g.
+  # `git push origin v1.2.3` for a tag whose commit is already on the
+  # remote. `{push_files}` expands to the files touched by commits in the
+  # push range; an empty expansion means "nothing new to validate".
+  skip:
+    - run: '[ -z "{push_files}" ]'
   commands:
     test-coverage:
       tags: rust test coverage
