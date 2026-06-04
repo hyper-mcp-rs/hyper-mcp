@@ -242,7 +242,6 @@ These plugins use the v1 plugin interface. While still supported, new plugins sh
 - [eval_py](https://github.com/hyper-mcp-rs/eval-py-plugin): Evaluate Python code with RustPython (Rust)
 - [arxiv](https://github.com/hyper-mcp-rs/arxiv-plugin): Search & download arXiv papers (Rust)
 - [memory](https://github.com/hyper-mcp-rs/memory-plugin): Let you store & retrieve memory, powered by SQLite (Rust)
-- [sqlite](https://github.com/hyper-mcp-rs/sqlite-plugin): Interact with SQLite (Rust)
 - [crates-io](https://github.com/hyper-mcp-rs/crates-io-plugin): Get crate general information, check crate latest version (Rust)
 - [gomodule](https://github.com/hyper-mcp-rs/gomodule-plugin): Get Go modules info, version (Rust)
 - [qdrant](https://github.com/hyper-mcp-rs/qdrant-plugin): keeping & retrieving memories to Qdrant vector search engine (Rust)
@@ -260,6 +259,7 @@ These plugins use the v2 plugin interface. New plugins should use this interface
 - [fetch](https://github.com/hyper-mcp-rs/fetch-plugin): Basic webpage fetching (Rust)
 - [monty](https://github.com/hyper-mcp-rs/monty-plugin): A minimal, secure Python interpreter written in Rust for use by AI (Rust)
 - [rstime](https://github.com/hyper-mcp-rs/rstime-plugin): Get current time and do time calculations (Rust)
+- [sqlite](https://github.com/hyper-mcp-rs/sqlite-plugin): Interact with SQLite (Rust)
 
 
 ### Community-built plugins

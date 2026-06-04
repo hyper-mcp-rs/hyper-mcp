@@ -19,7 +19,7 @@ async-trait = "0.1"
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.4"
 backon = "1.6"
-aws-sdk-s3 = "1.134"
+aws-sdk-s3 = "1.135"
 axum = "0.8"
 bytesize = "2.3"
 camino = "1.2"
@@ -29,8 +29,8 @@ dashmap = { version = "6.2", features = ["serde"] }
 directories = "6.0"
 dirs = "6.0"
 docker_credential = "1.4"
-extism = "1.21"
-extism-convert = "1.21"
+extism = "1.30"
+extism-convert = "1.30"
 flate2 = "1.1"
 futures = "0.3"
 hex = "0.4"
@@ -52,7 +52,7 @@ schemars = "1.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-serde_with = "3.20"
+serde_with = "3.21"
 sha2 = "0.11"
 sigstore = { version = "0.14", features = ["cosign", "verify", "bundle"] }
 strum = "0.28"
@@ -68,7 +68,7 @@ url = { version = "2.5", features = ["serde"] }
 uuid = { version = "1.23", features = ["serde"] }
 
 [dev-dependencies]
-aws-sdk-s3 = { version = "1.134", features = ["test-util"] }
+aws-sdk-s3 = { version = "1.135", features = ["test-util"] }
 aws-smithy-mocks = "0.2"
 aws-smithy-runtime-api = "1.12"
 rmcp = { version = "1.7", features = [
