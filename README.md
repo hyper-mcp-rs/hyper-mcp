@@ -240,7 +240,6 @@ These plugins use the v1 plugin interface. While still supported, new plugins sh
 - [fs](https://github.com/hyper-mcp-rs/fs-plugin): File system operations (Rust)
 - [github](https://github.com/hyper-mcp-rs/github-plugin): GitHub plugin (Go)
 - [eval_py](https://github.com/hyper-mcp-rs/eval-py-plugin): Evaluate Python code with RustPython (Rust)
-- [arxiv](https://github.com/hyper-mcp-rs/arxiv-plugin): Search & download arXiv papers (Rust)
 - [memory](https://github.com/hyper-mcp-rs/memory-plugin): Let you store & retrieve memory, powered by SQLite (Rust)
 - [crates-io](https://github.com/hyper-mcp-rs/crates-io-plugin): Get crate general information, check crate latest version (Rust)
 - [gomodule](https://github.com/hyper-mcp-rs/gomodule-plugin): Get Go modules info, version (Rust)
@@ -254,6 +253,7 @@ These plugins use the v1 plugin interface. While still supported, new plugins sh
 ### V2 Plugins
 These plugins use the v2 plugin interface. New plugins should use this interface.
 
+- [arxiv](https://github.com/hyper-mcp-rs/arxiv-plugin): Search arXiv papers (Rust)
 - [context7](https://github.com/hyper-mcp-rs/context7-plugin): Lookup library documentation (Rust)
 - [defuddle](https://github.com/hyper-mcp-rs/defuddle-plugin): Get the main content of any page as Markdown (Rust)
 - [fetch](https://github.com/hyper-mcp-rs/fetch-plugin): Basic webpage fetching (Rust)
