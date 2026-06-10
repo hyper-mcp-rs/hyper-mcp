@@ -67,4 +67,7 @@ terraform.rc
 # Ignore .DS_Store files, which are created by macOS Finder
 .DS_Store
 
+# Ignore anything in dist
+dist
+
 # End of https://www.toptal.com/developers/gitignore/api/linux,rust,terraform

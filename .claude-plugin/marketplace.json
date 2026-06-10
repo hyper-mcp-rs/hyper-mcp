@@ -1,0 +1,19 @@
+{
+  "name": "hyper-mcp-rs",
+  "owner": {
+    "name": "hyper-mcp-rs",
+    "email": "me@tuananh.org"
+  },
+  "description": "WebAssembly-plugin MCP servers from the hyper-mcp project",
+  "plugins": [
+    {
+      "name": "hyper-mcp",
+      "source": "./plugins/hyper-mcp",
+      "description": "A fast, secure MCP server that extends its capabilities through WebAssembly plugins",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/hyper-mcp-rs/hyper-mcp",
+      "repository": "https://github.com/hyper-mcp-rs/hyper-mcp",
+      "keywords": ["mcp", "wasm", "plugins", "rust"]
+    }
+  ]
+}

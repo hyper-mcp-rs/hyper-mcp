@@ -1,0 +1,14 @@
+{
+  "name": "hyper-mcp",
+  "description": "A fast, secure MCP server that extends its capabilities through WebAssembly plugins",
+  "version": "0.7.5",
+  "author": {
+    "name": "hyper-mcp-rs",
+    "url": "https://github.com/hyper-mcp-rs/hyper-mcp"
+  },
+  "homepage": "https://github.com/hyper-mcp-rs/hyper-mcp",
+  "repository": "https://github.com/hyper-mcp-rs/hyper-mcp",
+  "license": "Apache-2.0",
+  "keywords": ["mcp", "wasm", "plugins", "rust"],
+  "mcpServers": "./.mcp.json"
+}

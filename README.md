@@ -224,6 +224,45 @@ You can configure hyper-mcp either globally for all projects or specifically for
 3. Start using tools through chat:
    ![cursor mcp chat](./assets/cursor-mcp-1.png)
 
+## Using with Claude Desktop
+
+Every [GitHub Release](https://github.com/hyper-mcp-rs/hyper-mcp/releases) ships an **MCP Bundle** (`.mcpb`) for each platform alongside the raw binaries:
+
+| Platform | Bundle |
+|---|---|
+| macOS (Apple Silicon) | `hyper-mcp-aarch64-apple-darwin.mcpb` |
+| Linux (x86_64) | `hyper-mcp-x86_64-unknown-linux-gnu.mcpb` |
+| Linux (ARM64) | `hyper-mcp-aarch64-unknown-linux-gnu.mcpb` |
+| Windows (x86_64) | `hyper-mcp-x86_64-pc-windows-msvc.mcpb` |
+
+Download the bundle for your platform and double-click it (or drag it into Claude Desktop) to get a one-click install dialog. Claude Desktop will prompt you for:
+
+- **Plugin config file** — path to your `config.json`/`config.yaml` listing the WASM plugins to load (see [Getting Started](#getting-started) and [`config.example.json`](./config.example.json)).
+- **Enable dynamic plugin loading** (optional).
+- **Skip OCI signature verification** (optional, not recommended).
+
+> The bundle contains only the `hyper-mcp` binary. Loading `oci://` plugins still requires [cosign](#prerequisites) on your `PATH` unless you enable "Skip OCI signature verification".
+
+The bundle manifest lives in [`mcpb/manifest.json`](./mcpb/manifest.json) and is packed per-platform by the release workflow.
+
+## Using with Claude Code
+
+The quickest way is a direct add (requires `hyper-mcp` already installed via Homebrew/cargo):
+
+```sh
+claude mcp add hyper-mcp -- hyper-mcp --config-file /path/to/config.json
+```
+
+Or install it from our plugin marketplace:
+
+```text
+/plugin marketplace add hyper-mcp-rs/hyper-mcp
+/plugin install hyper-mcp@hyper-mcp-rs
+/reload-plugins
+```
+
+The marketplace catalog ([`.claude-plugin/marketplace.json`](./.claude-plugin/marketplace.json)) and plugin ([`plugins/hyper-mcp`](./plugins/hyper-mcp)) live in this repo. See the [plugin README](./plugins/hyper-mcp/README.md) for prerequisites and configuration.
+
 ## Available Plugins
 
 We maintain several plugins to get you started:

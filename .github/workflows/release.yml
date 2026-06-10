@@ -276,6 +276,55 @@ jobs:
           EXT: ${{ matrix.ext }}
           RUNNER_OS: ${{ runner.os }}
 
+      - name: Build MCP bundle (.mcpb)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g @anthropic-ai/mcpb
+
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+
+          case "${TARGET}" in
+            *apple-darwin*) PLATFORM="darwin" ;;
+            *pc-windows*)   PLATFORM="win32" ;;
+            *)              PLATFORM="linux" ;;
+          esac
+
+          stage="mcpb-stage"
+          rm -rf "${stage}"
+          mkdir -p "${stage}/server"
+
+          cp "target/${TARGET}/release/hyper-mcp${EXT}" "${stage}/server/hyper-mcp${EXT}"
+          if [[ "${RUNNER_OS}" != "Windows" ]]; then
+            chmod +x "${stage}/server/hyper-mcp${EXT}"
+          fi
+          cp mcpb/icon.png "${stage}/icon.png"
+
+          sed -e "s/__VERSION__/${VERSION}/g" -e "s/__PLATFORM__/${PLATFORM}/g" \
+            mcpb/manifest.json > "${stage}/manifest.json"
+
+          mcpb validate "${stage}/manifest.json"
+          mcpb pack "${stage}" "dist/hyper-mcp-${TARGET}.mcpb"
+
+          # Append the bundle checksum to the per-target checksums file.
+          pkg="dist/hyper-mcp-${TARGET}.mcpb"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${pkg}" >> "dist/checksums-${TARGET}.txt"
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "${pkg}" >> "dist/checksums-${TARGET}.txt"
+          elif [[ "${RUNNER_OS}" == "Windows" ]]; then
+            powershell.exe -NoProfile -Command \
+              "\$h=(Get-FileHash -Algorithm SHA256 '${pkg}').Hash.ToLower(); \"\$h  ${pkg}\" | Out-File -Append -Encoding ascii 'dist/checksums-${TARGET}.txt'"
+          else
+            echo "No SHA256 tool found" >&2
+            exit 1
+          fi
+        env:
+          TARGET: ${{ matrix.target }}
+          EXT: ${{ matrix.ext }}
+          RUNNER_OS: ${{ runner.os }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -283,6 +332,7 @@ jobs:
           path: |
             dist/hyper-mcp-${{ matrix.target }}.tar.gz
             dist/hyper-mcp-${{ matrix.target }}.zip
+            dist/hyper-mcp-${{ matrix.target }}.mcpb
             dist/checksums-${{ matrix.target }}.txt
           if-no-files-found: error
 
@@ -375,7 +425,8 @@ jobs:
           - \`${SHA}\`
 
           Included:
-          - hyper-mcp binaries for Linux & macOS
+          - hyper-mcp binaries for Linux, macOS & Windows
+          - hyper-mcp MCP Bundles (\`.mcpb\`) for one-click install in Claude Desktop
           - hyper-mcp container image: \`${IMAGE}:${TAG}\`
 
           ✅ Multi-arch digest (immutable, recommended for pinning):

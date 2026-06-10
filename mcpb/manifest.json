@@ -1,0 +1,64 @@
+{
+  "manifest_version": "0.3",
+  "name": "hyper-mcp",
+  "display_name": "hyper-mcp",
+  "version": "__VERSION__",
+  "description": "A fast, secure MCP server that extends its capabilities through WebAssembly plugins",
+  "long_description": "hyper-mcp is a fast, secure MCP server whose tools come from sandboxed WebAssembly plugins. Plugins are distributed as OCI images, local files, HTTP(S) URLs, or S3 objects and run with fine-grained network, filesystem, and memory limits.\n\nThis bundle ships the hyper-mcp binary only. You must provide a config file that lists the plugins to load (see the `config_file` setting below). An example config lives at https://github.com/hyper-mcp-rs/hyper-mcp/blob/main/config.example.json.\n\nNote: loading `oci://` plugins requires the `cosign` CLI on your PATH for signature verification. If you only use `file://`, `http(s)://`, or `s3://` plugins you do not need cosign. You can bypass OCI signature verification by enabling \"Skip OCI signature verification\" below, but this is not recommended.",
+  "author": {
+    "name": "hyper-mcp-rs",
+    "url": "https://github.com/hyper-mcp-rs/hyper-mcp"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hyper-mcp-rs/hyper-mcp.git"
+  },
+  "homepage": "https://github.com/hyper-mcp-rs/hyper-mcp",
+  "documentation": "https://github.com/hyper-mcp-rs/hyper-mcp",
+  "support": "https://github.com/hyper-mcp-rs/hyper-mcp/issues",
+  "license": "Apache-2.0",
+  "icon": "icon.png",
+  "keywords": ["mcp", "wasm", "plugins", "rust"],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/hyper-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/hyper-mcp",
+      "args": ["--config-file", "${user_config.config_file}"],
+      "env": {
+        "HYPER_MCP_DYNAMIC_LOADING": "${user_config.dynamic_loading}",
+        "HYPER_MCP_INSECURE_SKIP_SIGNATURE": "${user_config.insecure_skip_signature}"
+      },
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/hyper-mcp.exe"
+        }
+      }
+    }
+  },
+  "tools_generated": true,
+  "user_config": {
+    "config_file": {
+      "type": "file",
+      "title": "Plugin config file",
+      "description": "Path to your hyper-mcp config (JSON or YAML) listing the WebAssembly plugins to load. See config.example.json in the repository.",
+      "required": true
+    },
+    "dynamic_loading": {
+      "type": "boolean",
+      "title": "Enable dynamic plugin loading",
+      "description": "Allow loading and unloading plugins at runtime via the hyper_mcp-load_plugin and hyper_mcp-unload_plugin tools.",
+      "default": false
+    },
+    "insecure_skip_signature": {
+      "type": "boolean",
+      "title": "Skip OCI signature verification",
+      "description": "Not recommended. Loads oci:// plugins without verifying their cosign signature, so you do not need the cosign CLI installed.",
+      "default": false
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["__PLATFORM__"]
+  }
+}

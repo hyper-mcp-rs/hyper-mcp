@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hyper-mcp": {
+      "command": "hyper-mcp",
+      "args": ["--config-file", "${CLAUDE_PLUGIN_ROOT}/config.json"]
+    }
+  }
+}

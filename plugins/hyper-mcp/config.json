@@ -1,0 +1,8 @@
+{
+  "plugins": {
+    "hash": {
+      "url": "oci://ghcr.io/hyper-mcp-rs/defuddle-plugin:latest",
+      "description": "Get the main content of any page as Markdown"
+    }
+  }
+}
