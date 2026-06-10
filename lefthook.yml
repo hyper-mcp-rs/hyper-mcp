@@ -32,10 +32,9 @@ pre-commit:
 
     clippy:
       tags: rust lint
-      # Templates and Cargo.toml affect compilation just as much as .rs:
-      # askama's macro reads .html at build time, so a typo in a template
-      # is a clippy/build error.
-      glob: "*.{rs,html,toml}"
+      # Cargo.toml / rust-toolchain.toml affect compilation just as much as
+      # .rs (features, deps, toolchain pin), so lint when any of them change.
+      glob: "*.{rs,toml}"
       run: cargo clippy --all-targets --all-features --locked -- -D warnings
       fail_text: |
         Clippy reported warnings. Fix them or add a justified
@@ -60,6 +59,11 @@ pre-push:
   commands:
     test-coverage:
       tags: rust test coverage
+      # Only run the suite when the push range contains something that can
+      # change test results: Rust sources, the dependency/toolchain
+      # manifests, or the integration-test fixtures under tests/fixtures/.
+      # Doc/CI/packaging-only pushes skip this entirely.
+      glob: "{*.rs,Cargo.toml,Cargo.lock,rust-toolchain.toml,tests/fixtures/*}"
       # `cargo llvm-cov` runs the full test suite with LLVM source-based
       # coverage instrumentation and exits non-zero if total line
       # coverage drops below 70%. Two failure modes in one command:
