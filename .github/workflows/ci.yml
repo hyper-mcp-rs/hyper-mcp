@@ -28,7 +28,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 1
+  # Incremental compilation provides no benefit on fresh CI runners and only
+  # bloats the cached target/ directory, so disable it.
+  CARGO_INCREMENTAL: 0
 
 permissions:
   contents: read # checkout repository
@@ -68,15 +70,23 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: target/
-          key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          # Key on Cargo.lock only (not the commit SHA) so a single cache is
+          # reused/overwritten per dependency set instead of creating a new
+          # multi-GB entry on every commit.
+          key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
             cargo-target-${{ runner.os }}-
 
       - name: Build all workspace artifacts and tests
         run: |
           cargo check --workspace --all-features --locked
           cargo test --no-run --workspace --all-features --locked
+
+      - name: Prune workspace crate artifacts before caching
+        # Drop only this crate's own build outputs (which change every commit)
+        # while keeping cached dependency artifacts, so the target cache stays
+        # stable across commits instead of growing each run.
+        run: cargo clean -p hyper-mcp
 
   clippy:
     name: Clippy
@@ -108,9 +118,8 @@ jobs:
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: target/
-          key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
             cargo-target-${{ runner.os }}-
 
       - name: Restore file timestamps
@@ -170,9 +179,8 @@ jobs:
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: target/
-          key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
             cargo-target-${{ runner.os }}-
 
       - name: Restore file timestamps
