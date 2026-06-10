@@ -23,7 +23,7 @@ use rmcp::{
         ListToolsResult, LoggingLevel, PaginatedRequestParams, ReadResourceRequestMethod,
         ReadResourceRequestParams, ReadResourceResult, Reference, Resource, ResourceTemplate,
         ServerCapabilities, ServerInfo, SetLevelRequestParams, SubscribeRequestParams, Tool,
-        UnsubscribeRequestParams,
+        ToolAnnotations, UnsubscribeRequestParams,
     },
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
@@ -970,8 +970,9 @@ impl ServerHandler for PluginService {
                     .ensure_object(),
                 )),
             )
+            .with_annotations(ToolAnnotations::new().read_only(true).open_world(false))
             .with_output_schema::<ListPluginResults>()
-            .with_title("Load Plugin"),
+            .with_title("List Plugins"),
         );
 
         if self.config.dynamic_loading {
@@ -986,6 +987,7 @@ impl ServerHandler for PluginService {
                         schema_for!(LoadPluginArguments).ensure_object(),
                     )),
                 )
+                .with_annotations(ToolAnnotations::new().open_world(true).idempotent(true))
                 .with_title("Load Plugin"),
             );
             list_tools_result.tools.push(
@@ -998,6 +1000,12 @@ impl ServerHandler for PluginService {
                     Arc::new(std::mem::take(
                         schema_for!(UnloadPluginArguments).ensure_object(),
                     )),
+                )
+                .with_annotations(
+                    ToolAnnotations::new()
+                        .open_world(false)
+                        .idempotent(true)
+                        .destructive(true),
                 )
                 .with_title("Unload Plugin"),
             );
