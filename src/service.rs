@@ -280,9 +280,16 @@ impl PluginService {
         }
 
         let wasm_data = match url.scheme() {
-            "file" => tokio::fs::read(url.path())
-                .await
-                .map_err(anyhow::Error::from),
+            "file" => {
+                // NOTE: use `to_file_path()` rather than `url.path()`. On Windows
+                // `url.path()` yields a leading-slash, percent-encoded string like
+                // `/C:/plugins/foo.wasm`, which `fs::read` cannot open. `to_file_path`
+                // produces a correct native path on every platform and decodes %xx.
+                let path = url
+                    .to_file_path()
+                    .map_err(|_| anyhow!("Invalid file URL for plugin: {url}"))?;
+                tokio::fs::read(path).await.map_err(anyhow::Error::from)
+            }
             "http" => wasm::http::load_wasm(url, &None).await,
             "https" => wasm::http::load_wasm(url, &self.config.auths).await,
             "oci" => wasm::oci::load_wasm(url, &self.config.oci).await,
