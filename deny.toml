@@ -42,21 +42,11 @@ ignore = [
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101 via aws-smithy-http-client; waiting on AWS SDK rustls bump" },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101 via aws-smithy-http-client; waiting on AWS SDK rustls bump" },
 
-    # wasmtime 41.0.4 advisories. Pinned by `extism` 1.21. Fixes are in
-    # wasmtime >=42.0.2 / >=43.0.1 / >=44.0.1; requires an extism release that
-    # picks up a newer wasmtime.
-    { id = "RUSTSEC-2026-0085", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0086", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0087", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0088", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0089", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0091", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0092", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0093", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0094", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0095", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0096", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
-    { id = "RUSTSEC-2026-0114", reason = "wasmtime 41.x pinned by extism 1.21; waiting on extism bump" },
+    # proc-macro-error2: upstream author confirmed it is unmaintained (no
+    # vulnerability, build-time proc-macro only). No safe upgrade exists - it's
+    # the latest getset 0.1.6 -> oci-spec 0.9 -> oci-client 0.17. Unblock when
+    # getset/oci-spec migrate off proc-macro-error2.
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained; latest getset 0.1.6 still depends on it via oci-client" },
 ]
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -88,10 +78,30 @@ allow = [
     "MIT",
     "MPL-2.0",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
 ]
 exceptions = []
+
+# These transitive crates declare only `license-file` (no SPDX `license`
+# expression) in their manifest. License detection from the bundled LICENSE
+# text already succeeds, but we pin the expression via `clarify` so resolution
+# is deterministic instead of depending on askalono's confidence score. The
+# `hash` is a crc32 of the LICENSE file; if upstream changes it, the
+# clarification stops applying and we re-verify.
+#
+# Note: cargo-deny still emits an informational `no-license-field` *warning*
+# for these crates (it flags the missing manifest field regardless of how the
+# license is resolved). There is no config switch to silence it short of the
+# upstream crates adding a `license` field.
+[[licenses.clarify]]
+crate = "cfg_block"
+expression = "Apache-2.0"
+license-files = [{ path = "LICENSE", hash = 0x0fb72a18 }]
+
+[[licenses.clarify]]
+crate = "sigstore-protobuf-specs-derive"
+expression = "Apache-2.0"
+license-files = [{ path = "LICENSE", hash = 0x86e2b4b4 }]
 
 # Don't require this crate (or any other `publish = false` workspace
 # member) to declare a license - internal apps aren't published.
