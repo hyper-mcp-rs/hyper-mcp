@@ -87,3 +87,12 @@ publish = true
 push = true
 tag = true
 tag-name = "v{{version}}"
+
+# Keep the Claude Code plugin manifest version in sync with the crate version.
+# `exactly = 1` makes the release fail loudly if the field can't be found or
+# matches more than once (e.g. after a manifest refactor).
+[[package.metadata.release.pre-release-replacements]]
+file = "plugins/hyper-mcp/.claude-plugin/plugin.json"
+search = '"version": "[^"]+"'
+replace = '"version": "{{version}}"'
+exactly = 1
