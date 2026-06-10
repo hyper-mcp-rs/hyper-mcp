@@ -32,9 +32,9 @@ pre-commit:
 
     clippy:
       tags: rust lint
-      # Cargo.toml / rust-toolchain.toml affect compilation just as much as
-      # .rs (features, deps, toolchain pin), so lint when any of them change.
-      glob: "*.{rs,toml}"
+      # Cargo.toml (features/deps) and Cargo.lock (resolved versions) affect
+      # compilation just as much as .rs, so lint when any of them change.
+      glob: "{*.rs,Cargo.toml,Cargo.lock}"
       run: cargo clippy --all-targets --all-features --locked -- -D warnings
       fail_text: |
         Clippy reported warnings. Fix them or add a justified
