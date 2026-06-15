@@ -17,11 +17,11 @@ git-version = "0.3"
 anyhow = "1.0"
 async-trait = "0.1"
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
-aws-smithy-types = "1.4"
+aws-smithy-types = "1.5"
 backon = "1.6"
-aws-sdk-s3 = "1.135"
+aws-sdk-s3 = "1.136"
 axum = "0.8"
-bytesize = "2.3"
+bytesize = "2.4"
 camino = "1.2"
 clap = { version = "4.6", features = ["derive", "env"] }
 ctor = "1.0"
@@ -68,7 +68,7 @@ url = { version = "2.5", features = ["serde"] }
 uuid = { version = "1.23", features = ["serde"] }
 
 [dev-dependencies]
-aws-sdk-s3 = { version = "1.135", features = ["test-util"] }
+aws-sdk-s3 = { version = "1.136", features = ["test-util"] }
 aws-smithy-mocks = "0.2"
 aws-smithy-runtime-api = "1.12"
 rmcp = { version = "1.7", features = [
