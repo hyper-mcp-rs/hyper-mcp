@@ -105,6 +105,35 @@ If you have [Rust](https://rustup.rs/) installed, you can install hyper-mcp dire
 cargo install hyper-mcp
 ```
 
+### Auto-update
+
+hyper-mcp can update itself before it starts. Pass `--auto-update` (or set
+`HYPER_MCP_AUTO_UPDATE=true`) and, on launch, it checks GitHub for a newer
+release, downloads the archive built for the current platform, verifies its
+SHA-256 checksum, replaces the running binary in place, and restarts with the
+same arguments:
+
+```sh
+hyper-mcp --auto-update --config-file /path/to/config.json
+```
+
+If no newer release exists, or the check fails for any reason (offline, network
+timeout, etc.), hyper-mcp logs the outcome and continues running the current
+version. The checksum is an integrity check against accidental corruption, not
+a tamper-proofing signature — the archive and checksum are served from the same
+release, and transport integrity relies on TLS to GitHub.
+
+**Supported platforms:** auto-update only works for targets that ship a release
+asset — the ones listed in [Pre-built binaries](#pre-built-binaries-github-releases).
+On any other target the matching asset does not exist, so the update is skipped
+with a logged warning.
+
+**Package-manager installs:** avoid `--auto-update` for binaries installed via
+Homebrew, a system package manager, or any other tool that manages the
+executable. The updater replaces the file in place, which diverges from what the
+package manager expects; let the package manager handle upgrades instead (e.g.
+`brew upgrade hyper-mcp`).
+
 ## Getting Started
 
 1. Create your config file:

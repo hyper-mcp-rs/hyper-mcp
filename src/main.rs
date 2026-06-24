@@ -6,6 +6,7 @@ mod naming;
 mod oauth2;
 mod plugin;
 mod service;
+mod update;
 mod wasm;
 
 use anyhow::Result;
@@ -21,6 +22,15 @@ async fn main() -> Result<()> {
         let _span = span.enter();
         let cli = cli::Cli::parse();
         tracing::debug!("Loading config from {:?}", cli);
+
+        // If requested, check for and apply an update before doing any other
+        // startup work. On a successful update this re-executes the new binary
+        // and never returns; on failure we log and continue with this version.
+        if cli.auto_update
+            && let Err(e) = update::run().await
+        {
+            tracing::warn!(error = ?e, "Auto-update failed; continuing with the current version");
+        }
 
         // The platform-native keyring store is initialized lazily the first time a
         // `keyring::Entry` is created. Probe it here so an unavailable store is reported

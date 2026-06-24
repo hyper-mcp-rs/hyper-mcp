@@ -48,6 +48,7 @@ rmcp = { version = "1.8", features = [
 regex = { version = "1.12", features = ["unicode", "perf"] }
 reqwest = { version = "0.13", features = ["json"] }
 schemars = "1.2"
+semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
@@ -65,6 +66,14 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5", features = ["serde"] }
 uuid = { version = "1.23", features = ["serde"] }
+
+# Release archives are `.tar.gz` on Unix and `.zip` on Windows, so the zip
+# extractor is only needed when building the Windows target.
+# Only Deflate extraction is needed (release `.zip`s are Deflate-compressed);
+# dropping the default features avoids pulling in bzip2/zstd/AES and their
+# heavier, differently-licensed transitive dependencies.
+[target.'cfg(windows)'.dependencies]
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 aws-sdk-s3 = { version = "1.137", features = ["test-util"] }
