@@ -37,7 +37,7 @@ impl<'de> Deserialize<'de> for AuthConfig {
             }
             InternalAuthConfig::Token { token } => Ok(AuthConfig::Token { token }),
             InternalAuthConfig::Keyring(id) => {
-                use keyring_core::Entry;
+                use keyring::Entry;
                 use serde::de;
 
                 let entry: Entry = (id).try_into().map_err(de::Error::custom)?;
@@ -346,19 +346,19 @@ pub struct KeyringEntryId {
     pub user: String,
 }
 
-impl TryFrom<KeyringEntryId> for keyring_core::Entry {
-    type Error = keyring_core::Error;
+impl TryFrom<KeyringEntryId> for keyring::Entry {
+    type Error = keyring::Error;
 
     fn try_from(id: KeyringEntryId) -> Result<Self, Self::Error> {
-        keyring_core::Entry::new(&id.service, &id.user)
+        keyring::Entry::new(&id.service, &id.user)
     }
 }
 
-impl TryFrom<&KeyringEntryId> for keyring_core::Entry {
-    type Error = keyring_core::Error;
+impl TryFrom<&KeyringEntryId> for keyring::Entry {
+    type Error = keyring::Error;
 
     fn try_from(id: &KeyringEntryId) -> Result<Self, Self::Error> {
-        keyring_core::Entry::new(&id.service, &id.user)
+        keyring::Entry::new(&id.service, &id.user)
     }
 }
 
@@ -1518,9 +1518,10 @@ plugins:
         use std::process::Command;
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        // Initialize the platform-native keyring store (required by keyring 4.0)
-        if let Err(e) = keyring::use_native_store(false) {
-            println!("Failed to initialize native keyring store: {e}. Skipping test.");
+        // Probe the platform-native keyring store (lazily initialized on first entry);
+        // skip if unavailable (e.g. headless CI).
+        if let Err(e) = keyring::Entry::new("hyper-mcp-keyring-probe", "probe") {
+            println!("Native keyring store unavailable: {e}. Skipping test.");
             return;
         }
 
@@ -1656,9 +1657,10 @@ plugins:
         use std::time::{SystemTime, UNIX_EPOCH};
         use tokio::fs;
 
-        // Initialize the platform-native keyring store (required by keyring 4.0)
-        if let Err(e) = keyring::use_native_store(false) {
-            println!("Failed to initialize native keyring store: {e}. Skipping test.");
+        // Probe the platform-native keyring store (lazily initialized on first entry);
+        // skip if unavailable (e.g. headless CI).
+        if let Err(e) = keyring::Entry::new("hyper-mcp-keyring-probe", "probe") {
+            println!("Native keyring store unavailable: {e}. Skipping test.");
             return;
         }
 
@@ -1854,9 +1856,10 @@ plugins:
         use std::process::Command;
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        // Initialize the platform-native keyring store (required by keyring 4.0)
-        if let Err(e) = keyring::use_native_store(false) {
-            println!("Failed to initialize native keyring store: {e}. Skipping test.");
+        // Probe the platform-native keyring store (lazily initialized on first entry);
+        // skip if unavailable (e.g. headless CI).
+        if let Err(e) = keyring::Entry::new("hyper-mcp-keyring-probe", "probe") {
+            println!("Native keyring store unavailable: {e}. Skipping test.");
             return;
         }
 

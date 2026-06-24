@@ -624,6 +624,7 @@ impl ServerHandler for PluginService {
         plugin.value().complete(request, context).await
     }
 
+    #[allow(deprecated)]
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
     fn get_info(&self) -> ServerInfo {
         let server_info = ServerInfo::new(
@@ -1327,6 +1328,7 @@ mod host_fns {
         .with_namespace(EXTISM_USER_MODULE)
     }
 
+    #[allow(deprecated)]
     pub fn create_message(ctx: PluginServiceContext) -> Function {
         host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParams>) -> Json<CreateMessageResult> {
             let mut sampling_msg = sampling_msg.into_inner();
@@ -1598,7 +1600,7 @@ mod host_fns {
             match &plugin_config.runtime_config {
                 Some(runtime_config) => match &runtime_config.allowed_secrets {
                     Some(allowed_secrets) => if allowed_secrets.contains(&entry) {
-                        let entry: keyring_core::Entry = match (entry).try_into() {
+                        let entry: keyring::Entry = match (entry).try_into() {
                             Ok(entry) => entry,
                             Err(error) => {
                                 tracing::error!(error = ?error, "Unable to convert to entry in keyring");
@@ -1635,6 +1637,7 @@ mod host_fns {
         .with_namespace(EXTISM_USER_MODULE)
     }
 
+    #[allow(deprecated)]
     pub fn list_roots(ctx: PluginServiceContext) -> Function {
         host_fn!(list_roots(ctx: PluginServiceContext;) -> Json<ListRootsResult> {
             let ctx = match ctx.get()?.lock() {
@@ -1672,6 +1675,7 @@ mod host_fns {
         .with_namespace(EXTISM_USER_MODULE)
     }
 
+    #[allow(deprecated)]
     pub fn notify_logging_message(ctx: PluginServiceContext) -> Function {
         host_fn!(notify_logging_message(ctx: PluginServiceContext; log_msg: Json<LoggingMessageNotificationParam>) {
             let log_msg = log_msg.into_inner();

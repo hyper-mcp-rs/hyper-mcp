@@ -22,8 +22,10 @@ async fn main() -> Result<()> {
         let cli = cli::Cli::parse();
         tracing::debug!("Loading config from {:?}", cli);
 
-        // Initialize the platform-native keyring store before any entries are created.
-        if let Err(e) = keyring::use_native_store(false) {
+        // The platform-native keyring store is initialized lazily the first time a
+        // `keyring::Entry` is created. Probe it here so an unavailable store is reported
+        // at startup rather than only when a keyring-backed secret is first accessed.
+        if let Err(e) = keyring::Entry::new("hyper-mcp", "startup-probe") {
             tracing::warn!(error = ?e, "Failed to initialize native keyring store; keyring secrets will be unavailable");
         }
 
