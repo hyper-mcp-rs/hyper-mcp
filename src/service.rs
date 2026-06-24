@@ -1949,6 +1949,34 @@ mod tests {
         fn get_tool_list_changed_count(&self) -> usize {
             self.tool_list_changed_count.load(Ordering::SeqCst)
         }
+
+        /// Waits until exactly `expected` `tools/list_changed` notifications
+        /// have been received, or panics after a timeout.
+        ///
+        /// `call_tool` returns once the server has *sent* the notification,
+        /// but the client receives and dispatches it on a separate task, so
+        /// the count is not guaranteed to be updated synchronously. Polling
+        /// with a timeout avoids the race that makes a bare equality assert
+        /// flaky under CI load.
+        async fn wait_for_tool_list_changed_count(&self, expected: usize) {
+            let deadline = std::time::Duration::from_secs(10);
+            let polled = tokio::time::timeout(deadline, async {
+                while self.get_tool_list_changed_count() < expected {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+
+            let actual = self.get_tool_list_changed_count();
+            assert!(
+                polled.is_ok(),
+                "timed out waiting for {expected} tools/list_changed notification(s); got {actual}"
+            );
+            assert_eq!(
+                actual, expected,
+                "expected exactly {expected} tools/list_changed notification(s), got {actual}"
+            );
+        }
     }
 
     async fn create_temp_config_file(content: &str) -> Result<(TempDir, PathBuf)> {
@@ -2937,7 +2965,7 @@ plugins:
             result.err()
         );
 
-        assert!(client.service().get_tool_list_changed_count() == 1);
+        client.service().wait_for_tool_list_changed_count(1).await;
 
         // Get updated tool list
         let ctx2 = create_test_ctx(&server);
@@ -2996,7 +3024,7 @@ plugins:
             assert!(result.is_ok(), "add_tool call {} should succeed", i);
         }
 
-        assert!(client.service().get_tool_list_changed_count() == 3);
+        client.service().wait_for_tool_list_changed_count(3).await;
 
         // Get final tool list
         let ctx = create_test_ctx(&server);
