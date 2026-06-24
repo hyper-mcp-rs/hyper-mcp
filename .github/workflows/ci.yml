@@ -164,6 +164,15 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show
 
+      - name: Free up disk space
+        run: |
+          # cargo llvm-cov builds a second, fully instrumented copy of the entire
+          # dependency graph under target/llvm-cov-target/, which does not fit on the
+          # stock ~14 GB runner disk. Reclaim space from preinstalled toolchains we
+          # don't use before building.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - name: Restore cargo registry
         uses: actions/cache/restore@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
@@ -175,19 +184,9 @@ jobs:
           restore-keys: |
             cargo-registry-
 
-      - name: Restore target directory
-        uses: actions/cache/restore@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
-        with:
-          path: target/
-          key: cargo-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-target-${{ runner.os }}-
-
-      - name: Restore file timestamps
-        run: |
-          # Update source file timestamps to prevent unnecessary rebuilds
-          # This makes cargo think files haven't changed since the cache was created
-          git ls-files -z | xargs -0 touch
+      # Note: the regular target/ cache is intentionally NOT restored here. Coverage
+      # runs with -C instrument-coverage into a separate target/llvm-cov-target/ tree
+      # and cannot reuse those artifacts, so restoring it would only waste disk space.
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -209,6 +208,12 @@ jobs:
         env:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # We only report line coverage, which needs line tables but not full
+          # debuginfo. Dropping from debuginfo=2 to line-tables-only drastically
+          # shrinks the instrumented build under target/llvm-cov-target/. The test
+          # profile inherits debug from dev, so both are pinned for good measure.
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CARGO_PROFILE_TEST_DEBUG: line-tables-only
         run: RUST_BACKTRACE=1 cargo llvm-cov --workspace --all-features --locked --lcov --output-path lcov.info
 
       - name: Upload coverage artifact
