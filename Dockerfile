@@ -5,6 +5,7 @@ RUN cargo install cargo-auditable
 
 COPY Cargo.toml Cargo.lock ./
 RUN cargo fetch
+COPY build.rs ./
 COPY src ./src
 RUN cargo auditable build --release --locked
 
