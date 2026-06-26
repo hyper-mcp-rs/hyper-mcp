@@ -279,8 +279,6 @@ jobs:
           push: false
           load: false
           platforms: linux/amd64
-          cache-from: type=gha,scope=hyper-mcp-ci
-          cache-to: type=gha,mode=max,scope=hyper-mcp-ci
 
   # Summary job to check if all required jobs passed
   ci-success:
