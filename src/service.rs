@@ -17,16 +17,19 @@ use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::{
         CallToolRequestMethod, CallToolRequestParams, CallToolResult, CompleteRequestMethod,
-        CompleteRequestParams, CompleteResult, Content, GetPromptRequestMethod,
+        CompleteRequestParams, CompleteResult, ContentBlock, GetPromptRequestMethod,
         GetPromptRequestParams, GetPromptResult, Implementation, InitializeRequestParams,
         InitializeResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
-        ListToolsResult, LoggingLevel, PaginatedRequestParams, ReadResourceRequestMethod,
-        ReadResourceRequestParams, ReadResourceResult, Reference, Resource, ResourceTemplate,
-        ServerCapabilities, ServerInfo, SetLevelRequestParams, SubscribeRequestParams, Tool,
-        ToolAnnotations, UnsubscribeRequestParams,
+        ListToolsResult, PaginatedRequestParams, ReadResourceRequestMethod,
+        ReadResourceRequestParams, ReadResourceResult, Reference, ServerCapabilities, ServerInfo,
+        SubscribeRequestParams, Tool, ToolAnnotations, UnsubscribeRequestParams,
     },
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
+// Logging is deprecated by SEP-2577 (modelcontextprotocol#2577). We still expose it because
+// many clients rely on it; suppress the deprecation warnings until the feature is removed.
+#[allow(deprecated)]
+use rmcp::model::{LoggingLevel, SetLevelRequestParams};
 use schemars::{JsonSchema, json_schema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -132,6 +135,7 @@ fn next_call_id() -> u64 {
 #[derive(Debug)]
 pub struct PluginServiceInner {
     config: Config,
+    #[allow(deprecated)]
     logging_level: RwLock<LoggingLevel>,
     peer: SetOnce<Peer<RoleServer>>,
     plugins: DashMap<PluginName, Arc<dyn Plugin>>,
@@ -158,6 +162,7 @@ impl Deref for PluginService {
 
 impl PluginService {
     pub async fn new(config: &Config) -> Result<Self> {
+        #[allow(deprecated)]
         let inner = Arc::new(PluginServiceInner {
             config: config.clone(),
             logging_level: RwLock::new(LoggingLevel::Error),
@@ -215,14 +220,14 @@ impl PluginService {
             )?)),
             HyperMcpTools::LoadPlugin => {
                 if !self.config.dynamic_loading {
-                    return Ok(CallToolResult::error(vec![Content::text(
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
                         "Dynamic loading not enabled",
                     )]));
                 }
                 Ok(match LoadPluginArguments::try_from(arguments) {
                     Ok(args) => {
                         if self.plugins.contains_key(&args.name) {
-                            CallToolResult::error(vec![Content::text(format!(
+                            CallToolResult::error(vec![ContentBlock::text(format!(
                                 "A plugin by the name {} already exists. If you intend on replacing this pluging, unload it first",
                                 args.name
                             ))])
@@ -230,26 +235,26 @@ impl PluginService {
                             match self.load_plugin(&args.name, &args.config).await {
                                 Ok(()) => {
                                     notify().await;
-                                    CallToolResult::success(vec![Content::text(format!(
+                                    CallToolResult::success(vec![ContentBlock::text(format!(
                                         "Loaded {}",
                                         args.name
                                     ))])
                                 }
-                                Err(e) => CallToolResult::error(vec![Content::text(format!(
+                                Err(e) => CallToolResult::error(vec![ContentBlock::text(format!(
                                     "Error loading plugin {}: {e}",
                                     args.name
                                 ))]),
                             }
                         }
                     }
-                    Err(e) => CallToolResult::error(vec![Content::text(format!(
+                    Err(e) => CallToolResult::error(vec![ContentBlock::text(format!(
                         "Failed to parse arguments: {e}"
                     ))]),
                 })
             }
             HyperMcpTools::UnloadPlugin => {
                 if !self.config.dynamic_loading {
-                    return Ok(CallToolResult::error(vec![Content::text(
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
                         "Dynamic loading not enabled",
                     )]));
                 }
@@ -257,12 +262,12 @@ impl PluginService {
                     Ok(args) => {
                         self.unload_plugin(&args.name);
                         notify().await;
-                        CallToolResult::success(vec![Content::text(format!(
+                        CallToolResult::success(vec![ContentBlock::text(format!(
                             "Unloaded {}",
                             args.name
                         ))])
                     }
-                    Err(e) => CallToolResult::error(vec![Content::text(format!(
+                    Err(e) => CallToolResult::error(vec![ContentBlock::text(format!(
                         "Failed to parse arguments: {e}"
                     ))]),
                 })
@@ -434,10 +439,12 @@ impl PluginService {
         Ok(())
     }
 
+    #[allow(deprecated)]
     pub fn logging_level(&self) -> LoggingLevel {
         *self.logging_level.read().unwrap()
     }
 
+    #[allow(deprecated)]
     fn set_logging_level(&self, level: LoggingLevel) {
         *self.logging_level.write().unwrap() = level;
     }
@@ -615,6 +622,12 @@ impl ServerHandler for PluginService {
                     new_request = new_request.with_context(ctx);
                 }
                 (plugin_name, new_request)
+            }
+            other => {
+                return Err(McpError::invalid_request(
+                    format!("Unsupported completion reference type: {other:?}"),
+                    None,
+                ));
             }
         };
 
@@ -838,13 +851,10 @@ impl ServerHandler for PluginService {
                     );
                     continue;
                 }
-                let mut raw = resource.raw.clone();
-                raw.uri = create_namespaced_uri(&plugin_name, &resource.uri)
+                let mut resource = resource;
+                resource.uri = create_namespaced_uri(&plugin_name, &resource.uri)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-                list_resources_result.resources.push(Resource {
-                    raw,
-                    annotations: resource.annotations.clone(),
-                });
+                list_resources_result.resources.push(resource);
             }
         }
 
@@ -909,16 +919,13 @@ impl ServerHandler for PluginService {
                     );
                     continue;
                 }
-                let mut raw = resource_template.raw.clone();
-                raw.uri_template =
+                let mut resource_template = resource_template;
+                resource_template.uri_template =
                     create_namespaced_uri(&plugin_name, &resource_template.uri_template)
                         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 list_resource_templates_result
                     .resource_templates
-                    .push(ResourceTemplate {
-                        raw,
-                        annotations: resource_template.annotations.clone(),
-                    });
+                    .push(resource_template);
             }
         }
 
@@ -1115,6 +1122,7 @@ impl ServerHandler for PluginService {
     }
 
     #[tracing::instrument(skip_all, fields(call = next_call_id()))]
+    #[allow(deprecated)]
     fn set_level(
         &self,
         request: SetLevelRequestParams,
@@ -1195,13 +1203,19 @@ mod host_fns {
     };
     use rmcp::{
         model::{
-            ContextInclusion, CreateElicitationRequestParams, CreateElicitationResult,
-            CreateMessageRequestParams, CreateMessageResult, ElicitationAction,
-            ElicitationResponseNotificationParam, ElicitationSchema, ListRootsResult,
-            LoggingMessageNotificationParam, ProgressNotificationParam,
-            ResourceUpdatedNotificationParam, SamplingMessage,
+            ContextInclusion, ElicitRequestParams, ElicitResult, ElicitationAction,
+            ElicitationResponseNotificationParam, ElicitationSchema, ProgressNotificationParam,
+            ResourceUpdatedNotificationParam,
         },
         service::ElicitationMode,
+    };
+    // Sampling, roots, and logging are deprecated by SEP-2577 (modelcontextprotocol#2577). We
+    // still expose these host functions to plugins; suppress the deprecation warnings until the
+    // features are removed from the protocol.
+    #[allow(deprecated)]
+    use rmcp::model::{
+        CreateMessageRequestParams, CreateMessageResult, ListRootsResult,
+        LoggingMessageNotificationParam, SamplingMessage,
     };
     use serde_json::json;
 
@@ -1210,7 +1224,7 @@ mod host_fns {
     #[derive(Clone, Debug, Serialize)]
     struct CreateElicitationRequestParamWithTimeout {
         #[serde(flatten)]
-        pub inner: CreateElicitationRequestParams,
+        pub inner: ElicitRequestParams,
         #[serde_as(as = "Option<DurationSeconds<f64>>")]
         pub timeout: Option<Duration>,
     }
@@ -1249,7 +1263,7 @@ mod host_fns {
             #[derive(Deserialize)]
             struct Helper {
                 #[serde(flatten)]
-                inner: CreateElicitationRequestParams,
+                inner: ElicitRequestParams,
                 #[serde_as(as = "Option<DurationSeconds<f64>>")]
                 timeout: Option<Duration>,
             }
@@ -1268,7 +1282,7 @@ mod host_fns {
     }
 
     pub fn create_elicitation(ctx: PluginServiceContext) -> Function {
-        host_fn!(create_elicitation(ctx: PluginServiceContext; elicitation_msg: Json<CreateElicitationRequestParamWithTimeout>) -> Json<CreateElicitationResult> {
+        host_fn!(create_elicitation(ctx: PluginServiceContext; elicitation_msg: Json<CreateElicitationRequestParamWithTimeout>) -> Json<ElicitResult> {
             let elicitation_msg = elicitation_msg.into_inner();
             let ctx = match ctx.get()?.lock() {
                 Ok(v) => v.clone(),
@@ -1283,37 +1297,37 @@ mod host_fns {
                         if let Some(timeout) = elicitation_msg.timeout {
                             Ok(ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner.clone(), Some(timeout))).map(Json).unwrap_or_else(|err| {
                                 tracing::error!(error = ?err, "Elicitation creation failed");
-                                Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": err.to_string()})))
+                                Json(ElicitResult::new(ElicitationAction::Decline).with_content(json!({"error": err.to_string()})))
                             }))
                         } else {
                             Ok(ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner.clone())).map(Json).unwrap_or_else(|err| {
                                     tracing::error!(error = ?err, "Elicitation creation failed");
-                                    Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": err.to_string()})))
+                                    Json(ElicitResult::new(ElicitationAction::Decline).with_content(json!({"error": err.to_string()})))
                             }))
                         }
                     };
-                    if let CreateElicitationRequestParams::FormElicitationParams { .. } = elicitation_msg.inner {
+                    if let ElicitRequestParams::FormElicitationParams { .. } = elicitation_msg.inner {
                         if peer.supported_elicitation_modes().contains(&ElicitationMode::Form) {
                             peer_create_elicitation()
                         } else {
                             tracing::info!("Peer does not support form elicitation, declining");
-                            Ok(Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": "Peer does not support form elicitation"}))))
+                            Ok(Json(ElicitResult::new(ElicitationAction::Decline).with_content(json!({"error": "Peer does not support form elicitation"}))))
                         }
-                    } else if let CreateElicitationRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
+                    } else if let ElicitRequestParams::UrlElicitationParams { .. } = elicitation_msg.inner {
                         if peer.supported_elicitation_modes().contains(&ElicitationMode::Url) {
                             peer_create_elicitation()
                         } else {
                             tracing::info!("Peer does not support url elicitation, declining");
-                            Ok(Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": "Peer does not support url elicitation"}))))
+                            Ok(Json(ElicitResult::new(ElicitationAction::Decline).with_content(json!({"error": "Peer does not support url elicitation"}))))
                         }
                     } else {
                         tracing::warn!("Unknown elicitation type, declining");
-                        Ok(Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": "Unknown elicitation type"}))))
+                        Ok(Json(ElicitResult::new(ElicitationAction::Decline).with_content(json!({"error": "Unknown elicitation type"}))))
                     }
                 },
                 None => {
                     tracing::error!("No peer available, declining");
-                    Ok(Json(CreateElicitationResult::new(ElicitationAction::Decline).with_content(json!({"error": "No peer avaialable"}))))
+                    Ok(Json(ElicitResult::new(ElicitationAction::Decline).with_content(json!({"error": "No peer avaialable"}))))
                 },
             }
         });
@@ -1427,7 +1441,7 @@ mod host_fns {
                             .supported_elicitation_modes()
                             .contains(&ElicitationMode::Url)
                         {
-                            CreateElicitationRequestParams::UrlElicitationParams {
+                            ElicitRequestParams::UrlElicitationParams {
                                 elicitation_id: Uuid::new_v4().to_string(),
                                 message: match details.verification_uri_complete() {
                                     Some(_) => format!(
@@ -1450,7 +1464,7 @@ mod host_fns {
                             .supported_elicitation_modes()
                             .contains(&ElicitationMode::Form)
                         {
-                            CreateElicitationRequestParams::FormElicitationParams {
+                            ElicitRequestParams::FormElicitationParams {
                                 message: match details.verification_uri_complete() {
                                     Some(uri) => format!(
                                         "Open this URL in your browser:\n{}; you have {} minutes to complete",
@@ -1488,6 +1502,11 @@ mod host_fns {
                             }
                             ElicitationAction::Decline => {
                                 return Err(anyhow!("Peer declined elicitation"));
+                            }
+                            other => {
+                                return Err(anyhow!(
+                                    "Peer returned unsupported elicitation action: {other:?}"
+                                ));
                             }
                         };
                         client
@@ -1899,7 +1918,7 @@ mod tests {
         ClientHandler,
         model::{
             ArgumentInfo, ClientInfo, CompletionContext, PromptReference, ProtocolVersion,
-            RequestId, ResourceReference, Tool,
+            RequestId, ResourceTemplateReference, Tool,
         },
         service::{RoleClient, RunningService, Service, serve_client, serve_server},
     };
@@ -2000,6 +2019,7 @@ mod tests {
         RequestContext::new(RequestId::Number(1), running.peer().clone())
     }
 
+    #[allow(deprecated)]
     fn create_test_service(config: Config) -> PluginService {
         PluginService(Arc::new(PluginServiceInner {
             config,
@@ -4184,10 +4204,7 @@ plugins:
         .await;
 
         // Test calling the complete() function for prompt timezone argument
-        let argument_info = ArgumentInfo {
-            name: "timezone".to_string(),
-            value: "Ame".to_string(),
-        };
+        let argument_info = ArgumentInfo::new("timezone", "Ame");
 
         let prompt_ref: PromptReference = serde_json::from_value(serde_json::json!({
             "type": "ref/prompt",
@@ -4195,11 +4212,8 @@ plugins:
         }))
         .unwrap();
         let complete_request =
-            CompleteRequestParams::new(Reference::Prompt(prompt_ref), argument_info).with_context(
-                CompletionContext {
-                    arguments: Some(HashMap::new()),
-                },
-            );
+            CompleteRequestParams::new(Reference::Prompt(prompt_ref), argument_info)
+                .with_context(CompletionContext::with_arguments(HashMap::new()));
 
         let ctx = create_test_ctx(&server);
         let result = server.service().complete(complete_request, ctx).await;
@@ -4302,12 +4316,9 @@ plugins:
         let resource_uri =
             "https://www.timezoneconverter.com/rstime/cgi-bin/zoneinfo?tz=Eur".to_string();
 
-        let argument_info = ArgumentInfo {
-            name: "timezone".to_string(),
-            value: "Eur".to_string(),
-        };
+        let argument_info = ArgumentInfo::new("timezone", "Eur");
 
-        let resource_ref: ResourceReference = serde_json::from_value(serde_json::json!({
+        let resource_ref: ResourceTemplateReference = serde_json::from_value(serde_json::json!({
             "type": "ref/resource",
             "uri": resource_uri
         }))
