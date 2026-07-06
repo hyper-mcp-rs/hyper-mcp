@@ -70,6 +70,7 @@ fn touch_throttle() {
     let path = throttle_path();
     let _ = std::fs::OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(&path);
 }
