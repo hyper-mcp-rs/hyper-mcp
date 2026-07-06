@@ -14,6 +14,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::time::Duration;
 
 /// The version this binary was compiled as (clean semver, e.g. `0.8.1`).
 ///
@@ -28,6 +29,50 @@ const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 /// Set on the re-executed process so a single launch updates at most once and
 /// can never enter a restart loop, even if version detection is off.
 const GUARD_ENV: &str = "HYPER_MCP_AUTO_UPDATED";
+
+/// The throttle file name (fixed, no cleanup needed).
+const THROTTLE_FILE: &str = "hyper-mcp-update-check";
+
+/// The throttle window: 15 minutes.
+const THROTTLE_WINDOW: Duration = Duration::from_secs(15 * 60);
+
+/// Returns the path to the throttle file in the system temp directory.
+fn throttle_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(THROTTLE_FILE)
+}
+
+/// Returns true if we should perform an update check.
+/// Checks the mtime of the throttle file; returns true if the file doesn't
+/// exist or was last touched more than THROTTLE_WINDOW ago.
+fn should_check() -> bool {
+    let path = throttle_path();
+    match std::fs::metadata(&path) {
+        Ok(meta) => {
+            // Get file modification time
+            if let Ok(mtime) = meta.modified() {
+                let now = std::time::SystemTime::now();
+                if let Ok(elapsed) = now.duration_since(mtime) {
+                    return elapsed > THROTTLE_WINDOW;
+                }
+            }
+            // On any error reading mtime, proceed with the check
+            true
+        }
+        Err(_) => {
+            // File doesn't exist -> first launch, proceed with check
+            true
+        }
+    }
+}
+
+/// Touches the throttle file to update its mtime, recording that a check was made.
+fn touch_throttle() {
+    let path = throttle_path();
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path);
+}
 
 #[derive(serde::Deserialize)]
 struct Release {
@@ -52,6 +97,12 @@ struct Asset {
 pub async fn run() -> Result<()> {
     if std::env::var_os(GUARD_ENV).is_some() {
         tracing::debug!("Auto-update guard set; already updated this launch, skipping check");
+        return Ok(());
+    }
+
+    // Throttle: skip if we checked within the last 15 minutes.
+    if !should_check() {
+        tracing::info!("Auto-update: check skipped (within 15-min window)");
         return Ok(());
     }
 
@@ -82,17 +133,23 @@ pub async fn run() -> Result<()> {
         "Auto-update: checking for newer release at {}",
         plan.releases_url
     );
-    match execute(&plan).await? {
-        Outcome::UpToDate => {
+    match execute(&plan).await {
+        Ok(Outcome::UpToDate) => {
+            touch_throttle();
             tracing::info!(
                 "Auto-update: already on the latest version ({})",
                 plan.current_version
             );
             Ok(())
         }
-        Outcome::Installed => {
+        Ok(Outcome::Installed) => {
+            touch_throttle();
             tracing::info!("Auto-update: installed new binary, restarting");
             restart(&plan.install_path)
+        }
+        Err(e) => {
+            touch_throttle();
+            Err(e)
         }
     }
 }
