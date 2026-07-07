@@ -1,0 +1,3 @@
+[submodule "external/auto-update"]
+	path = external/auto-update
+	url = https://github.com/hyper-mcp-rs/auto-update.git
