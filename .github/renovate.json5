@@ -12,14 +12,10 @@
   enabledManagers: [
     'github-actions',
     'cargo',
-    'git-submodules',
     'dockerfile',
     'pre-commit',
     'rust-toolchain',
   ],
-  'git-submodules': {
-    enabled: true,
-  },
   osvVulnerabilityAlerts: true,
   labels: [
     'dependencies',
@@ -41,15 +37,6 @@
       groupName: 'Rust dependencies',
       addLabels: [
         'rust',
-      ],
-    },
-    {
-      matchManagers: [
-        'git-submodules',
-      ],
-      groupName: 'Git submodules',
-      addLabels: [
-        'submodule',
       ],
     },
     {

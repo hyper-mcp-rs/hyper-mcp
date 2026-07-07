@@ -20,13 +20,6 @@ pub struct Cli {
     pub config_file: Option<PathBuf>,
 
     #[arg(
-        long = "auto-update",
-        help = "Before starting, check GitHub releases for a newer version. If one exists, download it, verify its SHA-256 checksum, replace this binary, and restart with the same arguments. (Not supported on Windows.)",
-        env = "HYPER_MCP_AUTO_UPDATE"
-    )]
-    pub auto_update: bool,
-
-    #[arg(
         long = "dynamic-loading",
         help = "Enable dynamic plugin loading and unloading via hyper_mcp-load_plugin and hyper_mcp-unload_plugin tools.",
         env = "HYPER_MCP_DYNAMIC_LOADING"

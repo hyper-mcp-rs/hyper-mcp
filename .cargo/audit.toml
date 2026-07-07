@@ -33,10 +33,4 @@ ignore = [
     "RUSTSEC-2026-0095",
     "RUSTSEC-2026-0096",
     "RUSTSEC-2026-0114",
-
-    # quick-xml 0.38.4: unbounded namespace-declaration allocation (DoS) and
-    # quadratic run time on duplicate attribute names. Pulled in via
-    # self_update -> ureq -> ureq-proto. No compatible fix in current dep tree.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
 ]

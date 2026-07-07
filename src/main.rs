@@ -6,7 +6,6 @@ mod naming;
 mod oauth2;
 mod plugin;
 mod service;
-mod update;
 mod wasm;
 
 use anyhow::Result;
@@ -22,22 +21,6 @@ async fn main() -> Result<()> {
         let _span = span.enter();
         let cli = cli::Cli::parse();
         tracing::debug!("Loading config from {:?}", cli);
-
-        // If requested, check for and apply an update before doing any other
-        // startup work. On a successful update this re-executes the new binary
-        // and never returns; on failure we log and continue with this version.
-        if cli.auto_update {
-            if cfg!(target_os = "windows") {
-                tracing::warn!(
-                    "Auto-update is not supported on Windows; skipping check. \
-                     On Windows, the process ID changes after restart, which breaks \
-                     stdio MCP clients that track the child process. \
-                     Please upgrade by downloading a new release from GitHub."
-                );
-            } else if let Err(e) = update::run().await {
-                tracing::warn!(error = ?e, "Auto-update failed; continuing with the current version");
-            }
-        }
 
         // The platform-native keyring store is initialized lazily the first time a
         // `keyring::Entry` is created. Probe it here so an unavailable store is reported

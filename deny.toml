@@ -47,12 +47,6 @@ ignore = [
     # the latest getset 0.1.6 -> oci-spec 0.9 -> oci-client 0.17. Unblock when
     # getset/oci-spec migrate off proc-macro-error2.
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained; latest getset 0.1.6 still depends on it via oci-client" },
-
-    # quick-xml: unbounded namespace-declaration allocation (DoS) and quadratic
-    # run time on duplicate attribute names. Pulled in via self_update ->
-    # ureq -> ureq-proto. No compatible fix in current dep tree.
-    { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.38.4 via self_update -> ureq; no compatible fix in current dep tree" },
-    { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.38.4 via self_update -> ureq; no compatible fix in current dep tree" },
 ]
 
 # ─────────────────────────────────────────────────────────────────────────
