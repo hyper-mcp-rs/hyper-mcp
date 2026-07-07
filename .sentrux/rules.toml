@@ -1,0 +1,100 @@
+# Architectural constraints for hyper-mcp
+# Enforced by the sentrux check_rules tool.
+
+[constraints]
+# Quality signal is normalized to a 0.0-1.0 scale by check_rules.
+# Current project quality signal is ~0.57, so 0.5 acts as a "do not regress" floor.
+min_quality = 0.5
+max_cycles = 1
+max_cc = 30
+max_fn_lines = 550
+max_file_lines = 4500
+
+# Per-language constraints (Rust gets slightly higher CC for match arms)
+[language.rust.constraints]
+max_cc = 30
+
+# Layer definitions (dependency direction enforcement).
+#
+# check_rules forbids an import edge X -> Y when order(X) > order(Y); every
+# dependency must flow toward an equal-or-higher order. In other words, a
+# higher `order` marks a more foundational layer that others may depend on.
+#
+# Orders below reflect the actual dependency graph:
+#   service -> {config, oauth2, plugin, wasm, naming, cli}
+#   config  -> {cli, expand_env, naming}
+#   wasm    -> {config}
+#   plugin  -> {naming}
+# so `service`/`update` (top-level) get the lowest order and `naming` (core,
+# depended on by everything) gets the highest.
+#
+# plugin.rs shares the `service` layer: sentrux's suffix resolver mismatches
+# `use rmcp::{ ... service::{...} }` in plugin.rs to the local src/service.rs,
+# producing a phantom plugin -> service edge. Since service legitimately depends
+# on plugin, the only way to exempt that intra-module cycle without editing code
+# is to keep both files in the same layer.
+[[layers]]
+name = "service"
+paths = ["src/service.rs", "src/plugin.rs"]
+order = 0
+
+[[layers]]
+name = "update"
+paths = ["src/update.rs"]
+order = 1
+
+[[layers]]
+name = "security"
+paths = ["src/oauth2.rs", "src/logging.rs"]
+order = 2
+
+[[layers]]
+name = "wasm"
+paths = ["src/wasm/*.rs"]
+order = 4
+
+[[layers]]
+name = "config"
+paths = ["src/config.rs", "src/expand_env.rs"]
+order = 5
+
+[[layers]]
+name = "cli"
+paths = ["src/cli.rs"]
+order = 6
+
+[[layers]]
+name = "core"
+paths = ["src/naming.rs"]
+order = 7
+
+# Boundary rules (explicit deny patterns)
+[[boundaries]]
+from = "src/plugin.rs"
+to = "src/cli.rs"
+reason = "Plugin layer must not depend on CLI layer"
+
+# NOTE: Disabled. This boundary fired on a false positive: plugin.rs has
+# `use rmcp::{ ... service::{...} }` (the rmcp crate's `service` module), which
+# sentrux's suffix-based import resolver mismatches to the local src/service.rs.
+# plugin.rs has no `crate::service` dependency, so the rule cannot be satisfied
+# without changing unrelated code. Re-enable if resolver disambiguation improves.
+# [[boundaries]]
+# from = "src/plugin.rs"
+# to = "src/service.rs"
+# reason = "Plugin trait must not depend on service implementation"
+
+[[boundaries]]
+from = "src/wasm/*.rs"
+to = "src/cli.rs"
+reason = "WASM modules must not depend on CLI layer"
+
+[[boundaries]]
+from = "src/wasm/*.rs"
+to = "src/plugin.rs"
+reason = "WASM modules must not depend on plugin layer directly"
+
+[[boundaries]]
+from = "src/update.rs"
+to = "src/cli.rs"
+reason = "Update module must not depend on CLI layer"
