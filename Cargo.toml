@@ -16,7 +16,7 @@ homepage = "https://github.com/hyper-mcp-rs/hyper-mcp"
 documentation = "https://github.com/hyper-mcp-rs/hyper-mcp"
 
 [dependencies]
-auto-update = { path = "external/auto-update" }
+auto-update = { path = "external/auto-update", version = "0.1.0" }
 git-version = "0.3"
 anyhow = "1.0"
 async-trait = "0.1"
