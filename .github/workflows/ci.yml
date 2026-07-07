@@ -20,6 +20,7 @@ on:
       - "pre-commit-config.yaml"
       - ".zed/**"
       - "lefthook.yml"
+      - "AGENTS.md"
   pull_request:
     branches: [main]
   workflow_dispatch:
