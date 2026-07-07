@@ -491,6 +491,96 @@ mod tests {
         assert!(parse_repository("https://gitlab.com/foo/bar").is_err());
     }
 
+    // ---- Throttling tests --------------------------------------------------
+    // These tests use a shared throttle file in the temp directory, so they
+    // must run sequentially to avoid interference.
+
+    #[serial_test::serial(throttle_tests)]
+    #[test]
+    fn should_check_returns_true_when_no_throttle_file() {
+        // Clean up any existing throttle file first
+        let _ = std::fs::remove_file(throttle_path());
+
+        // Should return true when file doesn't exist
+        assert!(
+            should_check(),
+            "should_check should return true when throttle file does not exist"
+        );
+
+        // Clean up after test
+        let _ = std::fs::remove_file(throttle_path());
+    }
+
+    #[serial_test::serial(throttle_tests)]
+    #[test]
+    fn should_check_returns_true_when_throttle_file_is_old() {
+        // Clean up any existing throttle file first
+        let _ = std::fs::remove_file(throttle_path());
+
+        // Create a throttle file and set its mtime to 20 minutes ago
+        let path = throttle_path();
+        std::fs::write(&path, "test").unwrap();
+
+        // Set modification time to 20 minutes ago (1200 seconds)
+        let old_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            - std::time::Duration::from_secs(20 * 60);
+        let old_time = filetime::FileTime::from_unix_time(old_time.as_secs() as i64, 0);
+        filetime::set_file_mtime(&path, old_time).unwrap();
+
+        // Should return true because the file is older than THROTTLE_WINDOW (15 min)
+        assert!(
+            should_check(),
+            "should_check should return true when throttle file is older than 15 minutes"
+        );
+
+        // Clean up after test
+        let _ = std::fs::remove_file(throttle_path());
+    }
+
+    #[serial_test::serial(throttle_tests)]
+    #[test]
+    fn should_check_returns_false_when_throttle_file_is_recent() {
+        // Clean up any existing throttle file first
+        let _ = std::fs::remove_file(throttle_path());
+
+        // Create a throttle file with current mtime
+        let path = throttle_path();
+        std::fs::write(&path, "test").unwrap();
+
+        // File was just created (within THROTTLE_WINDOW)
+        assert!(
+            !should_check(),
+            "should_check should return false when throttle file exists and is recent"
+        );
+
+        // Clean up after test
+        let _ = std::fs::remove_file(throttle_path());
+    }
+
+    #[serial_test::serial(throttle_tests)]
+    #[test]
+    fn touch_throttle_creates_file() {
+        // Clean up any existing throttle file first
+        let _ = std::fs::remove_file(throttle_path());
+
+        // Touch should create the file
+        touch_throttle();
+
+        assert!(
+            throttle_path().exists(),
+            "touch_throttle should create the throttle file"
+        );
+        assert!(
+            std::fs::metadata(throttle_path()).is_ok(),
+            "throttle file should be readable"
+        );
+
+        // Clean up after test
+        let _ = std::fs::remove_file(throttle_path());
+    }
+
     #[test]
     fn verify_checksum_accepts_matching_digest() {
         let data = b"hello world";

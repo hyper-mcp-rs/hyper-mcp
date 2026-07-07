@@ -79,6 +79,8 @@ zip = { version = "8.6", default-features = false, features = ["deflate"] }
 aws-sdk-s3 = { version = "1.137", features = ["test-util"] }
 aws-smithy-mocks = "0.2"
 aws-smithy-runtime-api = "1.12"
+filetime = "0.2"
+serial_test = "2.0"
 rmcp = { version = "2.1", features = [
     "client",
     "transport-async-rw",
