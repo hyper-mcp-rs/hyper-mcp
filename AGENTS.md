@@ -12,7 +12,7 @@ hyper-mcp is a Rust-based Model Context Protocol server that loads and manages p
 
 ## Commits
 
-Always sign commits with `-s` (`git commit -s`). Resolve any lefthook errors from pre-commit or pre-push hooks before finishing.
+Always sign commits with `-s` (`git commit -s`). Never bypass git hooks. Resolve any lefthook errors from pre-commit or per-push hooks before finishing.
 
 ## Testing
 
