@@ -128,6 +128,12 @@ asset — the ones listed in [Pre-built binaries](#pre-built-binaries-github-rel
 On any other target the matching asset does not exist, so the update is skipped
 with a logged warning.
 
+**Windows:** auto-update is **disabled** on Windows. Because Windows cannot
+replace a running binary in place, the updater would have to spawn the new
+binary as a child process and exit the old one. This changes the process ID,
+which breaks stdio MCP clients that track the child process. To upgrade on
+Windows, download a new release from [GitHub Releases](https://github.com/hyper-mcp-rs/hyper-mcp/releases).
+
 **Package-manager installs:** avoid `--auto-update` for binaries installed via
 Homebrew, a system package manager, or any other tool that manages the
 executable. The updater replaces the file in place, which diverges from what the

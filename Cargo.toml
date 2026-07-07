@@ -33,6 +33,14 @@ extism = "1.30"
 extism-convert = "1.30"
 flate2 = "1.1"
 futures = "0.3"
+self-replace = "1.1"   # NEW: replaces `self_update`'s internal replacement
+# NEW: self_update with only the features you need
+self_update = { version = "0.44", default-features = false, features = [
+    "tar",              # tar archive support
+    "zip",              # zip archive support (Windows)
+    "reqwest",          # HTTP client
+    "rustls",           # pure-Rust TLS (no system OpenSSL dependency)
+] }
 hex = "0.4"
 keyring = "4.1"
 oauth2 = { version = "5.0", features = ["reqwest-blocking"] }

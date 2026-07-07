@@ -26,10 +26,17 @@ async fn main() -> Result<()> {
         // If requested, check for and apply an update before doing any other
         // startup work. On a successful update this re-executes the new binary
         // and never returns; on failure we log and continue with this version.
-        if cli.auto_update
-            && let Err(e) = update::run().await
-        {
-            tracing::warn!(error = ?e, "Auto-update failed; continuing with the current version");
+        if cli.auto_update {
+            if cfg!(target_os = "windows") {
+                tracing::warn!(
+                    "Auto-update is not supported on Windows; skipping check. \
+                     On Windows, the process ID changes after restart, which breaks \
+                     stdio MCP clients that track the child process. \
+                     Please upgrade by downloading a new release from GitHub."
+                );
+            } else if let Err(e) = update::run().await {
+                tracing::warn!(error = ?e, "Auto-update failed; continuing with the current version");
+            }
         }
 
         // The platform-native keyring store is initialized lazily the first time a
