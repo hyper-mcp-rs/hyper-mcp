@@ -2,49 +2,84 @@
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: [
     'config:recommended',
+    'helpers:pinGitHubActionDigestsToSemver',
+    'docker:pinDigests',
+    ':maintainLockFilesWeekly',
   ],
   schedule: [
     'on monday',
   ],
+  enabledManagers: [
+    'github-actions',
+    'cargo',
+    'git-submodules',
+    'dockerfile',
+    'pre-commit',
+    'rust-toolchain',
+  ],
+  'git-submodules': {
+    enabled: true,
+  },
+  osvVulnerabilityAlerts: true,
+  labels: [
+    'dependencies',
+  ],
   packageRules: [
-    {
-      matchDepTypes: [
-        'action',
-      ],
-      pinDigests: true,
-    },
-    {
-      extends: [
-        'helpers:pinGitHubActionDigests',
-      ],
-      extractVersion: '^(?<version>v?\\d+\\.\\d+\\.\\d+)$',
-      versioning: 'regex:^v?(?<major>\\d+)(\\.(?<minor>\\d+)\\.(?<patch>\\d+))?$',
-    },
     {
       matchManagers: [
         'github-actions',
       ],
       groupName: 'GitHub Actions',
-      labels: [
-        'dependencies',
+      addLabels: [
         'github-actions',
       ],
-      commitMessagePrefix: 'github-actions',
-      "rangeStrategy": "pin",
     },
     {
       matchManagers: [
         'cargo',
       ],
       groupName: 'Rust dependencies',
-      labels: [
-        'dependencies',
+      addLabels: [
         'rust',
       ],
-      commitMessagePrefix: 'rust',
+    },
+    {
+      matchManagers: [
+        'git-submodules',
+      ],
+      groupName: 'Git submodules',
+      addLabels: [
+        'submodule',
+      ],
+    },
+    {
+      matchManagers: [
+        'dockerfile',
+      ],
+      groupName: 'Docker images',
+      addLabels: [
+        'docker',
+      ],
+    },
+    {
+      matchManagers: [
+        'pre-commit',
+      ],
+      groupName: 'pre-commit hooks',
+      addLabels: [
+        'pre-commit',
+      ],
+    },
+    {
+      matchManagers: [
+        'rust-toolchain',
+      ],
+      groupName: 'Rust toolchain',
+      addLabels: [
+        'rust',
+      ],
     },
   ],
   prHourlyLimit: 4,
   prConcurrentLimit: 16,
-  dependencyDashboard: true,
 }
