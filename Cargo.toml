@@ -71,7 +71,7 @@ uuid = { version = "1.23", features = ["serde"] }
 aws-sdk-s3 = { version = "1.137", features = ["test-util"] }
 aws-smithy-mocks = "0.2"
 aws-smithy-runtime-api = "1.12"
-serial_test = "2.0"
+serial_test = "3.0"
 rmcp = { version = "2.1", features = [
     "client",
     "transport-async-rw",
