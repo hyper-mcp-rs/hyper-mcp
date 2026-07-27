@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/pulsemcp%2Ftuananh-hyper.svg)](https://mcptoplist.com/server/pulsemcp%2Ftuananh-hyper)
+
 <div align="center">
   <picture>
     <img alt="hyper-mcp logo" src="./assets/logo.png" width="50%">
