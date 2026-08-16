@@ -339,4 +339,4 @@ For ready-to-use plugin templates in Rust and Go, see [TEMPLATES.md](./TEMPLATES
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=hyper-mcp-rs/hyper-mcp&type=Date)](https://www.star-history.com/#hyper-mcp-rs/hyper-mcp&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=hyper-mcp-rs/hyper-mcp&type=Date)](https://star-history.dera.page/#hyper-mcp-rs/hyper-mcp&Date)
