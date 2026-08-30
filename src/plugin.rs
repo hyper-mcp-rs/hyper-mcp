@@ -150,10 +150,13 @@ where
         match result {
             Ok(res) => match serde_json::from_str::<R>(&res) {
                 Ok(parsed) => Ok(parsed),
-                Err(e) => Err(McpError::internal_error(
-                    format!("Failed to deserialize data: {e}"),
-                    None,
-                )),
+                Err(e) => {
+                    let preview = format_payload_preview(&res);
+                    Err(McpError::internal_error(
+                        format!("Failed to deserialize data: {e}. Payload preview: {preview}"),
+                        None,
+                    ))
+                }
             },
             Err(e) => Err(McpError::internal_error(
                 format!("Failed to call plugin: {e}"),
@@ -507,5 +510,32 @@ impl Plugin for PluginV2 {
 impl PluginV2 {
     pub fn new(name: PluginName, plugin: PluginHandle) -> Self {
         Self(PluginBase { name, plugin })
+    }
+}
+
+fn format_payload_preview(res: &str) -> String {
+    if res.len() > 200 {
+        format!("{}...", &res[..200])
+    } else {
+        res.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_payload_preview_short() {
+        let short = "{\"status\":\"ok\"}";
+        assert_eq!(format_payload_preview(short), short);
+    }
+
+    #[test]
+    fn test_format_payload_preview_long() {
+        let long = "A".repeat(300);
+        let preview = format_payload_preview(&long);
+        assert_eq!(preview.len(), 203);
+        assert!(preview.ends_with("..."));
     }
 }
