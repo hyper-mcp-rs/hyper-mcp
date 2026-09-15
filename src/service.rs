@@ -139,7 +139,12 @@ pub struct PluginServiceInner {
     logging_level: RwLock<LoggingLevel>,
     peer: SetOnce<Peer<RoleServer>>,
     plugins: DashMap<PluginName, Arc<dyn Plugin>>,
-    tokens: DashMap<OauthCredentials, (AccessToken, Option<RefreshToken>)>,
+    // Keyed by (plugin_name, credentials) rather than credentials alone: two
+    // plugins can legitimately be configured with the same public client_id
+    // (no client_secret) and token endpoint, and without the plugin name in
+    // the key one plugin could read another plugin's cached access token
+    // back out of this cache via get_access_token.
+    tokens: DashMap<(PluginName, OauthCredentials), (AccessToken, Option<RefreshToken>)>,
     subscriptions: DashSet<String>,
 }
 
@@ -1545,7 +1550,8 @@ mod host_fns {
             let _span = span.enter();
             tracing::info!(plugin = ctx.plugin_name.to_string());
 
-            Ok(match ctx.plugin_service.tokens.entry(credentials.clone()) {
+            let token_key = (ctx.plugin_name.clone(), credentials.clone());
+            Ok(match ctx.plugin_service.tokens.entry(token_key) {
                 dashmap::Entry::Occupied(mut entry) => {
                     let (access_token, refresh_token) = entry.get();
                     if !access_token.is_expired() {
