@@ -38,7 +38,7 @@ keyring = "4.1"
 oauth2 = { version = "5.0", features = ["reqwest-blocking"] }
 oci-client = "0.17"
 percent-encoding = "2.3"
-rmcp = { version = "2.1", features = [
+rmcp = { version = "3.0", features = [
     "elicitation",
     "macros",
     "schemars",
@@ -72,7 +72,7 @@ aws-sdk-s3 = { version = "1.137", features = ["test-util"] }
 aws-smithy-mocks = "0.2"
 aws-smithy-runtime-api = "1.12"
 serial_test = "2.0"
-rmcp = { version = "2.1", features = [
+rmcp = { version = "3.0", features = [
     "client",
     "transport-async-rw",
 ] }
