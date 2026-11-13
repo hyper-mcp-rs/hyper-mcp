@@ -1,5 +1,5 @@
 # ------ Builder Stage --------------
-FROM rust:1.96 AS builder
+FROM rust:1.100@sha256:e19840879045c951c905d0eaa9887f3439c62000e429963371b376bac8d38c31 AS builder
 WORKDIR /app
 RUN cargo install cargo-auditable
 
@@ -10,10 +10,10 @@ RUN cargo auditable build --release --locked
 
 # ------- Cosign Stage ---------------
 
-FROM ghcr.io/sigstore/cosign/cosign:v3.1.1 AS cosign
+FROM ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d AS cosign
 
 # ------- Production Stage -----------
-FROM debian:13-slim
+FROM debian:13-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 LABEL org.opencontainers.image.authors="joseph.wortmann@gmail.com" \
     org.opencontainers.image.url="https://github.com/hyper-mcp-rs/hyper-mcp" \
